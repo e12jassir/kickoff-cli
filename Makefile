@@ -5,10 +5,11 @@ BINDIR ?= $(PREFIX)/bin
 
 install:
 	@mkdir -p $(BINDIR)
-	@install -m 755 bin/futbol $(BINDIR)/futbol
-	@install -m 755 bin/futbol-preview $(BINDIR)/futbol-preview
-	@echo "futbol-cli instalado exitosamente en $(BINDIR)"
+	@install -m 755 bin/kickoff $(BINDIR)/kickoff
+	@install -m 755 bin/kickoff-preview $(BINDIR)/kickoff-preview
+	@rm -f $(BINDIR)/futbol $(BINDIR)/futbol-preview
+	@echo "kickoff instalado exitosamente en $(BINDIR)"
 
 uninstall:
-	@rm -f $(BINDIR)/futbol $(BINDIR)/futbol-preview
-	@echo "futbol-cli desinstalado de $(BINDIR)"
+	@rm -f $(BINDIR)/kickoff $(BINDIR)/kickoff-preview $(BINDIR)/futbol $(BINDIR)/futbol-preview
+	@echo "kickoff desinstalado de $(BINDIR)"

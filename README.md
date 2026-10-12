@@ -1,16 +1,16 @@
-# futbol-cli
+# kickoff-cli
 
-A minimalist, high-performance terminal live sports & football streaming client. Browse open IPTV sports broadcasts worldwide, preview official channel logos with GPU acceleration in Kitty, and stream instantly in `mpv` without opening a browser or enduring ads.
+A minimalist, high-performance terminal soccer client. Browse daily match fixtures organized by top leagues worldwide (La Liga, Premier League, Serie A, Bundesliga, Ligue 1, UEFA Champions League, Copa Libertadores, Liga Argentina, Liga BetPlay, Brasileirão), preview badges with GPU acceleration in Kitty, and launch live broadcasts directly in `mpv` without opening a browser or enduring ads.
 
 ---
 
 ## Features
 
-- **Interactive Omnibar Search**: Instant fuzzy-searching (`fzf`) across hundreds of sports channels and live feeds.
-- **Logos & Metadata Previews**: Pixel-perfect channel logos rendered in real-time via Kitty `icat` memory transfer mode (with Chafa ANSI fallback).
-- **Direct HLS/M3U8 Streaming**: Sends direct streams to `mpv` with hardware decoding (`vaapi`/GPU) — zero ads, zero browser overhead.
-- **IPC Telemetry Synchronization**: The loading spinner remains active via IPC socket until the video frame is genuinely rendered on your display.
-- **Favorites System**: Bookmark channels with `Ctrl+f` and access your personal shortlist anytime.
+- **League Hierarchy**: Organized cleanly by the Top 5 European leagues + Continental cups + Latin American leagues.
+- **Real-Time Daily Fixtures**: Live scores and scheduled matches queried dynamically. No matches scheduled? Clean notice with zero dummy entries.
+- **Direct Broadcast Stream Selector**: Instant selection between verified sports signals (ESPN, Fox Sports, TyC Sports, Real Madrid TV, Teledeporte).
+- **GPU-Accelerated Visual Previews**: Match thumbnails and team badges rendered via Kitty `icat` memory transfer protocol (with Chafa ANSI fallback).
+- **IPC Telemetry Synchronization**: The loading spinner hides terminal cursor and suppresses input echo until the video frame renders on screen.
 
 ---
 
@@ -18,10 +18,9 @@ A minimalist, high-performance terminal live sports & football streaming client.
 
 | Keybinding | Action |
 |---|---|
-| `Enter` | Launch live broadcast in fullscreen `mpv` |
-| `Ctrl + f` | Toggle channel in favorites (`~/.local/state/futbol/favorites.tsv`) |
-| `Ctrl + y` | Copy raw HLS stream URL to clipboard |
-| `Ctrl + r` | Force refresh sports channel playlist cache |
+| `Enter` | Open broadcast selector / Launch in fullscreen `mpv` |
+| `Ctrl + y` | Copy match details to clipboard (`wl-copy`) |
+| `Ctrl + r` | Force refresh fixture cache |
 
 ---
 
@@ -41,13 +40,7 @@ Make sure `~/.local/bin` is in your `$PATH`.
 Simply run:
 
 ```bash
-futbol
-```
-
-Or search directly from your terminal arguments:
-
-```bash
-futbol "sport"
+kickoff
 ```
 
 ---
