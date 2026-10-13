@@ -1,0 +1,41 @@
+schema: spec-driven
+mode: hybrid
+delivery_strategy: single-pr
+
+context: |
+  Tech stack: CLI/TUI sports streaming client in Bash + fzf + Python, migrating to Go + Bubble Tea
+  Architecture: Match fixture scraping (ESPN API), HLS streaming to mpv via UNIX IPC socket, Kitty icat badge preview
+  Testing: No runner currently configured; Go testing + Bubble Tea teatest planned upon Go installation
+  Style: Terminal ergonomics, non-blocking IPC synchronization, modular CLI architecture
+
+testing:
+  runner: ""
+  strict_tdd: false
+  layers: []
+  coverage: false
+  type_checker: ""
+  linter: ""
+
+rules:
+  proposal:
+    - Include rollback plan for risky changes
+  specs:
+    - Use Given/When/Then for scenarios
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+  design:
+    - Include sequence diagrams for complex flows
+    - Document architecture decisions with rationale
+  tasks:
+    - Group by phase, use hierarchical numbering
+    - Keep tasks completable in one session
+  apply:
+    guidelines:
+      - Follow existing code patterns
+    tdd: false
+    test_command: ""
+  verify:
+    test_command: ""
+    build_command: ""
+    coverage_threshold: 0
+  archive:
+    - Warn before merging destructive deltas
