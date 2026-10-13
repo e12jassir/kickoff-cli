@@ -20,6 +20,7 @@ type matchesLoadedMsg struct {
 type matchStatsLoadedMsg struct {
 	matchID string
 	stats   *model.MatchStats
+	lineups *model.MatchLineups
 }
 
 type playbackStartedMsg struct {
@@ -56,8 +57,8 @@ func fetchMatchesCmd(client model.Client, leagueKey string) tea.Cmd {
 
 func fetchMatchStatsCmd(client model.Client, leagueKey, eventID string) tea.Cmd {
 	return func() tea.Msg {
-		stats, _ := client.FetchMatchStats(context.Background(), leagueKey, eventID)
-		return matchStatsLoadedMsg{matchID: eventID, stats: stats}
+		stats, lineups, _ := client.FetchMatchDetails(context.Background(), leagueKey, eventID)
+		return matchStatsLoadedMsg{matchID: eventID, stats: stats, lineups: lineups}
 	}
 }
 
@@ -112,14 +113,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				})
 				if len(m.matches) > 0 {
 					statsMap := make(map[string]*model.MatchStats)
+					lineupsMap := make(map[string]*model.MatchLineups)
 					for _, prev := range m.matches {
 						if prev.Stats != nil {
 							statsMap[prev.ID] = prev.Stats
+						}
+						if prev.Lineups != nil {
+							lineupsMap[prev.ID] = prev.Lineups
 						}
 					}
 					for i := range msg.matches {
 						if s, ok := statsMap[msg.matches[i].ID]; ok {
 							msg.matches[i].Stats = s
+						}
+						if l, ok := lineupsMap[msg.matches[i].ID]; ok {
+							msg.matches[i].Lineups = l
 						}
 					}
 				}
@@ -134,6 +142,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for i := range m.matches {
 			if m.matches[i].ID == msg.matchID {
 				m.matches[i].Stats = msg.stats
+				m.matches[i].Lineups = msg.lineups
 				break
 			}
 		}
@@ -187,6 +196,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.matchCursor = 0
 					m.channels = nil
 					m.channelCursor = 0
+					m.modalTab = 0
 					m.errorMsg = ""
 					league := m.CurrentLeague()
 					m.loadingMsg = "Consultando partidos de hoy (" + league.Name + ")..."
@@ -209,8 +219,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					selectedMatch := m.matches[m.matchCursor]
 					m.channels = m.catalog.GetChannels(selectedMatch)
 					m.channelCursor = 0
+					m.modalTab = 0
 					m.state = StateChannelSelect
-					if selectedMatch.Stats == nil && selectedMatch.ID != "" {
+					if (selectedMatch.Stats == nil || selectedMatch.Lineups == nil) && selectedMatch.ID != "" {
 						return m, fetchMatchStatsCmd(m.client, m.CurrentLeague().Key, selectedMatch.ID)
 					}
 				}
@@ -220,6 +231,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.matchCursor = 0
 				m.channels = nil
 				m.channelCursor = 0
+				m.modalTab = 0
 				m.statusMsg = ""
 				m.errorMsg = ""
 				return m, nil
@@ -233,16 +245,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case StateChannelSelect:
 			switch key {
+			case "left", "h":
+				m.modalTab = (m.modalTab - 1 + 3) % 3
+			case "right", "l", "tab":
+				m.modalTab = (m.modalTab + 1) % 3
+			case "shift+tab":
+				m.modalTab = (m.modalTab - 1 + 3) % 3
+			case "1":
+				m.modalTab = 0
+			case "2":
+				m.modalTab = 1
+			case "3":
+				m.modalTab = 2
 			case "up", "k":
-				if m.channelCursor > 0 {
+				if m.modalTab == 0 && m.channelCursor > 0 {
 					m.channelCursor--
 				}
 			case "down", "j":
-				if m.channelCursor < len(m.channels)-1 {
+				if m.modalTab == 0 && m.channelCursor < len(m.channels)-1 {
 					m.channelCursor++
 				}
 			case "enter":
-				if len(m.channels) > 0 && m.channelCursor < len(m.channels) {
+				if m.modalTab == 0 && len(m.channels) > 0 && m.channelCursor < len(m.channels) {
 					selectedChannel := m.channels[m.channelCursor]
 					selectedMatch := m.matches[m.matchCursor]
 					m.state = StatePlaying
@@ -260,6 +284,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.state = StateBrowsing
 				m.channels = nil
 				m.channelCursor = 0
+				m.modalTab = 0
 				return m, nil
 			}
 
@@ -271,6 +296,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.matchCursor = 0
 				m.channels = nil
 				m.channelCursor = 0
+				m.modalTab = 0
 				m.statusMsg = ""
 				m.errorMsg = ""
 				return m, nil

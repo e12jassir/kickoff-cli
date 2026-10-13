@@ -139,7 +139,17 @@ var (
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(ColorBorderSelected).
 			Padding(1, 2).
-			Width(62)
+			Width(66)
+
+	ActiveTabPillStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(ColorHighlight).
+			Background(ColorBorder).
+			Padding(0, 1)
+
+	InactiveTabPillStyle = lipgloss.NewStyle().
+			Foreground(ColorMuted).
+			Padding(0, 1)
 
 	ModalTitleStyle = lipgloss.NewStyle().
 			Bold(true).

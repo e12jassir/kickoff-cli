@@ -14,6 +14,7 @@ type mockClient struct {
 	matches []model.Match
 	err     error
 	stats   *model.MatchStats
+	lineups *model.MatchLineups
 }
 
 func (m *mockClient) FetchMatches(ctx context.Context, leagueKey string) ([]model.Match, error) {
@@ -22,6 +23,10 @@ func (m *mockClient) FetchMatches(ctx context.Context, leagueKey string) ([]mode
 
 func (m *mockClient) FetchMatchStats(ctx context.Context, leagueKey, eventID string) (*model.MatchStats, error) {
 	return m.stats, m.err
+}
+
+func (m *mockClient) FetchMatchDetails(ctx context.Context, leagueKey, eventID string) (*model.MatchStats, *model.MatchLineups, error) {
+	return m.stats, m.lineups, m.err
 }
 
 type mockCatalog struct {
@@ -369,8 +374,11 @@ func TestModel_Finished_Match_Modal(t *testing.T) {
 	if !strings.Contains(viewStr, "FINALIZADO") {
 		t.Errorf("expected modal to show 'FINALIZADO', got:\n%s", viewStr)
 	}
-	if !strings.Contains(viewStr, "Este partido ya finalizó") {
-		t.Errorf("expected modal to inform match is finished, got:\n%s", viewStr)
+	if !strings.Contains(viewStr, "[ ⏹ Transmisión finalizada • No hay señales activas ]") {
+		t.Errorf("expected modal to inform match transmission finished, got:\n%s", viewStr)
+	}
+	if !strings.Contains(viewStr, "Resumen") || !strings.Contains(viewStr, "Estadísticas") || !strings.Contains(viewStr, "Alineaciones") {
+		t.Errorf("expected modal to contain segmented tab labels, got:\n%s", viewStr)
 	}
 
 	// Pressing Enter when no channels should not start playback
@@ -463,14 +471,43 @@ func TestModel_Match_Events_And_Stats_Modal(t *testing.T) {
 		AwayCorners:     "3",
 		HomeFouls:       "11",
 		AwayFouls:       "13",
+		HomePasses:      "520",
+		AwayPasses:      "340",
+		HomePassPct:     "89%",
+		AwayPassPct:     "81%",
+		HomeOffsides:    "2",
+		AwayOffsides:    "1",
+		HomeSaves:       "4",
+		AwaySaves:       "2",
+	}
+
+	mockLineups := &model.MatchLineups{
+		Home: model.TeamLineup{
+			Formation: "4-3-3",
+			Starters: []model.Player{
+				{Jersey: "1", DisplayName: "M. ter Stegen", Position: "GK", IsStarter: true},
+				{Jersey: "23", DisplayName: "J. Koundé", Position: "DF", IsStarter: true},
+				{Jersey: "9", DisplayName: "R. Lewandowski", Position: "FW", IsStarter: true},
+			},
+		},
+		Away: model.TeamLineup{
+			Formation: "4-2-3-1",
+			Starters: []model.Player{
+				{Jersey: "1", DisplayName: "T. Courtois", Position: "GK", IsStarter: true},
+				{Jersey: "2", DisplayName: "D. Carvajal", Position: "DF", IsStarter: true},
+				{Jersey: "7", DisplayName: "Vinícius Jr", Position: "FW", IsStarter: true},
+			},
+		},
 	}
 
 	cli := &mockClient{
-		stats: mockStats,
+		stats:   mockStats,
+		lineups: mockLineups,
 	}
 	cat := &mockCatalog{
 		channels: []model.Channel{
-			{Name: "ESPN 1 HD", DisplayName: "ESPN 1 HD"},
+			{Name: "ESPN 1 HD", DisplayName: "ESPN 1 HD", Resolution: "720p", BitrateMode: "min"},
+			{Name: "ESPN 2 HD", DisplayName: "ESPN 2 HD", Resolution: "1080p", BitrateMode: "max"},
 		},
 	}
 	pla := &mockPlayer{}
@@ -527,7 +564,7 @@ func TestModel_Match_Events_And_Stats_Modal(t *testing.T) {
 	})
 	m = newM.(Model)
 
-	// Select match with Enter -> transitions to StateChannelSelect and returns fetchMatchStatsCmd
+	// Select match with Enter -> transitions to StateChannelSelect and returns stats fetch command
 	newM, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = newM.(Model)
 
@@ -538,51 +575,260 @@ func TestModel_Match_Events_And_Stats_Modal(t *testing.T) {
 		t.Fatalf("expected stats fetch command when match stats are nil")
 	}
 
-	// Deliver stats message
+	// Deliver stats & lineups message
 	statsMsg := cmd()
 	newM, _ = m.Update(statsMsg)
 	m = newM.(Model)
 
-	if len(m.matches) == 0 || m.matches[0].Stats == nil {
-		t.Fatalf("expected match stats to be populated")
+	if len(m.matches) == 0 || m.matches[0].Stats == nil || m.matches[0].Lineups == nil {
+		t.Fatalf("expected match stats and lineups to be populated")
 	}
 
-	// Render view and verify all elements
-	viewStr := m.View()
+	// --- 1. TAB 0: RESUMEN ---
+	if m.modalTab != 0 {
+		t.Errorf("expected initial modalTab 0, got %d", m.modalTab)
+	}
+	viewTab0 := m.View()
 
-	// 1. Verify scoreboard
-	if !strings.Contains(viewStr, "Barcelona") || !strings.Contains(viewStr, "Real Madrid") {
+	// Verify header & scoreboard
+	if !strings.Contains(viewTab0, "Barcelona") || !strings.Contains(viewTab0, "Real Madrid") {
 		t.Errorf("expected view to contain team names")
 	}
+	if !strings.Contains(viewTab0, "2 ─ 1") {
+		t.Errorf("expected view to contain score 2 ─ 1")
+	}
 
-	// 2. Verify events: goals, cards, penalty tag
-	if !strings.Contains(viewStr, "R. Lewandowski") || !strings.Contains(viewStr, "38'") {
+	// Verify segmented pills in Tab 0
+	if !strings.Contains(viewTab0, "[ ● Resumen ]") || !strings.Contains(viewTab0, "○ Estadísticas") || !strings.Contains(viewTab0, "○ Alineaciones") {
+		t.Errorf("expected active pill [ ● Resumen ] and inactive others, got:\n%s", viewTab0)
+	}
+
+	// Verify events in Tab 0: goals, cards, penalty tag
+	if !strings.Contains(viewTab0, "R. Lewandowski") || !strings.Contains(viewTab0, "38'") {
 		t.Errorf("expected view to contain goal scorer Lewandowski 38'")
 	}
-	if !strings.Contains(viewStr, "Gavi") || !strings.Contains(viewStr, "🟨") {
+	if !strings.Contains(viewTab0, "Gavi") || !strings.Contains(viewTab0, "🟨") {
 		t.Errorf("expected view to contain yellow card for Gavi")
 	}
-	if !strings.Contains(viewStr, "Vinicius Jr") || !strings.Contains(viewStr, "(pen.)") {
+	if !strings.Contains(viewTab0, "Vinicius Jr") || !strings.Contains(viewTab0, "(pen.)") {
 		t.Errorf("expected view to contain penalty goal for Vinicius Jr")
 	}
-	if !strings.Contains(viewStr, "Rüdiger") || !strings.Contains(viewStr, "🟥") {
+	if !strings.Contains(viewTab0, "Rüdiger") || !strings.Contains(viewTab0, "🟥") {
 		t.Errorf("expected view to contain red card for Rüdiger")
 	}
 
-	// 3. Verify statistics
-	if !strings.Contains(viewStr, "ESTADÍSTICAS DEL PARTIDO") {
-		t.Errorf("expected view to contain stats section header")
+	// Verify channel list in Tab 0
+	if !strings.Contains(viewTab0, "SEÑALES DE TRANSMISIÓN") || !strings.Contains(viewTab0, "ESPN 1 HD") {
+		t.Errorf("expected channel selection section in Tab 0")
 	}
-	if !strings.Contains(viewStr, "Posesión") || !strings.Contains(viewStr, "58%") || !strings.Contains(viewStr, "42%") {
-		t.Errorf("expected view to contain possession stats")
+
+	// Verify footer helper
+	if !strings.Contains(viewTab0, "←/→/tab: pestaña") || !strings.Contains(viewTab0, "↑/↓: canal") {
+		t.Errorf("expected footer helper in Tab 0, got:\n%s", viewTab0)
 	}
-	if !strings.Contains(viewStr, "Tiros (Al arco)") || !strings.Contains(viewStr, "14 (6)") || !strings.Contains(viewStr, "8 (2)") {
-		t.Errorf("expected view to contain shots stats")
+
+	// --- 2. SWITCH TO TAB 1: ESTADÍSTICAS ---
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = newM.(Model)
+	if m.modalTab != 1 {
+		t.Fatalf("expected modalTab 1 after Tab key, got %d", m.modalTab)
 	}
-	if !strings.Contains(viewStr, "Córners") || !strings.Contains(viewStr, "7") || !strings.Contains(viewStr, "3") {
-		t.Errorf("expected view to contain corners stats")
+	viewTab1 := m.View()
+
+	// Verify active pill in Tab 1
+	if !strings.Contains(viewTab1, "[ ● Estadísticas ]") {
+		t.Errorf("expected active pill [ ● Estadísticas ], got:\n%s", viewTab1)
 	}
-	if !strings.Contains(viewStr, "Faltas") || !strings.Contains(viewStr, "11") || !strings.Contains(viewStr, "13") {
-		t.Errorf("expected view to contain fouls stats")
+
+	// Verify visual possession progress bar
+	if !strings.Contains(viewTab1, "Posesión") || !strings.Contains(viewTab1, "58%") || !strings.Contains(viewTab1, "42%") {
+		t.Errorf("expected possession stats and label in Tab 1")
+	}
+	if !strings.Contains(viewTab1, "█") || !strings.Contains(viewTab1, "░") {
+		t.Errorf("expected Unicode block comparison bar in Tab 1")
+	}
+
+	// Verify 6 comparison rows
+	if !strings.Contains(viewTab1, "Tiros (Al arco)") || !strings.Contains(viewTab1, "14 (6)") || !strings.Contains(viewTab1, "8 (2)") {
+		t.Errorf("expected shots row")
+	}
+	if !strings.Contains(viewTab1, "Pases (Precisión)") || !strings.Contains(viewTab1, "520 (89%)") || !strings.Contains(viewTab1, "340 (81%)") {
+		t.Errorf("expected passes row")
+	}
+	if !strings.Contains(viewTab1, "Faltas") || !strings.Contains(viewTab1, "11") || !strings.Contains(viewTab1, "13") {
+		t.Errorf("expected fouls row")
+	}
+	if !strings.Contains(viewTab1, "Córners") || !strings.Contains(viewTab1, "7") || !strings.Contains(viewTab1, "3") {
+		t.Errorf("expected corners row")
+	}
+	if !strings.Contains(viewTab1, "Fueras de juego") || !strings.Contains(viewTab1, "2") || !strings.Contains(viewTab1, "1") {
+		t.Errorf("expected offsides row")
+	}
+	if !strings.Contains(viewTab1, "Atajadas") || !strings.Contains(viewTab1, "4") || !strings.Contains(viewTab1, "2") {
+		t.Errorf("expected saves row")
+	}
+
+	// --- 3. SWITCH TO TAB 2: ALINEACIONES ---
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	m = newM.(Model)
+	if m.modalTab != 2 {
+		t.Fatalf("expected modalTab 2 after right arrow, got %d", m.modalTab)
+	}
+	viewTab2 := m.View()
+
+	// Verify active pill in Tab 2
+	if !strings.Contains(viewTab2, "[ ● Alineaciones ]") {
+		t.Errorf("expected active pill [ ● Alineaciones ], got:\n%s", viewTab2)
+	}
+
+	// Verify formations badge
+	if !strings.Contains(viewTab2, "Barcelona (4-3-3)") || !strings.Contains(viewTab2, "Real Madrid (4-2-3-1)") {
+		t.Errorf("expected formations badge in Tab 2, got:\n%s", viewTab2)
+	}
+
+	// Verify starters with jerseys and position abbreviations
+	if !strings.Contains(viewTab2, "1  M. ter Stegen (GK)") || !strings.Contains(viewTab2, "1  T. Courtois (GK)") {
+		t.Errorf("expected goalkeeper starters in Tab 2, got:\n%s", viewTab2)
+	}
+	if !strings.Contains(viewTab2, "R. Lewandowski (FW)") || !strings.Contains(viewTab2, "Vinícius Jr (FW)") {
+		t.Errorf("expected forward starters in Tab 2")
+	}
+
+	// --- 4. DIRECT NUMERIC TAB SWITCHING ---
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m = newM.(Model)
+	if m.modalTab != 0 {
+		t.Errorf("expected modalTab 0 on '1', got %d", m.modalTab)
+	}
+
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m = newM.(Model)
+	if m.modalTab != 2 {
+		t.Errorf("expected modalTab 2 on '3', got %d", m.modalTab)
+	}
+
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m = newM.(Model)
+	if m.modalTab != 1 {
+		t.Errorf("expected modalTab 1 on '2', got %d", m.modalTab)
+	}
+
+	// --- 5. BACKWARD TAB NAVIGATION WITH 'h', 'left', 'shift+tab' ---
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m = newM.(Model)
+	if m.modalTab != 0 {
+		t.Errorf("expected modalTab 0 on 'h', got %d", m.modalTab)
+	}
+
+	// Wrap around backwards from 0 to 2
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	m = newM.(Model)
+	if m.modalTab != 2 {
+		t.Errorf("expected modalTab 2 after wrap-around left, got %d", m.modalTab)
+	}
+
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	m = newM.(Model)
+	if m.modalTab != 1 {
+		t.Errorf("expected modalTab 1 on shift+tab, got %d", m.modalTab)
+	}
+
+	// --- 6. ESC RESETS MODAL TAB TO 0 ---
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = newM.(Model)
+	if m.state != StateBrowsing {
+		t.Errorf("expected StateBrowsing after Esc, got %d", m.state)
+	}
+	if m.modalTab != 0 {
+		t.Errorf("expected modalTab reset to 0 after Esc, got %d", m.modalTab)
+	}
+}
+
+func TestModel_Modal_CursorGatingAndFallbacks(t *testing.T) {
+	cli := &mockClient{
+		stats:   nil, // stats loading / nil
+		lineups: nil, // lineups nil
+	}
+	cat := &mockCatalog{
+		channels: []model.Channel{
+			{Name: "Channel 1", DisplayName: "Channel 1"},
+			{Name: "Channel 2", DisplayName: "Channel 2"},
+		},
+	}
+	pla := &mockPlayer{}
+
+	m := NewModel(cli, cat, pla)
+
+	// Enter league and load match
+	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newM.(Model)
+	newM, _ = m.Update(matchesLoadedMsg{
+		leagueKey: m.CurrentLeague().Key,
+		matches: []model.Match{
+			{
+				ID:       "m-unstarted",
+				Title:    "Team A vs Team B",
+				HomeTeam: model.Competitor{DisplayName: "Team A"},
+				AwayTeam: model.Competitor{DisplayName: "Team B"},
+				Status:   model.MatchStatus{State: "pre"},
+			},
+		},
+	})
+	m = newM.(Model)
+
+	// Enter match modal
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newM.(Model)
+	if m.state != StateChannelSelect {
+		t.Fatalf("expected StateChannelSelect, got %d", m.state)
+	}
+
+	// Tab 0 cursor navigation
+	if m.channelCursor != 0 {
+		t.Errorf("expected initial channelCursor 0")
+	}
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = newM.(Model)
+	if m.channelCursor != 1 {
+		t.Errorf("expected channelCursor 1 on down key in Tab 0, got %d", m.channelCursor)
+	}
+
+	// Switch to Tab 1 (Estadísticas) - stats are nil -> verify loading text
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m = newM.(Model)
+	if m.modalTab != 1 {
+		t.Fatalf("expected modalTab 1")
+	}
+	viewTab1 := m.View()
+	if !strings.Contains(viewTab1, "Consultando estadísticas del partido...") {
+		t.Errorf("expected stats loading text, got:\n%s", viewTab1)
+	}
+
+	// When on Tab 1, pressing down/up ('j'/'k') should NOT change channelCursor
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	m = newM.(Model)
+	if m.channelCursor != 1 {
+		t.Errorf("expected channelCursor to remain 1 on 'k' in Tab 1, got %d", m.channelCursor)
+	}
+
+	// Switch to Tab 2 (Alineaciones) - lineups are nil -> verify fallback text
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m = newM.(Model)
+	if m.modalTab != 2 {
+		t.Fatalf("expected modalTab 2")
+	}
+	viewTab2 := m.View()
+	if !strings.Contains(viewTab2, "Alineaciones no disponibles aún para este encuentro.") {
+		t.Errorf("expected lineups unavailable notice, got:\n%s", viewTab2)
+	}
+
+	// In Tab 2, pressing Enter should NOT launch playback
+	newM, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newM.(Model)
+	if cmd != nil {
+		t.Errorf("expected nil cmd on Enter in Tab 2")
+	}
+	if m.state != StateChannelSelect {
+		t.Errorf("expected state to remain StateChannelSelect, got %d", m.state)
 	}
 }

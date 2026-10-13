@@ -34,6 +34,7 @@ type Model struct {
 
 	channels      []model.Channel
 	channelCursor int
+	modalTab      int
 
 	livePulse bool
 	playbackID int64
@@ -69,6 +70,7 @@ func NewModel(client model.Client, catalog model.Resolver, player model.Controll
 		matchCursor:   0,
 		channels:      nil,
 		channelCursor: 0,
+		modalTab:      0,
 		livePulse:     true,
 		spinner:       sp,
 		loadingMsg:    "",

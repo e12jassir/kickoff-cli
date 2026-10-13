@@ -486,3 +486,194 @@ func TestClient_FetchMatchStats(t *testing.T) {
 		t.Errorf("expected nil stats and nil error for empty event ID")
 	}
 }
+
+func TestClient_FetchMatchDetails(t *testing.T) {
+	fixedNow := time.Date(2026, 10, 13, 12, 0, 0, 0, time.FixedZone("America/Bogota", -5*3600))
+
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{
+			"boxscore": {
+				"teams": [
+					{
+						"team": {"id": "10", "displayName": "Barcelona"},
+						"homeAway": "home",
+						"statistics": [
+							{"name": "possessionPct", "displayValue": "65%"},
+							{"name": "totalShots", "displayValue": "18"},
+							{"name": "shotsOnTarget", "displayValue": "8"},
+							{"name": "wonCorners", "displayValue": "9"},
+							{"name": "foulsCommitted", "displayValue": "7"},
+							{"name": "totalPasses", "displayValue": "612"},
+							{"name": "passPct", "displayValue": "89%"},
+							{"name": "offsides", "displayValue": "2"},
+							{"name": "saves", "displayValue": "4"}
+						]
+					},
+					{
+						"team": {"id": "20", "displayName": "Real Madrid"},
+						"homeAway": "away",
+						"statistics": [
+							{"name": "possessionPct", "displayValue": "35%"},
+							{"name": "totalShots", "displayValue": "9"},
+							{"name": "shotsOnTarget", "displayValue": "3"},
+							{"name": "wonCorners", "displayValue": "4"},
+							{"name": "foulsCommitted", "displayValue": "14"},
+							{"name": "totalPasses", "displayValue": "340"},
+							{"name": "passPct", "displayValue": "81%"},
+							{"name": "offsides", "displayValue": "1"},
+							{"name": "saves", "displayValue": "6"}
+						]
+					}
+				]
+			},
+			"rosters": [
+				{
+					"team": {"id": "10", "displayName": "Barcelona"},
+					"formation": "4-3-3",
+					"roster": [
+						{"starter": true, "jersey": "1", "position": {"abbreviation": "GK"}, "athlete": {"displayName": "M. ter Stegen"}},
+						{"starter": true, "jersey": "23", "position": {"abbreviation": "DF"}, "athlete": {"displayName": "J. Koundé"}},
+						{"starter": true, "jersey": "4", "position": {"abbreviation": "DF"}, "athlete": {"displayName": "R. Araújo"}},
+						{"starter": true, "jersey": "15", "position": {"abbreviation": "DF"}, "athlete": {"displayName": "A. Christensen"}},
+						{"starter": true, "jersey": "3", "position": {"abbreviation": "DF"}, "athlete": {"displayName": "A. Balde"}},
+						{"starter": true, "jersey": "8", "position": {"abbreviation": "MF"}, "athlete": {"displayName": "Pedri"}},
+						{"starter": true, "jersey": "21", "position": {"abbreviation": "MF"}, "athlete": {"displayName": "F. de Jong"}},
+						{"starter": true, "jersey": "6", "position": {"abbreviation": "MF"}, "athlete": {"displayName": "Gavi"}},
+						{"starter": true, "jersey": "27", "position": {"abbreviation": "FW"}, "athlete": {"displayName": "L. Yamal"}},
+						{"starter": true, "jersey": "9", "position": {"abbreviation": "FW"}, "athlete": {"displayName": "R. Lewandowski"}},
+						{"starter": true, "jersey": "11", "position": {"abbreviation": "FW"}, "athlete": {"displayName": "Raphinha"}},
+						{"starter": false, "jersey": "13", "position": {"abbreviation": "GK"}, "athlete": {"displayName": "Iñaki Peña"}},
+						{"starter": false, "jersey": "7", "position": {"abbreviation": "FW"}, "athlete": {"displayName": "Ferran Torres"}}
+					]
+				},
+				{
+					"team": {"id": "20", "displayName": "Real Madrid"},
+					"formation": "4-2-3-1",
+					"roster": [
+						{"starter": true, "jersey": "1", "position": {"abbreviation": "GK"}, "athlete": {"displayName": "T. Courtois"}},
+						{"starter": true, "jersey": "2", "position": {"abbreviation": "DF"}, "athlete": {"displayName": "D. Carvajal"}},
+						{"starter": true, "jersey": "3", "position": {"abbreviation": "DF"}, "athlete": {"displayName": "É. Militão"}},
+						{"starter": true, "jersey": "22", "position": {"abbreviation": "DF"}, "athlete": {"displayName": "A. Rüdiger"}},
+						{"starter": true, "jersey": "23", "position": {"abbreviation": "DF"}, "athlete": {"displayName": "F. Mendy"}},
+						{"starter": true, "jersey": "14", "position": {"abbreviation": "MF"}, "athlete": {"displayName": "A. Tchouaméni"}},
+						{"starter": true, "jersey": "15", "position": {"abbreviation": "MF"}, "athlete": {"displayName": "F. Valverde"}},
+						{"starter": true, "jersey": "11", "position": {"abbreviation": "MF"}, "athlete": {"displayName": "Rodrygo"}},
+						{"starter": true, "jersey": "5", "position": {"abbreviation": "MF"}, "athlete": {"displayName": "J. Bellingham"}},
+						{"starter": true, "jersey": "7", "position": {"abbreviation": "FW"}, "athlete": {"displayName": "Vinícius Jr"}},
+						{"starter": true, "jersey": "9", "position": {"abbreviation": "FW"}, "athlete": {"displayName": "K. Mbappé"}},
+						{"starter": false, "jersey": "13", "position": {"abbreviation": "GK"}, "athlete": {"displayName": "A. Lunin"}},
+						{"starter": false, "jersey": "10", "position": {"abbreviation": "MF"}, "athlete": {"displayName": "L. Modrić"}}
+					]
+				}
+			]
+		}`)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(handler))
+	defer server.Close()
+
+	tempDir, err := os.MkdirTemp("", "espn-details-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	client := NewClient(
+		WithBaseURL(server.URL),
+		WithCacheDir(tempDir),
+		WithNow(func() time.Time { return fixedNow }),
+	)
+
+	stats, lineups, err := client.FetchMatchDetails(context.Background(), "laliga", "999888")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if stats == nil {
+		t.Fatalf("expected non-nil stats")
+	}
+	if lineups == nil {
+		t.Fatalf("expected non-nil lineups")
+	}
+
+	// Verify extended stats
+	if stats.HomePossession != "65%" || stats.AwayPossession != "35%" {
+		t.Errorf("unexpected possession: %s vs %s", stats.HomePossession, stats.AwayPossession)
+	}
+	if stats.HomePasses != "612" || stats.AwayPasses != "340" {
+		t.Errorf("unexpected passes: %s vs %s", stats.HomePasses, stats.AwayPasses)
+	}
+	if stats.HomePassPct != "89%" || stats.AwayPassPct != "81%" {
+		t.Errorf("unexpected pass pct: %s vs %s", stats.HomePassPct, stats.AwayPassPct)
+	}
+	if stats.HomeOffsides != "2" || stats.AwayOffsides != "1" {
+		t.Errorf("unexpected offsides: %s vs %s", stats.HomeOffsides, stats.AwayOffsides)
+	}
+	if stats.HomeSaves != "4" || stats.AwaySaves != "6" {
+		t.Errorf("unexpected saves: %s vs %s", stats.HomeSaves, stats.AwaySaves)
+	}
+
+	// Verify formations
+	if lineups.Home.Formation != "4-3-3" {
+		t.Errorf("expected Home formation 4-3-3, got %s", lineups.Home.Formation)
+	}
+	if lineups.Away.Formation != "4-2-3-1" {
+		t.Errorf("expected Away formation 4-2-3-1, got %s", lineups.Away.Formation)
+	}
+
+	// Verify starters
+	if len(lineups.Home.Starters) != 11 {
+		t.Fatalf("expected 11 Home starters, got %d", len(lineups.Home.Starters))
+	}
+	if len(lineups.Away.Starters) != 11 {
+		t.Fatalf("expected 11 Away starters, got %d", len(lineups.Away.Starters))
+	}
+
+	firstHome := lineups.Home.Starters[0]
+	if firstHome.Jersey != "1" || firstHome.DisplayName != "M. ter Stegen" || firstHome.Position != "GK" || !firstHome.IsStarter {
+		t.Errorf("unexpected first Home starter: %+v", firstHome)
+	}
+
+	firstAway := lineups.Away.Starters[0]
+	if firstAway.Jersey != "1" || firstAway.DisplayName != "T. Courtois" || firstAway.Position != "GK" || !firstAway.IsStarter {
+		t.Errorf("unexpected first Away starter: %+v", firstAway)
+	}
+
+	// Verify bench
+	if len(lineups.Home.Bench) != 2 || len(lineups.Away.Bench) != 2 {
+		t.Errorf("unexpected bench counts: %d vs %d", len(lineups.Home.Bench), len(lineups.Away.Bench))
+	}
+
+	// Verify cached fetch returns both stats and lineups
+	cachedStats, cachedLineups, err := client.FetchMatchDetails(context.Background(), "laliga", "999888")
+	if err != nil {
+		t.Fatalf("unexpected error on cached fetch: %v", err)
+	}
+	if cachedStats == nil || cachedStats.HomePasses != "612" {
+		t.Errorf("cached stats mismatch")
+	}
+	if cachedLineups == nil || len(cachedLineups.Home.Starters) != 11 {
+		t.Errorf("cached lineups mismatch")
+	}
+
+	// Defensive check: no rosters returns nil lineups without error
+	noRosterHandler := func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"boxscore": {"teams": []}}`)
+	}
+	noRosterServer := httptest.NewServer(http.HandlerFunc(noRosterHandler))
+	defer noRosterServer.Close()
+
+	noRosterClient := NewClient(
+		WithBaseURL(noRosterServer.URL),
+		WithCacheDir(tempDir),
+		WithNow(func() time.Time { return fixedNow }),
+	)
+	sDef, lDef, errDef := noRosterClient.FetchMatchDetails(context.Background(), "laliga", "empty-event")
+	if errDef != nil {
+		t.Errorf("unexpected error on empty rosters: %v", errDef)
+	}
+	if sDef != nil || lDef != nil {
+		t.Errorf("expected nil stats and nil lineups for empty payload")
+	}
+}
