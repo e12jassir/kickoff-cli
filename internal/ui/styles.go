@@ -11,27 +11,28 @@ const AsciiLogo = `██╗  ██╗██╗ ██████╗██╗ 
 ╚═╝  ╚═╝╚═╝ ╚═════╝╚═╝  ╚═╝ ╚═════╝ ╚═╝     ╚═╝     `
 
 var (
-	// Base Colors
-	ColorPrimary   = lipgloss.Color("#10B981") // Emerald Green
-	ColorSecondary = lipgloss.Color("#06B6D4") // Cyan
-	ColorAccent    = lipgloss.Color("#F59E0B") // Amber
-	ColorError     = lipgloss.Color("#EF4444") // Coral Red
-	ColorSuccess   = lipgloss.Color("#22C55E") // Bright Green
-	ColorMuted     = lipgloss.Color("#6B7280") // Cool Gray
-	ColorText      = lipgloss.Color("#F9FAFB") // Bright White
-	ColorDarkBg    = lipgloss.Color("#111827") // Dark Slate
-	ColorActiveBg  = lipgloss.Color("#065F46") // Forest Green
+	// Neutral Theme-Agnostic Dark Palette
+	ColorHighlight      = lipgloss.Color("#FFFFFF") // Crisp White
+	ColorText           = lipgloss.Color("#F4F4F5") // Zinc 100
+	ColorTextMuted      = lipgloss.Color("#D4D4D8") // Zinc 300
+	ColorCategory       = lipgloss.Color("#A1A1AA") // Zinc 400
+	ColorMuted          = lipgloss.Color("#71717A") // Zinc 500
+	ColorBorder         = lipgloss.Color("#3F3F46") // Zinc 700 (Subtle dark border)
+	ColorBorderSelected = lipgloss.Color("#E4E4E7") // Zinc 200 (Crisp selection border)
+	ColorError          = lipgloss.Color("#EF4444") // Coral Red
+	ColorSuccess        = lipgloss.Color("#22C55E") // Bright Green (Badges/Success only)
+	ColorAccent         = lipgloss.Color("#F59E0B") // Amber
 
 	// Header, Title & Subtitle
 	AppTitleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(ColorPrimary).
+			Foreground(ColorHighlight).
 			Padding(0, 1).
 			MarginBottom(1)
 
 	AsciiLogoStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(ColorPrimary)
+			Foreground(ColorHighlight)
 
 	SubtitleStyle = lipgloss.NewStyle().
 			Foreground(ColorMuted).
@@ -40,27 +41,25 @@ var (
 	// Main Menu
 	MenuBoxStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(ColorPrimary).
+			BorderForeground(ColorBorder).
 			Padding(1, 2).
 			Width(56)
 
 	CategoryHeaderStyle = lipgloss.NewStyle().
-			Foreground(ColorSecondary).
+			Foreground(ColorCategory).
 			Bold(true)
 
 	MenuItemNormal = lipgloss.NewStyle().
-			Foreground(ColorText)
+			Foreground(ColorTextMuted)
 
 	MenuItemSelected = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(ColorPrimary).
-			Background(ColorDarkBg)
+			Foreground(ColorHighlight)
 
 	// League Tabs
 	ActiveTabStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(ColorText).
-			Background(ColorActiveBg).
+			Foreground(ColorHighlight).
 			Padding(0, 1).
 			MarginRight(1)
 
@@ -75,20 +74,20 @@ var (
 	// Match Cards
 	MatchCardNormal = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(ColorMuted).
+			BorderForeground(ColorBorder).
 			Padding(0, 1).
 			Width(56).
 			MarginBottom(1)
 
 	MatchCardSelected = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
-				BorderForeground(ColorPrimary).
+				BorderForeground(ColorBorderSelected).
 				Padding(0, 1).
 				Width(56).
 				MarginBottom(1)
 
 	MatchTimeStyle = lipgloss.NewStyle().
-			Foreground(ColorSecondary).
+			Foreground(ColorMuted).
 			Bold(true)
 
 	TeamNameStyle = lipgloss.NewStyle().
@@ -96,7 +95,7 @@ var (
 			Bold(true)
 
 	ScoreStyle = lipgloss.NewStyle().
-			Foreground(ColorPrimary).
+			Foreground(ColorHighlight).
 			Bold(true)
 
 	StatusLiveStyle = lipgloss.NewStyle().
@@ -116,23 +115,22 @@ var (
 	// Modal Channel Selector
 	ModalBoxStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(ColorPrimary).
+			BorderForeground(ColorBorderSelected).
 			Padding(1, 2).
 			Width(56)
 
 	ModalTitleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(ColorPrimary).
+			Foreground(ColorHighlight).
 			MarginBottom(1)
 
 	ChannelItemNormal = lipgloss.NewStyle().
-				Foreground(ColorText).
+				Foreground(ColorTextMuted).
 				PaddingLeft(1)
 
 	ChannelItemSelected = lipgloss.NewStyle().
 				Bold(true).
-				Foreground(ColorPrimary).
-				Background(ColorDarkBg).
+				Foreground(ColorHighlight).
 				PaddingLeft(1)
 
 	RecommendedBadge = lipgloss.NewStyle().
@@ -140,7 +138,7 @@ var (
 				Bold(true)
 
 	ResolutionBadge = lipgloss.NewStyle().
-			Foreground(ColorSecondary)
+			Foreground(ColorMuted)
 
 	// Empty State & Info
 	EmptyStateStyle = lipgloss.NewStyle().
@@ -162,6 +160,6 @@ var (
 			MarginTop(1)
 
 	FooterKeyStyle = lipgloss.NewStyle().
-			Foreground(ColorSecondary).
+			Foreground(ColorText).
 			Bold(true)
 )
