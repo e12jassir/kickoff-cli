@@ -39,6 +39,7 @@ type Controller struct {
 	currentCmd  *exec.Cmd
 	currentDir  string
 	currentSock string
+	doneCh      chan struct{}
 }
 
 // Option configures the player controller.
@@ -195,17 +196,36 @@ func (c *Controller) PlayStream(ctx context.Context, req model.PlayRequest) erro
 	}
 	_ = devNull.Close()
 
+	doneCh := make(chan struct{})
+	c.doneCh = doneCh
 	c.currentCmd = cmd
 	c.mu.Unlock()
 
 	// Wait for process exit or IPC telemetry confirmation
-	return c.pollIPCConfirmation(ctx, cmd, sockPath, dir)
+	return c.pollIPCConfirmation(ctx, cmd, sockPath, dir, doneCh)
 }
 
-func (c *Controller) pollIPCConfirmation(ctx context.Context, cmd *exec.Cmd, sockPath, dir string) error {
+// Wait blocks until the current MPV playback process exits.
+func (c *Controller) Wait() error {
+	c.mu.Lock()
+	ch := c.doneCh
+	c.mu.Unlock()
+
+	if ch != nil {
+		<-ch
+	}
+	return nil
+}
+
+func (c *Controller) pollIPCConfirmation(ctx context.Context, cmd *exec.Cmd, sockPath, dir string, doneCh chan struct{}) error {
 	exitCh := make(chan error, 1)
 	go func() {
-		exitCh <- cmd.Wait()
+		err := cmd.Wait()
+		select {
+		case exitCh <- err:
+		default:
+		}
+		close(doneCh)
 	}()
 
 	start := time.Now()

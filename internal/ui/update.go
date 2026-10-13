@@ -18,11 +18,16 @@ type matchesLoadedMsg struct {
 }
 
 type playbackStartedMsg struct {
-	channel model.Channel
+	playbackID int64
+	channel    model.Channel
 }
 
 type playbackErrMsg struct {
 	err error
+}
+
+type playbackFinishedMsg struct {
+	playbackID int64
 }
 
 type pulseTickMsg time.Time
@@ -44,13 +49,22 @@ func fetchMatchesCmd(client model.Client, leagueKey string) tea.Cmd {
 	}
 }
 
-func playStreamCmd(player model.Controller, req model.PlayRequest) tea.Cmd {
+func waitForPlaybackCmd(player model.Controller, playbackID int64) tea.Cmd {
+	return func() tea.Msg {
+		if player != nil {
+			_ = player.Wait()
+		}
+		return playbackFinishedMsg{playbackID: playbackID}
+	}
+}
+
+func playStreamCmd(player model.Controller, req model.PlayRequest, playbackID int64) tea.Cmd {
 	return func() tea.Msg {
 		err := player.PlayStream(context.Background(), req)
 		if err != nil {
 			return playbackErrMsg{err: err}
 		}
-		return playbackStartedMsg{channel: req.Channel}
+		return playbackStartedMsg{playbackID: playbackID, channel: req.Channel}
 	}
 }
 
@@ -92,8 +106,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case playbackStartedMsg:
-		m.statusMsg = "✓ Reproduciendo: " + msg.channel.Name
-		m.errorMsg = ""
+		if msg.playbackID == m.playbackID {
+			m.statusMsg = "✓ Reproduciendo: " + msg.channel.Name
+			m.errorMsg = ""
+			return m, waitForPlaybackCmd(m.player, msg.playbackID)
+		}
+		return m, nil
+
+	case playbackFinishedMsg:
+		if msg.playbackID == m.playbackID {
+			m.statusMsg = ""
+		}
 		return m, nil
 
 	case playbackErrMsg:
@@ -152,9 +175,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					selectedMatch := m.matches[m.matchCursor]
 					m.channels = m.catalog.GetChannels(selectedMatch)
 					m.channelCursor = 0
-					if len(m.channels) > 0 {
-						m.state = StateChannelSelect
-					}
+					m.state = StateChannelSelect
 				}
 			case "esc", "backspace", "h":
 				m.state = StateMainMenu
@@ -190,12 +211,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.state = StatePlaying
 					m.statusMsg = "Conectando con " + selectedChannel.Name + "..."
 					m.errorMsg = ""
+					m.playbackID++
 					req := model.PlayRequest{
 						Channel:     selectedChannel,
 						Match:       selectedMatch,
 						BitrateMode: selectedChannel.BitrateMode,
 					}
-					return m, tea.Batch(m.spinner.Tick, playStreamCmd(m.player, req))
+					return m, tea.Batch(m.spinner.Tick, playStreamCmd(m.player, req, m.playbackID))
 				}
 			case "esc", "backspace":
 				m.state = StateBrowsing

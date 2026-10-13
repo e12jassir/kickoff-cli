@@ -103,4 +103,5 @@ type Resolver interface {
 type Controller interface {
 	PlayStream(ctx context.Context, req PlayRequest) error
 	Stop() error
+	Wait() error
 }

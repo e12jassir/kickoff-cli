@@ -36,6 +36,7 @@ type Model struct {
 	channelCursor int
 
 	livePulse bool
+	playbackID int64
 
 	spinner    spinner.Model
 	loadingMsg string

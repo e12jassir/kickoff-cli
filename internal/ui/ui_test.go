@@ -43,6 +43,10 @@ func (m *mockPlayer) Stop() error {
 	return nil
 }
 
+func (m *mockPlayer) Wait() error {
+	return nil
+}
+
 func TestModel_MainMenu_Navigation(t *testing.T) {
 	cli := &mockClient{}
 	cat := &mockCatalog{}
@@ -302,10 +306,83 @@ func TestModel_Channel_Modal_And_Playback(t *testing.T) {
 	}
 
 	// Delivery playback started message
-	newM, _ = m.Update(playbackStartedMsg{channel: m.channels[0]})
+	newM, waitCmd := m.Update(playbackStartedMsg{playbackID: m.playbackID, channel: m.channels[0]})
 	m = newM.(Model)
 	if !strings.Contains(m.statusMsg, "Reproduciendo") {
 		t.Errorf("expected statusMsg playing, got %s", m.statusMsg)
+	}
+	if waitCmd == nil {
+		t.Fatalf("expected waitCmd to monitor playback completion")
+	}
+
+	// Delivery playback finished message
+	newM, _ = m.Update(playbackFinishedMsg{playbackID: m.playbackID})
+	m = newM.(Model)
+	if m.statusMsg != "" {
+		t.Errorf("expected statusMsg to be cleared after playback finishes, got %s", m.statusMsg)
+	}
+}
+
+func TestModel_Finished_Match_Modal(t *testing.T) {
+	cli := &mockClient{}
+	cat := &mockCatalog{
+		channels: nil, // no channels for finished match
+	}
+	pla := &mockPlayer{}
+
+	m := NewModel(cli, cat, pla)
+
+	// Enter league and load finished match
+	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newM.(Model)
+	newM, _ = m.Update(matchesLoadedMsg{
+		leagueKey: m.CurrentLeague().Key,
+		matches: []model.Match{
+			{
+				ID:       "m1",
+				Title:    "Barcelona vs Real Madrid",
+				HomeTeam: model.Competitor{DisplayName: "Barcelona", Score: "2"},
+				AwayTeam: model.Competitor{DisplayName: "Real Madrid", Score: "1"},
+				Status:   model.MatchStatus{State: "post", Completed: true},
+			},
+		},
+	})
+	m = newM.(Model)
+
+	// Press Enter to view finished match modal
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newM.(Model)
+
+	if m.state != StateChannelSelect {
+		t.Fatalf("expected StateChannelSelect, got %d", m.state)
+	}
+	if len(m.channels) != 0 {
+		t.Fatalf("expected 0 channels for finished match, got %d", len(m.channels))
+	}
+
+	viewStr := m.View()
+	if !strings.Contains(viewStr, "FINALIZADO") {
+		t.Errorf("expected modal to show 'FINALIZADO', got:\n%s", viewStr)
+	}
+	if !strings.Contains(viewStr, "Este partido ya finalizó") {
+		t.Errorf("expected modal to inform match is finished, got:\n%s", viewStr)
+	}
+
+	// Pressing Enter when no channels should not start playback
+	newM, playCmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newM.(Model)
+	if playCmd != nil {
+		t.Errorf("expected nil playCmd when no channels are available")
+	}
+	if m.state != StateChannelSelect {
+		t.Errorf("expected state to remain StateChannelSelect, got %d", m.state)
+	}
+
+	// Esc returns to StateBrowsing
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = newM.(Model)
+	if m.state != StateBrowsing {
+		t.Errorf("expected state StateBrowsing after Esc, got %d", m.state)
 	}
 }
 

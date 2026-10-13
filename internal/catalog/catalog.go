@@ -136,6 +136,11 @@ var realMadridRegex = regexp.MustCompile(`(?i)(Real Madrid|Madrid)`)
 
 // GetChannels returns match-exclusive streaming signals for a fixture.
 func (c *Catalog) GetChannels(match model.Match) []model.Channel {
+	// If the match already finished, no live signals should be shown
+	if match.Status.Completed || strings.ToLower(match.Status.State) == "post" {
+		return nil
+	}
+
 	title := match.Title
 	if title == "" {
 		title = fmt.Sprintf("%s vs %s", match.HomeTeam.DisplayName, match.AwayTeam.DisplayName)

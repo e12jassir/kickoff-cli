@@ -101,7 +101,11 @@ func renderBrowsing(m Model) string {
 		}
 		modalContent := renderChannelModal(selMatch, m.channels, m.channelCursor, m.livePulse)
 		body = ModalBoxStyle.Render(modalContent)
-		footer = FooterHelpStyle.Render("↑/k  ↓/j: navegar  •  enter: reproducir  •  esc: volver  •  q: salir")
+		if len(m.channels) > 0 {
+			footer = FooterHelpStyle.Render("↑/k  ↓/j: navegar  •  enter: reproducir  •  esc: volver  •  q: salir")
+		} else {
+			footer = FooterHelpStyle.Render("esc: volver  •  q: salir")
+		}
 
 	default: // StateBrowsing, StatePlaying
 		if len(m.matches) == 0 {
@@ -276,20 +280,30 @@ func renderChannelModal(match model.Match, channels []model.Channel, selectedIdx
 	modal.WriteString(ModalSectionHeader.Render("SEÑALES DE TRANSMISIÓN"))
 	modal.WriteString("\n\n")
 
-	// 5. Clean Channel items (Zero cheesy emojis)
-	for i, ch := range channels {
-		prefix := "   "
-		if i == selectedIdx {
-			prefix = " › "
-		}
-
-		item := fmt.Sprintf("%s%s", prefix, ch.DisplayName)
-		if i == selectedIdx {
-			modal.WriteString(ChannelItemSelected.Render(item))
+	// 5. Clean Channel items (Zero cheesy emojis) or empty state
+	if len(channels) == 0 {
+		var emptyNotice string
+		if match.Status.Completed || strings.ToLower(match.Status.State) == "post" {
+			emptyNotice = "Este partido ya finalizó. No hay transmisiones en vivo disponibles."
 		} else {
-			modal.WriteString(ChannelItemNormal.Render(item))
+			emptyNotice = "Las señales estarán disponibles cerca de la hora del partido."
 		}
-		modal.WriteString("\n")
+		modal.WriteString("   " + VenueStyle.Render(emptyNotice) + "\n")
+	} else {
+		for i, ch := range channels {
+			prefix := "   "
+			if i == selectedIdx {
+				prefix = " › "
+			}
+
+			item := fmt.Sprintf("%s%s", prefix, ch.DisplayName)
+			if i == selectedIdx {
+				modal.WriteString(ChannelItemSelected.Render(item))
+			} else {
+				modal.WriteString(ChannelItemNormal.Render(item))
+			}
+			modal.WriteString("\n")
+		}
 	}
 
 	return modal.String()
