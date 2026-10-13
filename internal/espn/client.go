@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -375,6 +376,11 @@ func (c *Client) FetchMatches(ctx context.Context, leagueKey string) ([]model.Ma
 
 		matches = append(matches, match)
 	}
+
+	// Sort matches chronologically by StartTime
+	sort.Slice(matches, func(i, j int) bool {
+		return matches[i].StartTime.Before(matches[j].StartTime)
+	})
 
 	c.setCache(leagueKey, matches)
 	return matches, nil

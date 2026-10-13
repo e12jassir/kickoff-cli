@@ -71,19 +71,25 @@ var (
 	TabsRowStyle = lipgloss.NewStyle().
 			MarginBottom(1)
 
-	// Match Cards
+	// Match Cards & Lists
+	MatchBoxStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(ColorBorder).
+			Padding(1, 2).
+			Width(62)
+
 	MatchCardNormal = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(ColorBorder).
 			Padding(0, 1).
-			Width(56).
+			Width(62).
 			MarginBottom(1)
 
 	MatchCardSelected = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
 				BorderForeground(ColorBorderSelected).
 				Padding(0, 1).
-				Width(56).
+				Width(62).
 				MarginBottom(1)
 
 	MatchTimeStyle = lipgloss.NewStyle().
@@ -96,6 +102,22 @@ var (
 
 	ScoreStyle = lipgloss.NewStyle().
 			Foreground(ColorHighlight).
+			Bold(true)
+
+	ScoreboardTeams = lipgloss.NewStyle().
+			Foreground(ColorHighlight).
+			Bold(true)
+
+	LiveTextStyle = lipgloss.NewStyle().
+			Foreground(ColorError).
+			Bold(true)
+
+	LiveDotBright = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#EF4444")).
+			Bold(true)
+
+	LiveDotDim = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#7F1D1D")).
 			Bold(true)
 
 	StatusLiveStyle = lipgloss.NewStyle().
@@ -112,17 +134,24 @@ var (
 			Foreground(ColorMuted).
 			Italic(true)
 
-	// Modal Channel Selector
+	// Modal Channel & Scoreboard Selector
 	ModalBoxStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(ColorBorderSelected).
 			Padding(1, 2).
-			Width(56)
+			Width(62)
 
 	ModalTitleStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(ColorHighlight).
 			MarginBottom(1)
+
+	ModalSectionHeader = lipgloss.NewStyle().
+				Foreground(ColorCategory).
+				Bold(true)
+
+	ModalDivider = lipgloss.NewStyle().
+			Foreground(ColorBorder)
 
 	ChannelItemNormal = lipgloss.NewStyle().
 				Foreground(ColorTextMuted).

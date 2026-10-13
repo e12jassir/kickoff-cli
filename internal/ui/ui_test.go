@@ -264,8 +264,8 @@ func TestModel_Channel_Modal_And_Playback(t *testing.T) {
 	}
 
 	viewStr := m.View()
-	if !strings.Contains(viewStr, "Señales de transmisión") {
-		t.Errorf("expected view to contain 'Señales de transmisión', got:\n%s", viewStr)
+	if !strings.Contains(strings.ToUpper(viewStr), "SEÑALES DE TRANSMISIÓN") {
+		t.Errorf("expected view to contain 'SEÑALES DE TRANSMISIÓN', got:\n%s", viewStr)
 	}
 
 	// Navigate channel cursor

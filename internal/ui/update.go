@@ -2,6 +2,8 @@ package ui
 
 import (
 	"context"
+	"sort"
+	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
@@ -21,6 +23,14 @@ type playbackStartedMsg struct {
 
 type playbackErrMsg struct {
 	err error
+}
+
+type pulseTickMsg time.Time
+
+func pulseTickCmd() tea.Cmd {
+	return tea.Tick(600*time.Millisecond, func(t time.Time) tea.Msg {
+		return pulseTickMsg(t)
+	})
 }
 
 func fetchMatchesCmd(client model.Client, leagueKey string) tea.Cmd {
@@ -57,6 +67,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.spinner, cmd = m.spinner.Update(msg)
 		return m, cmd
 
+	case pulseTickMsg:
+		m.livePulse = !m.livePulse
+		return m, pulseTickCmd()
+
 	case matchesLoadedMsg:
 		curr := m.CurrentLeague()
 		if msg.leagueKey == curr.Key {
@@ -66,6 +80,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.statusMsg = ""
 			} else {
 				m.state = StateBrowsing
+				// Sort matches chronologically by StartTime
+				sort.Slice(msg.matches, func(i, j int) bool {
+					return msg.matches[i].StartTime.Before(msg.matches[j].StartTime)
+				})
 				m.matches = msg.matches
 				m.matchCursor = 0
 				m.errorMsg = ""

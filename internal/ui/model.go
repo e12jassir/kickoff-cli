@@ -35,6 +35,8 @@ type Model struct {
 	channels      []model.Channel
 	channelCursor int
 
+	livePulse bool
+
 	spinner    spinner.Model
 	loadingMsg string
 	statusMsg  string
@@ -66,6 +68,7 @@ func NewModel(client model.Client, catalog model.Resolver, player model.Controll
 		matchCursor:   0,
 		channels:      nil,
 		channelCursor: 0,
+		livePulse:     true,
 		spinner:       sp,
 		loadingMsg:    "",
 		statusMsg:     "",
@@ -86,7 +89,10 @@ func (m Model) CurrentLeague() model.League {
 	return m.leagues[m.activeTab]
 }
 
-// Init begins spinner tick (does not auto-fetch until user chooses a league).
+// Init begins spinner tick and pulse ticker for live animations.
 func (m Model) Init() tea.Cmd {
-	return m.spinner.Tick
+	return tea.Batch(
+		m.spinner.Tick,
+		pulseTickCmd(),
+	)
 }

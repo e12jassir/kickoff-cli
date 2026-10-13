@@ -83,7 +83,7 @@ func renderBrowsing(m Model) string {
 	header := AppTitleStyle.Render(headerText)
 
 	var body string
-	footer := FooterHelpStyle.Render("↑/k  ↓/j: navegar  •  enter: ver señales  •  esc: volver  •  r: recargar  •  q: salir")
+	footer := FooterHelpStyle.Render("↑/k  ↓/j: navegar  •  enter: abrir partido  •  esc: ligas  •  r: recargar  •  q: salir")
 
 	switch m.state {
 	case StateLoading:
@@ -95,29 +95,33 @@ func renderBrowsing(m Model) string {
 		footer = FooterHelpStyle.Render("r: recargar  •  esc: volver  •  q: salir")
 
 	case StateChannelSelect:
-		matchTitle := ""
-		if m.matchCursor < len(m.matches) {
-			matchTitle = m.matches[m.matchCursor].Title
+		var selMatch model.Match
+		if len(m.matches) > 0 && m.matchCursor < len(m.matches) {
+			selMatch = m.matches[m.matchCursor]
 		}
-		modalContent := renderChannelModal(matchTitle, m.channels, m.channelCursor)
+		modalContent := renderChannelModal(selMatch, m.channels, m.channelCursor, m.livePulse)
 		body = ModalBoxStyle.Render(modalContent)
 		footer = FooterHelpStyle.Render("↑/k  ↓/j: navegar  •  enter: reproducir  •  esc: volver  •  q: salir")
 
 	default: // StateBrowsing, StatePlaying
 		if len(m.matches) == 0 {
 			emptyMsg := fmt.Sprintf("⚽ No hay partidos programados hoy para %s.", curr.Name)
-			body = MenuBoxStyle.Render(EmptyStateStyle.Render(emptyMsg))
+			body = MatchBoxStyle.Render(EmptyStateStyle.Render(emptyMsg))
 		} else {
-			var matchCards []string
+			var lines []string
+			lines = append(lines, CategoryHeaderStyle.Render(fmt.Sprintf("PARTIDOS DE HOY (%d)", len(m.matches))))
+			lines = append(lines, "")
+
 			for i, match := range m.matches {
-				cardContent := renderMatchCard(match)
-				if i == m.matchCursor {
-					matchCards = append(matchCards, MatchCardSelected.Render(cardContent))
-				} else {
-					matchCards = append(matchCards, MatchCardNormal.Render(cardContent))
+				isSelected := i == m.matchCursor
+				itemLines := renderMatchItem(match, isSelected, m.livePulse)
+				lines = append(lines, itemLines...)
+				if i < len(m.matches)-1 {
+					lines = append(lines, "")
 				}
 			}
-			body = lipgloss.JoinVertical(lipgloss.Center, matchCards...)
+
+			body = MatchBoxStyle.Render(strings.Join(lines, "\n"))
 		}
 	}
 
@@ -143,9 +147,7 @@ func renderBrowsing(m Model) string {
 	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, content)
 }
 
-func renderMatchCard(match model.Match) string {
-	var card strings.Builder
-
+func renderMatchItem(match model.Match, isSelected bool, livePulse bool) []string {
 	timeStr := match.TimeStr
 	if timeStr == "" {
 		timeStr = "--:--"
@@ -160,63 +162,128 @@ func renderMatchCard(match model.Match) string {
 		awayName = "Visitante"
 	}
 
-	statusDesc := match.Status.Description
-	if statusDesc == "" {
-		statusDesc = "Programado"
+	cursorPrefix := "   "
+	if isSelected {
+		cursorPrefix = " › "
 	}
 
-	var statusStyled string
+	timeStyled := MatchTimeStyle.Render(timeStr)
+	vsStyled := ScoreboardTeams.Render(fmt.Sprintf("%s vs %s", homeName, awayName))
+	if !isSelected {
+		vsStyled = TeamNameStyle.Render(fmt.Sprintf("%s vs %s", homeName, awayName))
+	}
+
+	line1 := fmt.Sprintf("%s%s  %s", cursorPrefix, timeStyled, vsStyled)
+
+	// Line 2: Details / Score / Venue
+	venue := match.Venue
+	if venue == "" {
+		venue = "Estadio Principal"
+	}
+
+	var line2 string
+	indent := "         "
+
 	switch match.Status.State {
 	case "in":
-		statusStyled = StatusLiveStyle.Render("[" + statusDesc + "]")
+		dot := LiveDotDim.Render("●")
+		if livePulse {
+			dot = LiveDotBright.Render("●")
+		}
+		statusText := match.Status.Description
+		if match.Status.Detail != "" {
+			statusText = match.Status.Detail
+		}
+		liveLabel := LiveTextStyle.Render(fmt.Sprintf("%s %s", dot, statusText))
+		scoreLabel := ScoreStyle.Render(fmt.Sprintf("%s - %s", match.HomeTeam.Score, match.AwayTeam.Score))
+		line2 = fmt.Sprintf("%s%s  •  %s  •  %s", indent, liveLabel, scoreLabel, VenueStyle.Render(venue))
+
 	case "post":
-		statusStyled = StatusPostStyle.Render("[" + statusDesc + "]")
-	default:
-		statusStyled = StatusPreStyle.Render("[" + statusDesc + "]")
+		scoreLabel := ScoreStyle.Render(fmt.Sprintf("%s - %s", match.HomeTeam.Score, match.AwayTeam.Score))
+		line2 = fmt.Sprintf("%s%s  •  %s  •  %s", indent, StatusPostStyle.Render("FIN"), scoreLabel, VenueStyle.Render(venue))
+
+	default: // "pre"
+		line2 = fmt.Sprintf("%s%s  •  %s", indent, StatusPreStyle.Render("Por jugar"), VenueStyle.Render(venue))
 	}
 
-	scoreHome := match.HomeTeam.Score
-	scoreAway := match.AwayTeam.Score
-
-	vsSection := " vs "
-	if scoreHome != "" && scoreAway != "" {
-		vsSection = fmt.Sprintf(" %s - %s ", ScoreStyle.Render(scoreHome), ScoreStyle.Render(scoreAway))
-	}
-
-	line1 := fmt.Sprintf("%s   %s%s%s   %s",
-		MatchTimeStyle.Render(timeStr),
-		TeamNameStyle.Render(homeName),
-		vsSection,
-		TeamNameStyle.Render(awayName),
-		statusStyled,
-	)
-
-	card.WriteString(line1)
-	if match.Venue != "" {
-		card.WriteString("\n")
-		card.WriteString(VenueStyle.Render("Estadio: " + match.Venue))
-	}
-
-	return card.String()
+	return []string{line1, line2}
 }
 
-func renderChannelModal(matchTitle string, channels []model.Channel, selectedIdx int) string {
+func renderChannelModal(match model.Match, channels []model.Channel, selectedIdx int, livePulse bool) string {
 	var modal strings.Builder
 
-	title := fmt.Sprintf("📡 Señales de transmisión: %s", matchTitle)
-	modal.WriteString(ModalTitleStyle.Render(title))
-	modal.WriteString("\n")
-	modal.WriteString(VenueStyle.Render("Enter: reproducir  •  Esc: volver"))
+	homeName := match.HomeTeam.DisplayName
+	if homeName == "" {
+		homeName = "Local"
+	}
+	awayName := match.AwayTeam.DisplayName
+	if awayName == "" {
+		awayName = "Visitante"
+	}
+
+	// 1. Header row: Status and Stadium
+	var statusPart string
+	switch match.Status.State {
+	case "in":
+		dot := LiveDotDim.Render("●")
+		if livePulse {
+			dot = LiveDotBright.Render("●")
+		}
+		statusText := match.Status.Description
+		if match.Status.Detail != "" {
+			statusText = match.Status.Detail
+		}
+		statusPart = fmt.Sprintf("%s %s", dot, LiveTextStyle.Render("EN VIVO "+statusText))
+	case "post":
+		statusPart = StatusPostStyle.Render("FINALIZADO")
+	default:
+		statusPart = StatusPreStyle.Render(fmt.Sprintf("%s (Hoy)", match.TimeStr))
+	}
+
+	venue := match.Venue
+	if venue == "" {
+		venue = "Estadio Principal"
+	}
+	venueStyled := VenueStyle.Render(venue)
+
+	headerRow := fmt.Sprintf("%s    %s", statusPart, venueStyled)
+	modal.WriteString(headerRow)
 	modal.WriteString("\n\n")
 
+	// 2. Scoreboard Duelo
+	var duel string
+	if match.HomeTeam.Score != "" && match.AwayTeam.Score != "" {
+		duel = fmt.Sprintf("   %s   %s   %s",
+			ScoreboardTeams.Render(homeName),
+			ScoreStyle.Render(fmt.Sprintf("%s ─ %s", match.HomeTeam.Score, match.AwayTeam.Score)),
+			ScoreboardTeams.Render(awayName),
+		)
+	} else {
+		duel = fmt.Sprintf("   %s   %s   %s",
+			ScoreboardTeams.Render(homeName),
+			StatusPreStyle.Render("─ vs ─"),
+			ScoreboardTeams.Render(awayName),
+		)
+	}
+	modal.WriteString(duel)
+	modal.WriteString("\n\n")
+
+	// 3. Divider
+	modal.WriteString(ModalDivider.Render("──────────────────────────────────────────────────────────"))
+	modal.WriteString("\n")
+
+	// 4. Section Title
+	modal.WriteString(ModalSectionHeader.Render("SEÑALES DE TRANSMISIÓN"))
+	modal.WriteString("\n\n")
+
+	// 5. Clean Channel items (Zero cheesy emojis)
 	for i, ch := range channels {
-		var item string
 		prefix := "   "
 		if i == selectedIdx {
 			prefix = " › "
 		}
 
-		item = fmt.Sprintf("%s%s", prefix, ch.DisplayName)
+		item := fmt.Sprintf("%s%s", prefix, ch.DisplayName)
 		if i == selectedIdx {
 			modal.WriteString(ChannelItemSelected.Render(item))
 		} else {
