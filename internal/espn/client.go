@@ -37,6 +37,64 @@ type rawCompetition struct {
 	ID          string          `json:"id"`
 	Venue       *rawVenue       `json:"venue"`
 	Competitors []rawCompetitor `json:"competitors"`
+	Details     []rawDetail     `json:"details"`
+}
+
+type rawDetail struct {
+	Type             *rawDetailType  `json:"type"`
+	Clock            *rawDetailClock `json:"clock"`
+	Team             *rawDetailTeam  `json:"team"`
+	ScoreValue       int             `json:"scoreValue"`
+	ScoringPlay      bool            `json:"scoringPlay"`
+	RedCard          bool            `json:"redCard"`
+	YellowCard       bool            `json:"yellowCard"`
+	PenaltyKick      bool            `json:"penaltyKick"`
+	OwnGoal          bool            `json:"ownGoal"`
+	AthletesInvolved []rawAthlete    `json:"athletesInvolved"`
+}
+
+type rawDetailType struct {
+	ID   string `json:"id"`
+	Text string `json:"text"`
+}
+
+type rawDetailClock struct {
+	Value        float64 `json:"value"`
+	DisplayValue string  `json:"displayValue"`
+}
+
+type rawDetailTeam struct {
+	ID string `json:"id"`
+}
+
+type rawAthlete struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"displayName"`
+	ShortName   string `json:"shortName"`
+}
+
+type rawSummaryResponse struct {
+	Boxscore *rawBoxscore `json:"boxscore"`
+}
+
+type rawBoxscore struct {
+	Teams []rawBoxscoreTeam `json:"teams"`
+}
+
+type rawBoxscoreTeam struct {
+	Team       *rawTeam           `json:"team"`
+	HomeAway   string             `json:"homeAway"`
+	Statistics []rawStatisticItem `json:"statistics"`
+}
+
+type rawStatisticItem struct {
+	Name         string `json:"name"`
+	DisplayValue string `json:"displayValue"`
+}
+
+type cachedSummary struct {
+	CachedAt time.Time         `json:"cached_at"`
+	Stats    *model.MatchStats `json:"stats"`
 }
 
 type rawVenue struct {
@@ -242,6 +300,49 @@ func (c *Client) invalidateCache(leagueKey string) {
 	_ = os.Remove(cachePath)
 }
 
+func (c *Client) summaryCachePath(eventID string) string {
+	return filepath.Join(c.cacheDir, fmt.Sprintf("summary-%s.json", eventID))
+}
+
+func (c *Client) getCachedSummary(eventID string) (*model.MatchStats, bool) {
+	cachePath := c.summaryCachePath(eventID)
+	data, err := os.ReadFile(cachePath)
+	if err != nil {
+		return nil, false
+	}
+
+	var cached cachedSummary
+	if err := json.Unmarshal(data, &cached); err != nil {
+		_ = os.Remove(cachePath)
+		return nil, false
+	}
+
+	if c.now().Sub(cached.CachedAt) > c.cacheTTL {
+		return nil, false
+	}
+
+	return cached.Stats, true
+}
+
+func (c *Client) setCachedSummary(eventID string, stats *model.MatchStats) {
+	if stats == nil {
+		return
+	}
+	if err := os.MkdirAll(c.cacheDir, 0o755); err != nil {
+		return
+	}
+	cachePath := c.summaryCachePath(eventID)
+	cached := cachedSummary{
+		CachedAt: c.now(),
+		Stats:    stats,
+	}
+	data, err := json.Marshal(cached)
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(cachePath, data, 0o644)
+}
+
 // FetchMatches queries ESPN scoreboard API, defensive parses fixtures, and caches results.
 func (c *Client) FetchMatches(ctx context.Context, leagueKey string) ([]model.Match, error) {
 	// Check TTL cache first
@@ -362,6 +463,61 @@ func (c *Client) FetchMatches(ctx context.Context, leagueKey string) ([]model.Ma
 			status.Completed = ev.Status.Type.Completed
 		}
 
+		var events []model.MatchEvent
+		for _, d := range comp.Details {
+			if !d.ScoringPlay && !d.OwnGoal && !d.RedCard && !d.YellowCard {
+				continue
+			}
+
+			pName := "Jugador"
+			if len(d.AthletesInvolved) > 0 {
+				if d.AthletesInvolved[0].DisplayName != "" {
+					pName = d.AthletesInvolved[0].DisplayName
+				} else if d.AthletesInvolved[0].ShortName != "" {
+					pName = d.AthletesInvolved[0].ShortName
+				}
+			}
+
+			var clockVal string
+			if d.Clock != nil {
+				clockVal = d.Clock.DisplayValue
+			}
+
+			var teamID string
+			if d.Team != nil {
+				teamID = d.Team.ID
+			}
+
+			var desc string
+			if d.Type != nil {
+				desc = d.Type.Text
+			}
+
+			evType := "goal"
+			if d.RedCard {
+				evType = "card_red"
+			} else if d.YellowCard {
+				evType = "card_yellow"
+			} else if d.OwnGoal {
+				evType = "owngoal"
+			} else if d.PenaltyKick {
+				evType = "penalty"
+			}
+
+			events = append(events, model.MatchEvent{
+				Type:        evType,
+				Description: desc,
+				Clock:       clockVal,
+				TeamID:      teamID,
+				PlayerName:  pName,
+				IsScoring:   d.ScoringPlay,
+				IsPenalty:   d.PenaltyKick,
+				IsOwnGoal:   d.OwnGoal,
+				IsRedCard:   d.RedCard,
+				IsYellow:    d.YellowCard,
+			})
+		}
+
 		match := model.Match{
 			ID:        ev.ID,
 			Title:     fmt.Sprintf("%s vs %s", homeComp.DisplayName, awayComp.DisplayName),
@@ -372,6 +528,7 @@ func (c *Client) FetchMatches(ctx context.Context, leagueKey string) ([]model.Ma
 			Venue:     venueName,
 			Status:    status,
 			LeagueKey: leagueKey,
+			Events:    events,
 		}
 
 		matches = append(matches, match)
@@ -402,4 +559,111 @@ func parseESPNTime(s string) (time.Time, error) {
 		}
 	}
 	return time.Time{}, fmt.Errorf("unrecognized time format: %s", s)
+}
+
+// FetchMatchStats queries ESPN summary API for team boxscore statistics.
+func (c *Client) FetchMatchStats(ctx context.Context, leagueKey, eventID string) (*model.MatchStats, error) {
+	if eventID == "" {
+		return nil, nil
+	}
+
+	// Check TTL cache first
+	if stats, found := c.getCachedSummary(eventID); found {
+		return stats, nil
+	}
+
+	leagueCode := LeagueCode(leagueKey)
+	endpoint := fmt.Sprintf("%s/%s/summary?event=%s", c.baseURL, leagueCode, eventID)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, nil
+	}
+	req.Header.Set("User-Agent", userAgent)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, nil
+	}
+
+	var raw rawSummaryResponse
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return nil, nil
+	}
+
+	if raw.Boxscore == nil || len(raw.Boxscore.Teams) == 0 {
+		return nil, nil
+	}
+
+	var homeStats, awayStats []rawStatisticItem
+	if len(raw.Boxscore.Teams) >= 2 {
+		t0 := raw.Boxscore.Teams[0]
+		t1 := raw.Boxscore.Teams[1]
+		if strings.EqualFold(t0.HomeAway, "away") || strings.EqualFold(t1.HomeAway, "home") {
+			homeStats = t1.Statistics
+			awayStats = t0.Statistics
+		} else {
+			homeStats = t0.Statistics
+			awayStats = t1.Statistics
+		}
+	} else if len(raw.Boxscore.Teams) == 1 {
+		homeStats = raw.Boxscore.Teams[0].Statistics
+	}
+
+	if len(homeStats) == 0 && len(awayStats) == 0 {
+		return nil, nil
+	}
+
+	extractStat := func(stats []rawStatisticItem, name string) string {
+		for _, s := range stats {
+			if strings.EqualFold(s.Name, name) {
+				return s.DisplayValue
+			}
+		}
+		return ""
+	}
+
+	formatPossession := func(s string) string {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			return "-"
+		}
+		if strings.HasSuffix(s, "%") {
+			return s
+		}
+		var f float64
+		if _, err := fmt.Sscanf(s, "%f", &f); err == nil {
+			return fmt.Sprintf("%.0f%%", f)
+		}
+		return s + "%"
+	}
+
+	defaultVal := func(s, def string) string {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			return def
+		}
+		return s
+	}
+
+	stats := &model.MatchStats{
+		HomePossession:  formatPossession(extractStat(homeStats, "possessionPct")),
+		AwayPossession:  formatPossession(extractStat(awayStats, "possessionPct")),
+		HomeShots:       defaultVal(extractStat(homeStats, "totalShots"), "0"),
+		AwayShots:       defaultVal(extractStat(awayStats, "totalShots"), "0"),
+		HomeShotsOnGoal: defaultVal(extractStat(homeStats, "shotsOnTarget"), "0"),
+		AwayShotsOnGoal: defaultVal(extractStat(awayStats, "shotsOnTarget"), "0"),
+		HomeCorners:     defaultVal(extractStat(homeStats, "wonCorners"), "0"),
+		AwayCorners:     defaultVal(extractStat(awayStats, "wonCorners"), "0"),
+		HomeFouls:       defaultVal(extractStat(homeStats, "foulsCommitted"), "0"),
+		AwayFouls:       defaultVal(extractStat(awayStats, "foulsCommitted"), "0"),
+	}
+
+	c.setCachedSummary(eventID, stats)
+	return stats, nil
 }

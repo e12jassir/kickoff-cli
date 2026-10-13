@@ -17,6 +17,11 @@ type matchesLoadedMsg struct {
 	err       error
 }
 
+type matchStatsLoadedMsg struct {
+	matchID string
+	stats   *model.MatchStats
+}
+
 type playbackStartedMsg struct {
 	playbackID int64
 	channel    model.Channel
@@ -46,6 +51,13 @@ func fetchMatchesCmd(client model.Client, leagueKey string) tea.Cmd {
 			matches:   matches,
 			err:       err,
 		}
+	}
+}
+
+func fetchMatchStatsCmd(client model.Client, leagueKey, eventID string) tea.Cmd {
+	return func() tea.Msg {
+		stats, _ := client.FetchMatchStats(context.Background(), leagueKey, eventID)
+		return matchStatsLoadedMsg{matchID: eventID, stats: stats}
 	}
 }
 
@@ -98,9 +110,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				sort.Slice(msg.matches, func(i, j int) bool {
 					return msg.matches[i].StartTime.Before(msg.matches[j].StartTime)
 				})
+				if len(m.matches) > 0 {
+					statsMap := make(map[string]*model.MatchStats)
+					for _, prev := range m.matches {
+						if prev.Stats != nil {
+							statsMap[prev.ID] = prev.Stats
+						}
+					}
+					for i := range msg.matches {
+						if s, ok := statsMap[msg.matches[i].ID]; ok {
+							msg.matches[i].Stats = s
+						}
+					}
+				}
 				m.matches = msg.matches
 				m.matchCursor = 0
 				m.errorMsg = ""
+			}
+		}
+		return m, nil
+
+	case matchStatsLoadedMsg:
+		for i := range m.matches {
+			if m.matches[i].ID == msg.matchID {
+				m.matches[i].Stats = msg.stats
+				break
 			}
 		}
 		return m, nil
@@ -176,6 +210,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.channels = m.catalog.GetChannels(selectedMatch)
 					m.channelCursor = 0
 					m.state = StateChannelSelect
+					if selectedMatch.Stats == nil && selectedMatch.ID != "" {
+						return m, fetchMatchStatsCmd(m.client, m.CurrentLeague().Key, selectedMatch.ID)
+					}
 				}
 			case "esc", "backspace", "h":
 				m.state = StateMainMenu

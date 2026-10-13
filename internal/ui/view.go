@@ -272,11 +272,71 @@ func renderChannelModal(match model.Match, channels []model.Channel, selectedIdx
 	modal.WriteString(duel)
 	modal.WriteString("\n\n")
 
-	// 3. Divider
-	modal.WriteString(ModalDivider.Render("──────────────────────────────────────────────────────────"))
-	modal.WriteString("\n")
+	// Events (Goals, Cards)
+	if len(match.Events) > 0 {
+		var homeEvents, awayEvents []model.MatchEvent
+		for _, ev := range match.Events {
+			if ev.TeamID == match.HomeTeam.ID {
+				homeEvents = append(homeEvents, ev)
+			} else {
+				awayEvents = append(awayEvents, ev)
+			}
+		}
 
-	// 4. Section Title
+		var homeLines, awayLines []string
+		for _, ev := range homeEvents {
+			homeLines = append(homeLines, formatModalEvent(ev))
+		}
+		for _, ev := range awayEvents {
+			awayLines = append(awayLines, formatModalEvent(ev))
+		}
+
+		maxLines := len(homeLines)
+		if len(awayLines) > maxLines {
+			maxLines = len(awayLines)
+		}
+
+		colStyle := lipgloss.NewStyle().Width(26)
+		for i := 0; i < maxLines; i++ {
+			hText := ""
+			if i < len(homeLines) {
+				hText = homeLines[i]
+			}
+			aText := ""
+			if i < len(awayLines) {
+				aText = awayLines[i]
+			}
+			modal.WriteString(fmt.Sprintf("   %s  %s\n", colStyle.Render(truncateModalText(hText, 26)), colStyle.Render(truncateModalText(aText, 26))))
+		}
+		modal.WriteString("\n")
+	}
+
+	// Divider
+	modal.WriteString(ModalDivider.Render("──────────────────────────────────────────────────────────") + "\n")
+
+	// Match Statistics
+	if match.Stats != nil {
+		modal.WriteString(ModalSectionHeader.Render("ESTADÍSTICAS DEL PARTIDO") + "\n\n")
+
+		homeShots := match.Stats.HomeShots
+		if match.Stats.HomeShotsOnGoal != "" {
+			homeShots = fmt.Sprintf("%s (%s)", match.Stats.HomeShots, match.Stats.HomeShotsOnGoal)
+		}
+		awayShots := match.Stats.AwayShots
+		if match.Stats.AwayShotsOnGoal != "" {
+			awayShots = fmt.Sprintf("%s (%s)", match.Stats.AwayShots, match.Stats.AwayShotsOnGoal)
+		}
+
+		modal.WriteString(renderStatRow(match.Stats.HomePossession, "Posesión", match.Stats.AwayPossession) + "\n")
+		modal.WriteString(renderStatRow(homeShots, "Tiros (Al arco)", awayShots) + "\n")
+		modal.WriteString(renderStatRow(match.Stats.HomeCorners, "Córners", match.Stats.AwayCorners) + "\n")
+		modal.WriteString(renderStatRow(match.Stats.HomeFouls, "Faltas", match.Stats.AwayFouls) + "\n")
+		modal.WriteString("\n")
+
+		modal.WriteString(ModalDivider.Render("──────────────────────────────────────────────────────────") + "\n")
+	}
+
+	// Section Title
 	modal.WriteString(ModalSectionHeader.Render("SEÑALES DE TRANSMISIÓN"))
 	modal.WriteString("\n\n")
 
@@ -307,4 +367,49 @@ func renderChannelModal(match model.Match, channels []model.Channel, selectedIdx
 	}
 
 	return modal.String()
+}
+
+func formatModalEvent(ev model.MatchEvent) string {
+	clock := strings.TrimSpace(ev.Clock)
+	clockStr := ""
+	if clock != "" {
+		clockStr = " " + clock
+	}
+
+	pName := strings.TrimSpace(ev.PlayerName)
+	if pName == "" {
+		pName = "Jugador"
+	}
+
+	if ev.IsRedCard {
+		return fmt.Sprintf("🟥 %s%s", pName, clockStr)
+	}
+	if ev.IsYellow {
+		return fmt.Sprintf("🟨 %s%s", pName, clockStr)
+	}
+
+	tag := ""
+	if ev.IsOwnGoal {
+		tag = " (AG)"
+	} else if ev.IsPenalty {
+		tag = " (pen.)"
+	}
+
+	return fmt.Sprintf("⚽ %s%s%s", pName, tag, clockStr)
+}
+
+func truncateModalText(s string, maxLen int) string {
+	r := []rune(s)
+	if len(r) > maxLen {
+		return string(r[:maxLen-1]) + "…"
+	}
+	return s
+}
+
+func renderStatRow(leftVal, label, rightVal string) string {
+	leftStyle := lipgloss.NewStyle().Width(14).Align(lipgloss.Right).Foreground(ColorHighlight).Bold(true)
+	labelStyle := lipgloss.NewStyle().Width(24).Align(lipgloss.Center).Foreground(ColorCategory)
+	rightStyle := lipgloss.NewStyle().Width(14).Align(lipgloss.Left).Foreground(ColorHighlight).Bold(true)
+
+	return fmt.Sprintf("   %s %s %s", leftStyle.Render(leftVal), labelStyle.Render(label), rightStyle.Render(rightVal))
 }

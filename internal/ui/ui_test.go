@@ -13,10 +13,15 @@ import (
 type mockClient struct {
 	matches []model.Match
 	err     error
+	stats   *model.MatchStats
 }
 
 func (m *mockClient) FetchMatches(ctx context.Context, leagueKey string) ([]model.Match, error) {
 	return m.matches, m.err
+}
+
+func (m *mockClient) FetchMatchStats(ctx context.Context, leagueKey, eventID string) (*model.MatchStats, error) {
+	return m.stats, m.err
 }
 
 type mockCatalog struct {
@@ -443,5 +448,141 @@ func TestModel_Quit(t *testing.T) {
 	}
 	if !pla.stopped {
 		t.Errorf("expected player.Stop() to be called on quit")
+	}
+}
+
+func TestModel_Match_Events_And_Stats_Modal(t *testing.T) {
+	mockStats := &model.MatchStats{
+		HomePossession:  "58%",
+		AwayPossession:  "42%",
+		HomeShots:       "14",
+		AwayShots:       "8",
+		HomeShotsOnGoal: "6",
+		AwayShotsOnGoal: "2",
+		HomeCorners:     "7",
+		AwayCorners:     "3",
+		HomeFouls:       "11",
+		AwayFouls:       "13",
+	}
+
+	cli := &mockClient{
+		stats: mockStats,
+	}
+	cat := &mockCatalog{
+		channels: []model.Channel{
+			{Name: "ESPN 1 HD", DisplayName: "ESPN 1 HD"},
+		},
+	}
+	pla := &mockPlayer{}
+
+	m := NewModel(cli, cat, pla)
+
+	// Enter league
+	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newM.(Model)
+
+	// Load match with events
+	matchWithEvents := model.Match{
+		ID:       "match-123",
+		Title:    "Barcelona vs Real Madrid",
+		HomeTeam: model.Competitor{ID: "team-barca", DisplayName: "Barcelona", Score: "2"},
+		AwayTeam: model.Competitor{ID: "team-madrid", DisplayName: "Real Madrid", Score: "1"},
+		Status:   model.MatchStatus{State: "in", Description: "Segundo Tiempo", Detail: "65'"},
+		Events: []model.MatchEvent{
+			{
+				Type:       "goal",
+				PlayerName: "R. Lewandowski",
+				Clock:      "38'",
+				TeamID:     "team-barca",
+				IsScoring:  true,
+			},
+			{
+				Type:       "card_yellow",
+				PlayerName: "Gavi",
+				Clock:      "44'",
+				TeamID:     "team-barca",
+				IsYellow:   true,
+			},
+			{
+				Type:       "goal",
+				PlayerName: "Vinicius Jr",
+				Clock:      "55'",
+				TeamID:     "team-madrid",
+				IsScoring:  true,
+				IsPenalty:  true,
+			},
+			{
+				Type:       "card_red",
+				PlayerName: "Rüdiger",
+				Clock:      "62'",
+				TeamID:     "team-madrid",
+				IsRedCard:  true,
+			},
+		},
+	}
+
+	newM, _ = m.Update(matchesLoadedMsg{
+		leagueKey: m.CurrentLeague().Key,
+		matches:   []model.Match{matchWithEvents},
+	})
+	m = newM.(Model)
+
+	// Select match with Enter -> transitions to StateChannelSelect and returns fetchMatchStatsCmd
+	newM, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newM.(Model)
+
+	if m.state != StateChannelSelect {
+		t.Fatalf("expected StateChannelSelect, got %d", m.state)
+	}
+	if cmd == nil {
+		t.Fatalf("expected stats fetch command when match stats are nil")
+	}
+
+	// Deliver stats message
+	statsMsg := cmd()
+	newM, _ = m.Update(statsMsg)
+	m = newM.(Model)
+
+	if len(m.matches) == 0 || m.matches[0].Stats == nil {
+		t.Fatalf("expected match stats to be populated")
+	}
+
+	// Render view and verify all elements
+	viewStr := m.View()
+
+	// 1. Verify scoreboard
+	if !strings.Contains(viewStr, "Barcelona") || !strings.Contains(viewStr, "Real Madrid") {
+		t.Errorf("expected view to contain team names")
+	}
+
+	// 2. Verify events: goals, cards, penalty tag
+	if !strings.Contains(viewStr, "R. Lewandowski") || !strings.Contains(viewStr, "38'") {
+		t.Errorf("expected view to contain goal scorer Lewandowski 38'")
+	}
+	if !strings.Contains(viewStr, "Gavi") || !strings.Contains(viewStr, "🟨") {
+		t.Errorf("expected view to contain yellow card for Gavi")
+	}
+	if !strings.Contains(viewStr, "Vinicius Jr") || !strings.Contains(viewStr, "(pen.)") {
+		t.Errorf("expected view to contain penalty goal for Vinicius Jr")
+	}
+	if !strings.Contains(viewStr, "Rüdiger") || !strings.Contains(viewStr, "🟥") {
+		t.Errorf("expected view to contain red card for Rüdiger")
+	}
+
+	// 3. Verify statistics
+	if !strings.Contains(viewStr, "ESTADÍSTICAS DEL PARTIDO") {
+		t.Errorf("expected view to contain stats section header")
+	}
+	if !strings.Contains(viewStr, "Posesión") || !strings.Contains(viewStr, "58%") || !strings.Contains(viewStr, "42%") {
+		t.Errorf("expected view to contain possession stats")
+	}
+	if !strings.Contains(viewStr, "Tiros (Al arco)") || !strings.Contains(viewStr, "14 (6)") || !strings.Contains(viewStr, "8 (2)") {
+		t.Errorf("expected view to contain shots stats")
+	}
+	if !strings.Contains(viewStr, "Córners") || !strings.Contains(viewStr, "7") || !strings.Contains(viewStr, "3") {
+		t.Errorf("expected view to contain corners stats")
+	}
+	if !strings.Contains(viewStr, "Faltas") || !strings.Contains(viewStr, "11") || !strings.Contains(viewStr, "13") {
+		t.Errorf("expected view to contain fouls stats")
 	}
 }

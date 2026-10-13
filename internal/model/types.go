@@ -45,17 +45,47 @@ type MatchStatus struct {
 	Completed   bool   `json:"completed"`
 }
 
+// MatchEvent represents an in-game event (goal, card, penalty, own goal).
+type MatchEvent struct {
+	Type        string `json:"type"`        // "goal", "penalty", "owngoal", "card_yellow", "card_red"
+	Description string `json:"description"` // e.g. "Goal - Header", "Penalty - Scored"
+	Clock       string `json:"clock"`       // e.g. "38'"
+	TeamID      string `json:"teamId"`
+	PlayerName  string `json:"playerName"`  // e.g. "Robert Lewandowski"
+	IsScoring   bool   `json:"isScoring"`
+	IsPenalty   bool   `json:"isPenalty"`
+	IsOwnGoal   bool   `json:"isOwnGoal"`
+	IsRedCard   bool   `json:"isRedCard"`
+	IsYellow    bool   `json:"isYellow"`
+}
+
+// MatchStats represents team statistics for a fixture.
+type MatchStats struct {
+	HomePossession  string `json:"homePossession"`  // "58%"
+	AwayPossession  string `json:"awayPossession"`  // "42%"
+	HomeShots       string `json:"homeShots"`       // "14"
+	AwayShots       string `json:"awayShots"`       // "8"
+	HomeShotsOnGoal string `json:"homeShotsOnGoal"` // "6"
+	AwayShotsOnGoal string `json:"awayShotsOnGoal"` // "2"
+	HomeCorners     string `json:"homeCorners"`     // "7"
+	AwayCorners     string `json:"awayCorners"`     // "3"
+	HomeFouls       string `json:"homeFouls"`       // "11"
+	AwayFouls       string `json:"awayFouls"`       // "13"
+}
+
 // Match represents a soccer fixture.
 type Match struct {
-	ID        string      `json:"id"`
-	Title     string      `json:"title"`
-	HomeTeam  Competitor  `json:"homeTeam"`
-	AwayTeam  Competitor  `json:"awayTeam"`
-	StartTime time.Time   `json:"startTime"`
-	TimeStr   string      `json:"timeStr"`
-	Venue     string      `json:"venue"`
-	Status    MatchStatus `json:"status"`
-	LeagueKey string      `json:"leagueKey"`
+	ID        string       `json:"id"`
+	Title     string       `json:"title"`
+	HomeTeam  Competitor   `json:"homeTeam"`
+	AwayTeam  Competitor   `json:"awayTeam"`
+	StartTime time.Time    `json:"startTime"`
+	TimeStr   string       `json:"timeStr"`
+	Venue     string       `json:"venue"`
+	Status    MatchStatus  `json:"status"`
+	LeagueKey string       `json:"leagueKey"`
+	Events    []MatchEvent `json:"events"`
+	Stats     *MatchStats  `json:"stats"`
 }
 
 // Channel represents an HLS stream signal for a match.
@@ -89,9 +119,10 @@ var DefaultLeagues = []League{
 	{Key: "brasil", Name: "Brasileirão", Code: "bra.1", Emoji: "🇧🇷", Category: "Ligas Sudamericanas"},
 }
 
-// Client defines the contract for fetching fixtures from ESPN.
+// Client defines the contract for fetching fixtures and match details from ESPN.
 type Client interface {
 	FetchMatches(ctx context.Context, leagueKey string) ([]Match, error)
+	FetchMatchStats(ctx context.Context, leagueKey, eventID string) (*MatchStats, error)
 }
 
 // Resolver defines the contract for resolving match channels.
