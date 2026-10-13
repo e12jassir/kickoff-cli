@@ -10,80 +10,137 @@ import (
 
 // View renders the terminal user interface according to model state.
 func (m Model) View() string {
-	var b strings.Builder
+	if m.state == StateMainMenu {
+		return renderMainMenu(m)
+	}
+	return renderBrowsing(m)
+}
 
-	// 1. Header: App title
-	b.WriteString(AppTitleStyle.Render("⚽ KICKOFF · Terminal Live Football"))
-	b.WriteString("\n")
+func renderMainMenu(m Model) string {
+	logo := AsciiLogoStyle.Render(AsciiLogo)
+	subtitle := SubtitleStyle.Render("Terminal Live Football")
 
-	// 2. Tabs Row
-	var tabs []string
+	var lines []string
+	var lastCategory string
 	for i, league := range m.leagues {
-		if i == m.activeTab {
-			tabs = append(tabs, ActiveTabStyle.Render(league.Name))
+		cat := strings.ToUpper(league.Category)
+		if cat != "" && cat != lastCategory {
+			if len(lines) > 0 {
+				lines = append(lines, "")
+			}
+			lines = append(lines, CategoryHeaderStyle.Render(cat))
+			lastCategory = cat
+		}
+
+		prefix := "   "
+		if i == m.leagueCursor {
+			prefix = " › "
+		}
+
+		emoji := league.Emoji
+		if emoji == "" {
+			emoji = "⚽"
+		}
+
+		itemText := fmt.Sprintf("%s%s  %s", prefix, emoji, league.Name)
+		if i == m.leagueCursor {
+			lines = append(lines, MenuItemSelected.Render(itemText))
 		} else {
-			tabs = append(tabs, InactiveTabStyle.Render(league.Name))
+			lines = append(lines, MenuItemNormal.Render(itemText))
 		}
 	}
-	b.WriteString(TabsRowStyle.Render(lipgloss.JoinHorizontal(lipgloss.Top, tabs...)))
-	b.WriteString("\n\n")
 
-	// 3. Body Content
+	menuBox := MenuBoxStyle.Render(strings.Join(lines, "\n"))
+	footer := FooterHelpStyle.Render("↑/k  ↓/j: navegar  •  enter: entrar  •  q: salir")
+
+	content := lipgloss.JoinVertical(
+		lipgloss.Center,
+		logo,
+		subtitle,
+		"",
+		menuBox,
+		"",
+		footer,
+	)
+
+	w := m.width
+	h := m.height
+	if w <= 0 {
+		w = 80
+	}
+	if h <= 0 {
+		h = 24
+	}
+	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, content)
+}
+
+func renderBrowsing(m Model) string {
+	curr := m.CurrentLeague()
+	headerText := fmt.Sprintf("⚽ KICKOFF · %s %s", curr.Emoji, curr.Name)
+	if curr.Emoji == "" {
+		headerText = fmt.Sprintf("⚽ KICKOFF · %s", curr.Name)
+	}
+	header := AppTitleStyle.Render(headerText)
+
+	var body string
+	footer := FooterHelpStyle.Render("↑/k  ↓/j: navegar  •  enter: ver señales  •  esc: volver  •  r: recargar  •  q: salir")
+
 	switch m.state {
 	case StateLoading:
-		b.WriteString(fmt.Sprintf("  %s %s\n\n", m.spinner.View(), m.loadingMsg))
+		body = fmt.Sprintf("  %s %s", m.spinner.View(), m.loadingMsg)
+		footer = FooterHelpStyle.Render("esc: volver  •  q: salir")
 
 	case StateError:
-		b.WriteString(StatusBarError.Render(fmt.Sprintf("  ✖ Error: %s\n\n", m.errorMsg)))
-		b.WriteString(FooterHelpStyle.Render("  Presiona 'r' para reintentar o cambia de liga con ←/→\n\n"))
+		body = StatusBarError.Render(fmt.Sprintf("  ✖ Error: %s", m.errorMsg))
+		footer = FooterHelpStyle.Render("r: recargar  •  esc: volver  •  q: salir")
 
-	default:
+	case StateChannelSelect:
+		matchTitle := ""
+		if m.matchCursor < len(m.matches) {
+			matchTitle = m.matches[m.matchCursor].Title
+		}
+		modalContent := renderChannelModal(matchTitle, m.channels, m.channelCursor)
+		body = ModalBoxStyle.Render(modalContent)
+		footer = FooterHelpStyle.Render("↑/k  ↓/j: navegar  •  enter: reproducir  •  esc: volver  •  q: salir")
+
+	default: // StateBrowsing, StatePlaying
 		if len(m.matches) == 0 {
-			b.WriteString(EmptyStateStyle.Render(fmt.Sprintf("⚽ No hay partidos programados hoy para %s.", m.CurrentLeague().Name)))
-			b.WriteString("\n\n")
+			emptyMsg := fmt.Sprintf("⚽ No hay partidos programados hoy para %s.", curr.Name)
+			body = MenuBoxStyle.Render(EmptyStateStyle.Render(emptyMsg))
 		} else {
-			// Render match list
+			var matchCards []string
 			for i, match := range m.matches {
 				cardContent := renderMatchCard(match)
 				if i == m.matchCursor {
-					b.WriteString(MatchCardSelected.Render(cardContent))
+					matchCards = append(matchCards, MatchCardSelected.Render(cardContent))
 				} else {
-					b.WriteString(MatchCardNormal.Render(cardContent))
+					matchCards = append(matchCards, MatchCardNormal.Render(cardContent))
 				}
-				b.WriteString("\n")
 			}
-		}
-
-		// Channel Modal Popup
-		if m.state == StateChannelSelect && len(m.channels) > 0 {
-			matchTitle := ""
-			if m.matchCursor < len(m.matches) {
-				matchTitle = m.matches[m.matchCursor].Title
-			}
-			modalContent := renderChannelModal(matchTitle, m.channels, m.channelCursor)
-			b.WriteString("\n")
-			b.WriteString(ModalBoxStyle.Render(modalContent))
-			b.WriteString("\n")
+			body = lipgloss.JoinVertical(lipgloss.Center, matchCards...)
 		}
 	}
 
-	// 4. Status Bar
+	var elements []string
+	elements = append(elements, header, "")
 	if m.statusMsg != "" {
-		b.WriteString("\n")
-		b.WriteString(StatusBarSuccess.Render("  " + m.statusMsg))
-		b.WriteString("\n")
+		elements = append(elements, StatusBarSuccess.Render(m.statusMsg), "")
 	}
 	if m.errorMsg != "" && m.state != StateError {
-		b.WriteString("\n")
-		b.WriteString(StatusBarError.Render("  ✖ " + m.errorMsg))
-		b.WriteString("\n")
+		elements = append(elements, StatusBarError.Render(m.errorMsg), "")
 	}
+	elements = append(elements, body, "", footer)
+	content := lipgloss.JoinVertical(lipgloss.Center, elements...)
 
-	// 5. Footer Help
-	b.WriteString("\n")
-	b.WriteString(renderFooter(m.state))
-
-	return b.String()
+	w := m.width
+	h := m.height
+	if w <= 0 {
+		w = 80
+	}
+	if h <= 0 {
+		h = 24
+	}
+	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, content)
 }
 
 func renderMatchCard(match model.Match) string {
@@ -149,7 +206,7 @@ func renderChannelModal(matchTitle string, channels []model.Channel, selectedIdx
 	title := fmt.Sprintf("📡 Señales de transmisión: %s", matchTitle)
 	modal.WriteString(ModalTitleStyle.Render(title))
 	modal.WriteString("\n")
-	modal.WriteString(VenueStyle.Render("Selecciona canal con Enter · Esc para volver"))
+	modal.WriteString(VenueStyle.Render("Enter: reproducir  •  Esc: volver"))
 	modal.WriteString("\n\n")
 
 	for i, ch := range channels {
@@ -169,23 +226,4 @@ func renderChannelModal(matchTitle string, channels []model.Channel, selectedIdx
 	}
 
 	return modal.String()
-}
-
-func renderFooter(state UIState) string {
-	if state == StateChannelSelect {
-		return FooterHelpStyle.Render(
-			FooterKeyStyle.Render("↑/↓") + " Seleccionar señal  " +
-				FooterKeyStyle.Render("Enter") + " Reproducir en MPV  " +
-				FooterKeyStyle.Render("Esc") + " Cerrar modal  " +
-				FooterKeyStyle.Render("q") + " Salir",
-		)
-	}
-
-	return FooterHelpStyle.Render(
-		FooterKeyStyle.Render("←/→") + " Cambiar liga  " +
-			FooterKeyStyle.Render("↑/↓") + " Seleccionar partido  " +
-			FooterKeyStyle.Render("Enter") + " Ver señales  " +
-			FooterKeyStyle.Render("r") + " Recargar  " +
-			FooterKeyStyle.Render("q") + " Salir",
-	)
 }

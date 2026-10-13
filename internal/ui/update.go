@@ -46,8 +46,6 @@ func playStreamCmd(player model.Controller, req model.PlayRequest) tea.Cmd {
 
 // Update handles incoming events and state transitions.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var cmds []tea.Cmd
-
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -86,65 +84,52 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
-		switch msg.String() {
+		key := msg.String()
+		switch key {
 		case "ctrl+c", "q":
 			if m.player != nil {
 				_ = m.player.Stop()
 			}
 			return m, tea.Quit
+		}
 
-		case "left", "h", "shift+tab":
-			if m.state != StateChannelSelect {
-				m.activeTab = (m.activeTab - 1 + len(m.leagues)) % len(m.leagues)
-				m.state = StateLoading
-				m.matches = nil
-				m.matchCursor = 0
-				m.channels = nil
-				m.channelCursor = 0
-				m.errorMsg = ""
-				league := m.CurrentLeague()
-				m.loadingMsg = "Consultando partidos de hoy (" + league.Name + ")..."
-				return m, tea.Batch(m.spinner.Tick, fetchMatchesCmd(m.client, league.Key))
-			}
-
-		case "right", "l", "tab":
-			if m.state != StateChannelSelect {
-				m.activeTab = (m.activeTab + 1) % len(m.leagues)
-				m.state = StateLoading
-				m.matches = nil
-				m.matchCursor = 0
-				m.channels = nil
-				m.channelCursor = 0
-				m.errorMsg = ""
-				league := m.CurrentLeague()
-				m.loadingMsg = "Consultando partidos de hoy (" + league.Name + ")..."
-				return m, tea.Batch(m.spinner.Tick, fetchMatchesCmd(m.client, league.Key))
-			}
-
-		case "up", "k":
-			if m.state == StateChannelSelect {
-				if m.channelCursor > 0 {
-					m.channelCursor--
+		switch m.state {
+		case StateMainMenu:
+			switch key {
+			case "up", "k":
+				if len(m.leagues) > 0 {
+					m.leagueCursor = (m.leagueCursor - 1 + len(m.leagues)) % len(m.leagues)
 				}
-			} else if m.state == StateBrowsing || m.state == StatePlaying {
+			case "down", "j":
+				if len(m.leagues) > 0 {
+					m.leagueCursor = (m.leagueCursor + 1) % len(m.leagues)
+				}
+			case "enter":
+				if len(m.leagues) > 0 {
+					m.activeTab = m.leagueCursor
+					m.state = StateLoading
+					m.matches = nil
+					m.matchCursor = 0
+					m.channels = nil
+					m.channelCursor = 0
+					m.errorMsg = ""
+					league := m.CurrentLeague()
+					m.loadingMsg = "Consultando partidos de hoy (" + league.Name + ")..."
+					return m, tea.Batch(m.spinner.Tick, fetchMatchesCmd(m.client, league.Key))
+				}
+			}
+
+		case StateBrowsing, StatePlaying:
+			switch key {
+			case "up", "k":
 				if m.matchCursor > 0 {
 					m.matchCursor--
 				}
-			}
-
-		case "down", "j":
-			if m.state == StateChannelSelect {
-				if m.channelCursor < len(m.channels)-1 {
-					m.channelCursor++
-				}
-			} else if m.state == StateBrowsing || m.state == StatePlaying {
+			case "down", "j":
 				if m.matchCursor < len(m.matches)-1 {
 					m.matchCursor++
 				}
-			}
-
-		case "enter":
-			if m.state == StateBrowsing || m.state == StatePlaying {
+			case "enter":
 				if len(m.matches) > 0 && m.matchCursor < len(m.matches) {
 					selectedMatch := m.matches[m.matchCursor]
 					m.channels = m.catalog.GetChannels(selectedMatch)
@@ -153,7 +138,34 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.state = StateChannelSelect
 					}
 				}
-			} else if m.state == StateChannelSelect {
+			case "esc", "backspace", "h":
+				m.state = StateMainMenu
+				m.matches = nil
+				m.matchCursor = 0
+				m.channels = nil
+				m.channelCursor = 0
+				m.statusMsg = ""
+				m.errorMsg = ""
+				return m, nil
+			case "r":
+				m.state = StateLoading
+				league := m.CurrentLeague()
+				m.loadingMsg = "Recargando partidos (" + league.Name + ")..."
+				m.errorMsg = ""
+				return m, tea.Batch(m.spinner.Tick, fetchMatchesCmd(m.client, league.Key))
+			}
+
+		case StateChannelSelect:
+			switch key {
+			case "up", "k":
+				if m.channelCursor > 0 {
+					m.channelCursor--
+				}
+			case "down", "j":
+				if m.channelCursor < len(m.channels)-1 {
+					m.channelCursor++
+				}
+			case "enter":
 				if len(m.channels) > 0 && m.channelCursor < len(m.channels) {
 					selectedChannel := m.channels[m.channelCursor]
 					selectedMatch := m.matches[m.matchCursor]
@@ -167,18 +179,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					return m, tea.Batch(m.spinner.Tick, playStreamCmd(m.player, req))
 				}
-			}
-
-		case "esc":
-			if m.state == StateChannelSelect {
+			case "esc", "backspace":
 				m.state = StateBrowsing
 				m.channels = nil
 				m.channelCursor = 0
 				return m, nil
 			}
 
-		case "r":
-			if m.state != StateChannelSelect {
+		case StateLoading, StateError:
+			switch key {
+			case "esc", "backspace", "h":
+				m.state = StateMainMenu
+				m.matches = nil
+				m.matchCursor = 0
+				m.channels = nil
+				m.channelCursor = 0
+				m.statusMsg = ""
+				m.errorMsg = ""
+				return m, nil
+			case "r":
 				m.state = StateLoading
 				league := m.CurrentLeague()
 				m.loadingMsg = "Recargando partidos (" + league.Name + ")..."
@@ -188,5 +207,5 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	return m, tea.Batch(cmds...)
+	return m, nil
 }

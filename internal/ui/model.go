@@ -10,7 +10,8 @@ import (
 type UIState int
 
 const (
-	StateLoading UIState = iota
+	StateMainMenu UIState = iota
+	StateLoading
 	StateBrowsing
 	StateChannelSelect
 	StatePlaying
@@ -23,9 +24,10 @@ type Model struct {
 	catalog model.Resolver
 	player  model.Controller
 
-	state     UIState
-	leagues   []model.League
-	activeTab int
+	state        UIState
+	leagues      []model.League
+	leagueCursor int
+	activeTab    int
 
 	matches     []model.Match
 	matchCursor int
@@ -56,15 +58,16 @@ func NewModel(client model.Client, catalog model.Resolver, player model.Controll
 		client:        client,
 		catalog:       catalog,
 		player:        player,
-		state:         StateLoading,
+		state:         StateMainMenu,
 		leagues:       leagues,
+		leagueCursor:  0,
 		activeTab:     0,
 		matches:       nil,
 		matchCursor:   0,
 		channels:      nil,
 		channelCursor: 0,
 		spinner:       sp,
-		loadingMsg:    "Consultando partidos de hoy (" + leagues[0].Name + ")...",
+		loadingMsg:    "",
 		statusMsg:     "",
 		errorMsg:      "",
 		width:         80,
@@ -75,7 +78,7 @@ func NewModel(client model.Client, catalog model.Resolver, player model.Controll
 // CurrentLeague returns the currently selected league.
 func (m Model) CurrentLeague() model.League {
 	if len(m.leagues) == 0 {
-		return model.League{Key: "laliga", Name: "La Liga (España)", Code: "esp.1"}
+		return model.League{Key: "champions", Name: "UEFA Champions League", Code: "uefa.champions", Emoji: "🏆", Category: "Torneos Internacionales"}
 	}
 	if m.activeTab < 0 || m.activeTab >= len(m.leagues) {
 		return m.leagues[0]
@@ -83,11 +86,7 @@ func (m Model) CurrentLeague() model.League {
 	return m.leagues[m.activeTab]
 }
 
-// Init begins spinner tick and loads fixtures for the initial league tab.
+// Init begins spinner tick (does not auto-fetch until user chooses a league).
 func (m Model) Init() tea.Cmd {
-	league := m.CurrentLeague()
-	return tea.Batch(
-		m.spinner.Tick,
-		fetchMatchesCmd(m.client, league.Key),
-	)
+	return m.spinner.Tick
 }

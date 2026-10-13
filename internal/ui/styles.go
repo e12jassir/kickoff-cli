@@ -2,6 +2,14 @@ package ui
 
 import "github.com/charmbracelet/lipgloss"
 
+// AsciiLogo renders Kickoff in ANSI Shadow block font (Jules/Neovim style).
+const AsciiLogo = `██╗  ██╗██╗ ██████╗██╗  ██╗ ██████╗ ███████╗███████╗
+██║ ██╔╝██║██╔════╝██║ ██╔╝██╔═══██╗██╔════╝██╔════╝
+█████╔╝ ██║██║     █████╔╝ ██║   ██║█████╗  █████╗  
+██╔═██╗ ██║██║     ██╔═██╗ ██║   ██║██╔══╝  ██╔══╝  
+██║  ██╗██║╚██████╗██║  ██╗╚██████╔╝██║     ██║     
+╚═╝  ╚═╝╚═╝ ╚═════╝╚═╝  ╚═╝ ╚═════╝ ╚═╝     ╚═╝     `
+
 var (
 	// Base Colors
 	ColorPrimary   = lipgloss.Color("#10B981") // Emerald Green
@@ -14,12 +22,39 @@ var (
 	ColorDarkBg    = lipgloss.Color("#111827") // Dark Slate
 	ColorActiveBg  = lipgloss.Color("#065F46") // Forest Green
 
-	// Header & Title
+	// Header, Title & Subtitle
 	AppTitleStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(ColorPrimary).
 			Padding(0, 1).
 			MarginBottom(1)
+
+	AsciiLogoStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(ColorPrimary)
+
+	SubtitleStyle = lipgloss.NewStyle().
+			Foreground(ColorMuted).
+			Italic(true)
+
+	// Main Menu
+	MenuBoxStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(ColorPrimary).
+			Padding(1, 2).
+			Width(56)
+
+	CategoryHeaderStyle = lipgloss.NewStyle().
+			Foreground(ColorSecondary).
+			Bold(true)
+
+	MenuItemNormal = lipgloss.NewStyle().
+			Foreground(ColorText)
+
+	MenuItemSelected = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(ColorPrimary).
+			Background(ColorDarkBg)
 
 	// League Tabs
 	ActiveTabStyle = lipgloss.NewStyle().
@@ -42,12 +77,14 @@ var (
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(ColorMuted).
 			Padding(0, 1).
+			Width(56).
 			MarginBottom(1)
 
 	MatchCardSelected = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
 				BorderForeground(ColorPrimary).
 				Padding(0, 1).
+				Width(56).
 				MarginBottom(1)
 
 	MatchTimeStyle = lipgloss.NewStyle().
@@ -80,7 +117,8 @@ var (
 	ModalBoxStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(ColorPrimary).
-			Padding(1, 2)
+			Padding(1, 2).
+			Width(56)
 
 	ModalTitleStyle = lipgloss.NewStyle().
 			Bold(true).

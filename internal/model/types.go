@@ -20,9 +20,11 @@ var (
 
 // League represents a football league or competition.
 type League struct {
-	Key  string `json:"key"`
-	Name string `json:"name"`
-	Code string `json:"code"`
+	Key      string `json:"key"`
+	Name     string `json:"name"`
+	Code     string `json:"code"`
+	Emoji    string `json:"emoji"`
+	Category string `json:"category"`
 }
 
 // Competitor represents a participating team in a match.
@@ -73,18 +75,18 @@ type PlayRequest struct {
 	BitrateMode string  `json:"bitrateMode"`
 }
 
-// DefaultLeagues lists all 10 supported leagues.
+// DefaultLeagues lists all 10 supported leagues grouped by category.
 var DefaultLeagues = []League{
-	{Key: "laliga", Name: "La Liga (España)", Code: "esp.1"},
-	{Key: "premier", Name: "Premier League (Inglaterra)", Code: "eng.1"},
-	{Key: "seriea", Name: "Serie A (Italia)", Code: "ita.1"},
-	{Key: "bundesliga", Name: "Bundesliga (Alemania)", Code: "ger.1"},
-	{Key: "ligue1", Name: "Ligue 1 (Francia)", Code: "fra.1"},
-	{Key: "champions", Name: "UEFA Champions League", Code: "uefa.champions"},
-	{Key: "libertadores", Name: "Copa Libertadores", Code: "conmebol.libertadores"},
-	{Key: "argentina", Name: "Liga Profesional Argentina", Code: "arg.1"},
-	{Key: "colombia", Name: "Liga BetPlay (Colombia)", Code: "col.1"},
-	{Key: "brasil", Name: "Brasileirão Série A", Code: "bra.1"},
+	{Key: "champions", Name: "UEFA Champions League", Code: "uefa.champions", Emoji: "🏆", Category: "Torneos Internacionales"},
+	{Key: "libertadores", Name: "Copa Libertadores", Code: "conmebol.libertadores", Emoji: "🌎", Category: "Torneos Internacionales"},
+	{Key: "premier", Name: "Premier League", Code: "eng.1", Emoji: "🏴󠁧󠁢󠁥󠁮󠁧󠁿", Category: "Ligas Europeas"},
+	{Key: "laliga", Name: "La Liga", Code: "esp.1", Emoji: "🇪🇸", Category: "Ligas Europeas"},
+	{Key: "seriea", Name: "Serie A", Code: "ita.1", Emoji: "🇮🇹", Category: "Ligas Europeas"},
+	{Key: "bundesliga", Name: "Bundesliga", Code: "ger.1", Emoji: "🇩🇪", Category: "Ligas Europeas"},
+	{Key: "ligue1", Name: "Ligue 1", Code: "fra.1", Emoji: "🇫🇷", Category: "Ligas Europeas"},
+	{Key: "colombia", Name: "Liga BetPlay", Code: "col.1", Emoji: "🇨🇴", Category: "Ligas Sudamericanas"},
+	{Key: "argentina", Name: "Liga Profesional", Code: "arg.1", Emoji: "🇦🇷", Category: "Ligas Sudamericanas"},
+	{Key: "brasil", Name: "Brasileirão", Code: "bra.1", Emoji: "🇧🇷", Category: "Ligas Sudamericanas"},
 }
 
 // Client defines the contract for fetching fixtures from ESPN.

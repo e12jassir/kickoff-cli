@@ -43,55 +43,88 @@ func (m *mockPlayer) Stop() error {
 	return nil
 }
 
-func TestModel_TabNavigation(t *testing.T) {
+func TestModel_MainMenu_Navigation(t *testing.T) {
 	cli := &mockClient{}
 	cat := &mockCatalog{}
 	pla := &mockPlayer{}
 
 	m := NewModel(cli, cat, pla)
 
-	if m.activeTab != 0 {
-		t.Fatalf("expected initial activeTab 0, got %d", m.activeTab)
+	if m.state != StateMainMenu {
+		t.Fatalf("expected initial state StateMainMenu, got %d", m.state)
+	}
+	if m.leagueCursor != 0 {
+		t.Fatalf("expected initial leagueCursor 0, got %d", m.leagueCursor)
 	}
 
-	// Move right
-	newM, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	// Move down with 'j'
+	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
 	m = newM.(Model)
-	if m.activeTab != 1 {
-		t.Errorf("expected activeTab 1 after 'l', got %d", m.activeTab)
-	}
-	if cmd == nil {
-		t.Errorf("expected fetch cmd when tab changes")
+	if m.leagueCursor != 1 {
+		t.Errorf("expected leagueCursor 1 after 'j', got %d", m.leagueCursor)
 	}
 
-	// Move left
-	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	// Move up with 'k'
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
 	m = newM.(Model)
-	if m.activeTab != 0 {
-		t.Errorf("expected activeTab 0 after 'h', got %d", m.activeTab)
+	if m.leagueCursor != 0 {
+		t.Errorf("expected leagueCursor 0 after 'k', got %d", m.leagueCursor)
 	}
 
-	// Move left from 0 (wrap around)
-	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	// Wrap around up from 0 to last
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
 	m = newM.(Model)
-	if m.activeTab != len(m.leagues)-1 {
-		t.Errorf("expected wrap around to last tab, got %d", m.activeTab)
+	if m.leagueCursor != len(m.leagues)-1 {
+		t.Errorf("expected leagueCursor %d after wrap-up, got %d", len(m.leagues)-1, m.leagueCursor)
+	}
+
+	// Wrap around down from last to 0
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = newM.(Model)
+	if m.leagueCursor != 0 {
+		t.Errorf("expected leagueCursor 0 after wrap-down, got %d", m.leagueCursor)
+	}
+
+	// Check View rendering in StateMainMenu
+	viewStr := m.View()
+	if !strings.Contains(viewStr, "Terminal Live Football") {
+		t.Errorf("expected view to contain subtitle 'Terminal Live Football'")
+	}
+	if !strings.Contains(viewStr, "TORNEOS INTERNACIONALES") {
+		t.Errorf("expected view to contain category 'TORNEOS INTERNACIONALES'")
+	}
+	if !strings.Contains(viewStr, "LIGAS EUROPEAS") {
+		t.Errorf("expected view to contain category 'LIGAS EUROPEAS'")
+	}
+	if !strings.Contains(viewStr, "LIGAS SUDAMERICANAS") {
+		t.Errorf("expected view to contain category 'LIGAS SUDAMERICANAS'")
+	}
+	if !strings.Contains(viewStr, "›") {
+		t.Errorf("expected view to contain active cursor '›'")
 	}
 }
 
-func TestModel_MatchesLoaded_And_Modal(t *testing.T) {
+func TestModel_Enter_Transition_To_Matches(t *testing.T) {
 	cli := &mockClient{}
-	cat := &mockCatalog{
-		channels: []model.Channel{
-			{Name: "ESPN 1 HD (720p)", DisplayName: "ESPN 1 HD (720p)", URL: "http://example.com/1.m3u8", BitrateMode: "min"},
-			{Name: "ESPN 1 HD (1080p)", DisplayName: "ESPN 1 HD (1080p)", URL: "http://example.com/2.m3u8", BitrateMode: "max"},
-		},
-	}
+	cat := &mockCatalog{}
 	pla := &mockPlayer{}
 
 	m := NewModel(cli, cat, pla)
 
-	// Simulate matches loaded
+	// Press Enter on main menu (index 0: UEFA Champions League)
+	newM, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newM.(Model)
+
+	if m.state != StateLoading {
+		t.Fatalf("expected state StateLoading after Enter, got %d", m.state)
+	}
+	if cmd == nil {
+		t.Fatalf("expected fetch command after Enter")
+	}
+	if m.activeTab != 0 {
+		t.Errorf("expected activeTab 0, got %d", m.activeTab)
+	}
+
 	mockMatches := []model.Match{
 		{
 			ID:        "m1",
@@ -112,7 +145,8 @@ func TestModel_MatchesLoaded_And_Modal(t *testing.T) {
 		},
 	}
 
-	newM, _ := m.Update(matchesLoadedMsg{
+	// Deliver loaded matches
+	newM, _ = m.Update(matchesLoadedMsg{
 		leagueKey: m.CurrentLeague().Key,
 		matches:   mockMatches,
 	})
@@ -125,7 +159,94 @@ func TestModel_MatchesLoaded_And_Modal(t *testing.T) {
 		t.Fatalf("expected 2 matches, got %d", len(m.matches))
 	}
 
-	// Move down
+	viewStr := m.View()
+	if !strings.Contains(viewStr, "KICKOFF") {
+		t.Errorf("expected header to contain 'KICKOFF', got:\n%s", viewStr)
+	}
+	if !strings.Contains(viewStr, "Real Madrid") {
+		t.Errorf("expected view to contain 'Real Madrid', got:\n%s", viewStr)
+	}
+}
+
+func TestModel_Esc_Back_To_MainMenu(t *testing.T) {
+	cli := &mockClient{}
+	cat := &mockCatalog{}
+	pla := &mockPlayer{}
+
+	m := NewModel(cli, cat, pla)
+
+	// Transition to browsing with matches
+	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newM.(Model)
+	newM, _ = m.Update(matchesLoadedMsg{
+		leagueKey: m.CurrentLeague().Key,
+		matches: []model.Match{
+			{ID: "m1", Title: "Team A vs Team B"},
+		},
+	})
+	m = newM.(Model)
+
+	if m.state != StateBrowsing {
+		t.Fatalf("expected state StateBrowsing, got %d", m.state)
+	}
+
+	// Press Esc to return to MainMenu
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = newM.(Model)
+
+	if m.state != StateMainMenu {
+		t.Fatalf("expected state StateMainMenu after Esc, got %d", m.state)
+	}
+	if m.matches != nil {
+		t.Errorf("expected matches to be nil after returning to main menu")
+	}
+
+	viewStr := m.View()
+	if !strings.Contains(viewStr, "Terminal Live Football") {
+		t.Errorf("expected main menu view after Esc, got:\n%s", viewStr)
+	}
+
+	// Test 'h' key returns to main menu as well
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newM.(Model)
+	newM, _ = m.Update(matchesLoadedMsg{
+		leagueKey: m.CurrentLeague().Key,
+		matches:   []model.Match{{ID: "m2"}},
+	})
+	m = newM.(Model)
+
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m = newM.(Model)
+	if m.state != StateMainMenu {
+		t.Fatalf("expected state StateMainMenu after 'h', got %d", m.state)
+	}
+}
+
+func TestModel_Channel_Modal_And_Playback(t *testing.T) {
+	cli := &mockClient{}
+	cat := &mockCatalog{
+		channels: []model.Channel{
+			{Name: "ESPN 1 HD (720p)", DisplayName: "ESPN 1 HD (720p)", URL: "http://example.com/1.m3u8", BitrateMode: "min"},
+			{Name: "ESPN 1 HD (1080p)", DisplayName: "ESPN 1 HD (1080p)", URL: "http://example.com/2.m3u8", BitrateMode: "max"},
+		},
+	}
+	pla := &mockPlayer{}
+
+	m := NewModel(cli, cat, pla)
+
+	// Enter league and load matches
+	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newM.(Model)
+	newM, _ = m.Update(matchesLoadedMsg{
+		leagueKey: m.CurrentLeague().Key,
+		matches: []model.Match{
+			{ID: "m1", Title: "Liverpool vs Arsenal"},
+			{ID: "m2", Title: "Chelsea vs City"},
+		},
+	})
+	m = newM.(Model)
+
+	// Navigate down to match 1
 	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
 	m = newM.(Model)
 	if m.matchCursor != 1 {
@@ -139,35 +260,48 @@ func TestModel_MatchesLoaded_And_Modal(t *testing.T) {
 		t.Fatalf("expected StateChannelSelect, got %d", m.state)
 	}
 	if len(m.channels) != 2 {
-		t.Fatalf("expected 2 channels in modal, got %d", len(m.channels))
+		t.Fatalf("expected 2 channels, got %d", len(m.channels))
 	}
 
-	// Verify view contains modal
 	viewStr := m.View()
 	if !strings.Contains(viewStr, "Señales de transmisión") {
-		t.Errorf("expected view to contain modal title, got:\n%s", viewStr)
+		t.Errorf("expected view to contain 'Señales de transmisión', got:\n%s", viewStr)
 	}
 
-	// Press Esc to close modal
+	// Navigate channel cursor
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	m = newM.(Model)
+	if m.channelCursor != 1 {
+		t.Errorf("expected channelCursor 1, got %d", m.channelCursor)
+	}
+
+	// Press Esc to dismiss modal and return to StateBrowsing (keeping matches intact)
 	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = newM.(Model)
 	if m.state != StateBrowsing {
-		t.Fatalf("expected StateBrowsing after Esc, got %d", m.state)
+		t.Fatalf("expected StateBrowsing after Esc in modal, got %d", m.state)
+	}
+	if len(m.matches) != 2 {
+		t.Fatalf("expected matches to remain intact (count 2), got %d", len(m.matches))
 	}
 
-	// Reopen modal and trigger play
+	// Reopen modal and select channel with Enter
 	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = newM.(Model)
 	newM, playCmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = newM.(Model)
+
 	if playCmd == nil {
-		t.Fatalf("expected playCmd on channel select")
+		t.Fatalf("expected playCmd after channel select")
+	}
+	if m.state != StatePlaying {
+		t.Fatalf("expected StatePlaying, got %d", m.state)
 	}
 	if !strings.Contains(m.statusMsg, "Conectando con") {
 		t.Errorf("expected statusMsg connecting, got %s", m.statusMsg)
 	}
 
-	// Simulate playback started msg
+	// Delivery playback started message
 	newM, _ = m.Update(playbackStartedMsg{channel: m.channels[0]})
 	m = newM.(Model)
 	if !strings.Contains(m.statusMsg, "Reproduciendo") {
@@ -182,8 +316,12 @@ func TestModel_EmptyMatches_And_Error(t *testing.T) {
 
 	m := NewModel(cli, cat, pla)
 
+	// Enter league
+	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newM.(Model)
+
 	// Simulate empty matches loaded
-	newM, _ := m.Update(matchesLoadedMsg{
+	newM, _ = m.Update(matchesLoadedMsg{
 		leagueKey: m.CurrentLeague().Key,
 		matches:   []model.Match{},
 	})
@@ -206,6 +344,13 @@ func TestModel_EmptyMatches_And_Error(t *testing.T) {
 	viewStr = m.View()
 	if !strings.Contains(viewStr, "connection failed") {
 		t.Errorf("expected error message in view, got:\n%s", viewStr)
+	}
+
+	// Press Esc to return to MainMenu from StateError
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = newM.(Model)
+	if m.state != StateMainMenu {
+		t.Fatalf("expected StateMainMenu after Esc from StateError, got %d", m.state)
 	}
 }
 
