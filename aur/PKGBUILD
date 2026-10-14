@@ -14,7 +14,7 @@ optdepends=(
 provides=('kickoff')
 conflicts=('kickoff')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('bd8f7126ee1b222231e80dd0cb3bdea81557c0e43f97380a5f5c24ddbbe47b46')
+sha256sums=('c63951f8c29ea54835e5375ac27a1651438e00a82fe68674aff150d0cd706d4b')
 
 build() {
     cd "$pkgname-$pkgver"
