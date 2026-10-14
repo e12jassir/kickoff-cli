@@ -86,7 +86,12 @@ cd kickoff-cli
 make install
 ```
 
-> **Requirement:** [`mpv`](https://mpv.io/) must be installed on your system to launch video streams.
+> [!IMPORTANT]
+> **Runtime Dependency:** [`mpv`](https://mpv.io/installation/) must be installed on your system to play live broadcasts:
+> - **Arch Linux / Manjaro:** `sudo pacman -S mpv` *(handled automatically if installing via AUR)*
+> - **Debian / Ubuntu:** `sudo apt install mpv`
+> - **Fedora:** `sudo dnf install mpv`
+> - **macOS:** `brew install mpv`
 
 ---
 

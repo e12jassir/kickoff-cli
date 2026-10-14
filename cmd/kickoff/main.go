@@ -12,7 +12,7 @@ import (
 	"github.com/e12jassir/kickoff/internal/ui"
 )
 
-const version = "3.0.0"
+const version = "0.1.0"
 
 func main() {
 	versionFlag := flag.Bool("version", false, "Print version information and exit")

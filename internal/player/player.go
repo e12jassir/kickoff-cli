@@ -156,6 +156,12 @@ func (c *Controller) stopLocked() error {
 // PlayStream launches an MPV instance detached from stdin and awaits IPC video confirmation.
 func (c *Controller) PlayStream(ctx context.Context, req model.PlayRequest) error {
 	c.mu.Lock()
+
+	if _, err := exec.LookPath(c.mpvBinary); err != nil {
+		c.mu.Unlock()
+		return fmt.Errorf("mpv no está instalado en tu sistema. Instálalo con 'sudo pacman -S mpv' (Arch) o 'sudo apt install mpv' (Ubuntu/Debian) — https://mpv.io")
+	}
+
 	_ = c.stopLocked()
 
 	dir, sockPath, err := CreateSocketDir()
