@@ -30,12 +30,21 @@ type ChannelTarget struct {
 	StreamURL string `json:"stream_url"`
 }
 
+// ProgramEntry holds program title, scheduled broadcast times, and live status.
+type ProgramEntry struct {
+	Title     string `json:"title"`
+	StartTime string `json:"start_time,omitempty"` // e.g. "13:40"
+	EndTime   string `json:"end_time,omitempty"`   // e.g. "16:00"
+	IsLiveNow bool   `json:"is_live_now,omitempty"`
+}
+
 // ChannelGuide holds the crawled programs for a specific channel.
 type ChannelGuide struct {
-	Name      string   `json:"name"`
-	Slug      string   `json:"slug"`
-	StreamURL string   `json:"stream_url"`
-	Programs  []string `json:"programs"`
+	Name      string         `json:"name"`
+	Slug      string         `json:"slug"`
+	StreamURL string         `json:"stream_url"`
+	Programs  []string       `json:"programs"`
+	Entries   []ProgramEntry `json:"entries,omitempty"`
 }
 
 // GuideCache represents the serialized on-disk cache for a day's programming.

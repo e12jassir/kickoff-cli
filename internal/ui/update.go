@@ -2,15 +2,37 @@ package ui
 
 import (
 	"context"
+	"os"
+	"os/exec"
 	"sort"
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/e12jassir/kickoff/internal/model"
+	"github.com/e12jassir/kickoff/internal/updater"
 )
 
 // Async messages for Bubble Tea event loop.
+type updateAvailableMsg struct {
+	tagName string
+}
+
+type updateFinishedMsg struct {
+	err error
+}
+
+func checkUpdateCmd(currentVersion string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		rel, newer, err := updater.CheckForUpdate(ctx, "", currentVersion)
+		if err == nil && newer && rel != nil {
+			return updateAvailableMsg{tagName: rel.TagName}
+		}
+		return nil
+	}
+}
 type matchesLoadedMsg struct {
 	leagueKey string
 	matches   []model.Match
@@ -304,6 +326,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusMsg = ""
 		return m, nil
 
+	case updateAvailableMsg:
+		m.updateAvailable = msg.tagName
+		return m, nil
+
+	case updateFinishedMsg:
+		if msg.err != nil {
+			m.errorMsg = "Error al actualizar: " + msg.err.Error()
+		} else {
+			m.statusMsg = "✓ kickoff actualizado a " + m.updateAvailable + ". ¡Reinicia la app!"
+			m.updateAvailable = ""
+		}
+		return m, nil
+
 	case tea.KeyMsg:
 		key := msg.String()
 		switch key {
@@ -317,6 +352,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch m.state {
 		case StateMainMenu:
 			switch key {
+			case "u":
+				if m.updateAvailable != "" {
+					exe, err := os.Executable()
+					if err == nil {
+						c := exec.Command(exe, "update")
+						c.Stdin = os.Stdin
+						c.Stdout = os.Stdout
+						c.Stderr = os.Stderr
+						return m, tea.ExecProcess(c, func(err error) tea.Msg {
+							return updateFinishedMsg{err: err}
+						})
+					}
+				}
 			case "up", "k":
 				if len(m.leagues) > 0 {
 					m.leagueCursor = (m.leagueCursor - 1 + len(m.leagues)) % len(m.leagues)

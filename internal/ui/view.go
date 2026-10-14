@@ -54,17 +54,31 @@ func renderMainMenu(m Model) string {
 	}
 
 	menuBox := MenuBoxStyle.Render(strings.Join(lines, "\n"))
-	footer := FooterHelpStyle.Render("↑/k  ↓/j: navegar  •  enter: entrar  •  q: salir")
 
-	content := lipgloss.JoinVertical(
-		lipgloss.Center,
-		logo,
-		subtitle,
-		"",
-		menuBox,
-		"",
-		footer,
-	)
+	footerText := "↑/k  ↓/j: navegar  •  enter: entrar  •  q: salir"
+	if m.updateAvailable != "" {
+		footerText = fmt.Sprintf("↑/k ↓/j: navegar  •  enter: entrar  •  u: actualizar (%s)  •  q: salir", m.updateAvailable)
+	}
+	footer := FooterHelpStyle.Render(footerText)
+
+	var elements []string
+	elements = append(elements, logo, subtitle)
+	if m.updateAvailable != "" {
+		banner := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#00FF88")).
+			Bold(true).
+			Render(fmt.Sprintf("✨ ¡Actualización disponible (%s)! Presiona [u] para actualizar", m.updateAvailable))
+		elements = append(elements, "", banner)
+	}
+	if m.statusMsg != "" {
+		elements = append(elements, "", StatusBarSuccess.Render(m.statusMsg))
+	}
+	if m.errorMsg != "" {
+		elements = append(elements, "", StatusBarError.Render(m.errorMsg))
+	}
+	elements = append(elements, "", menuBox, "", footer)
+
+	content := lipgloss.JoinVertical(lipgloss.Center, elements...)
 
 	w := m.width
 	h := m.height

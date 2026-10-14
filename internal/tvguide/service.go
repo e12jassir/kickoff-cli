@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -273,8 +274,39 @@ func (s *Service) Guides() []ChannelGuide {
 	return copied
 }
 
+func parseClockMinutes(tStr string) (int, bool) {
+	tStr = strings.TrimSpace(strings.ToUpper(tStr))
+	if tStr == "" {
+		return 0, false
+	}
+
+	if strings.Contains(tStr, ":") && !strings.Contains(tStr, "AM") && !strings.Contains(tStr, "PM") {
+		parts := strings.Split(tStr, ":")
+		if len(parts) >= 2 {
+			var h, m int
+			if _, err := fmt.Sscanf(parts[0], "%d", &h); err == nil {
+				if _, err := fmt.Sscanf(parts[1], "%d", &m); err == nil {
+					return h*60 + m, true
+				}
+			}
+		}
+	}
+
+	t, err := time.Parse("3:04 PM", tStr)
+	if err == nil {
+		return t.Hour()*60 + t.Minute(), true
+	}
+	t, err = time.Parse("15:04", tStr)
+	if err == nil {
+		return t.Hour()*60 + t.Minute(), true
+	}
+
+	return 0, false
+}
+
 // ResolveMatch matches an ESPN match against today's TV guide listings.
-// If multiple channels match, the entry with the highest confidence score is selected.
+// If multiple channels match, the entry with the highest confidence score and
+// temporal alignment to the match start time is selected, discarding distant replays.
 func (s *Service) ResolveMatch(match model.Match) (ChannelTarget, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -283,11 +315,69 @@ func (s *Service) ResolveMatch(match model.Match) (ChannelTarget, bool) {
 		return ChannelTarget{}, false
 	}
 
+	hasMatchTime := !match.StartTime.IsZero()
+	matchMins := 0
+	if hasMatchTime {
+		localTime := match.StartTime.In(s.loc)
+		matchMins = localTime.Hour()*60 + localTime.Minute()
+	}
+
 	bestScore := 0
 	var bestTarget ChannelTarget
 	found := false
 
 	for _, guide := range s.guides {
+		if len(guide.Entries) > 0 {
+			for _, entry := range guide.Entries {
+				matched, baseScore := MatchScore(entry.Title, match)
+				if !matched {
+					continue
+				}
+
+				effectiveScore := baseScore
+
+				if hasMatchTime && entry.StartTime != "" {
+					entryMins, ok := parseClockMinutes(entry.StartTime)
+					if ok {
+						diff := entryMins - matchMins
+						if diff < 0 {
+							diff = -diff
+						}
+						if diff > 12*60 {
+							diff = 24*60 - diff
+						}
+
+						// Disqualify replays scheduled far away (>2.5h) when not live now
+						if diff > 150 && !entry.IsLiveNow {
+							continue
+						}
+
+						if diff <= 60 {
+							effectiveScore += 6
+						} else if diff <= 120 {
+							effectiveScore += 3
+						}
+					}
+				}
+
+				if entry.IsLiveNow {
+					effectiveScore += 4
+				}
+
+				if effectiveScore > bestScore {
+					bestScore = effectiveScore
+					bestTarget = ChannelTarget{
+						Name:      guide.Name,
+						Slug:      guide.Slug,
+						StreamURL: guide.StreamURL,
+					}
+					found = true
+				}
+			}
+			continue
+		}
+
+		// Fallback for flat program titles without time metadata
 		for _, prog := range guide.Programs {
 			matched, score := MatchScore(prog, match)
 			if matched && score > bestScore {
@@ -298,7 +388,7 @@ func (s *Service) ResolveMatch(match model.Match) (ChannelTarget, bool) {
 					StreamURL: guide.StreamURL,
 				}
 				found = true
-				if score >= 10 { // Max possible score, early exit
+				if score >= 10 {
 					break
 				}
 			}

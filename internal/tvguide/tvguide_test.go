@@ -456,3 +456,104 @@ func TestCrawler_WorkerPool_And_OfflineFallback(t *testing.T) {
 		t.Errorf("offline fallback failed to restore cached guides: %v", svcBroken.Guides())
 	}
 }
+
+func TestParseProgramEntries(t *testing.T) {
+	htmlSample := `
+	<table>
+		<tr class="tbl_EPG_row">
+			<td><div class="tbl_EPG_TimesColumn"><time datetime="13:40">1:40 PM</time></div></td>
+			<td><div class="tbl_EPG_TimesColumn"><time datetime="16:00">4:00 PM</time></div></td>
+			<td>
+				<div class="tbl_EPG_ProgramsColumn deporte">
+					<div class="div_program_title_on_channel">
+						<span>Aston Villa vs. Fenerbahce</span>
+					</div>
+				</div>
+			</td>
+		</tr>
+		<tr class="tbl_EPG_row_selected">
+			<td><div class="tbl_EPG_TimesColumn"><time datetime="22:00">10:00 PM</time></div></td>
+			<td><div class="tbl_EPG_TimesColumn"><time datetime="00:00">12:00 AM</time></div></td>
+			<td>
+				<div class="tbl_EPG_ProgramsColumn deporte">
+					<div class="div_program_title_on_channel">
+						<span>Slovan Bratislava vs. Stuttgart</span>
+					</div>
+				</div>
+			</td>
+		</tr>
+	</table>`
+
+	entries := ParseProgramEntries(htmlSample)
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(entries))
+	}
+
+	if entries[0].Title != "Aston Villa vs. Fenerbahce" || entries[0].StartTime != "13:40" || entries[0].IsLiveNow {
+		t.Errorf("unexpected entry 0: %+v", entries[0])
+	}
+	if entries[1].Title != "Slovan Bratislava vs. Stuttgart" || entries[1].StartTime != "22:00" || !entries[1].IsLiveNow {
+		t.Errorf("unexpected entry 1: %+v", entries[1])
+	}
+}
+
+func TestResolveMatch_TimeAwareReplayDisqualification(t *testing.T) {
+	svc := NewService()
+
+	// Channel 3 has Slovan Bratislava as a replay at 22:00, and Aston Villa LIVE at 13:40
+	// Channel 4 has Slovan Bratislava LIVE at 13:40, and Aston Villa as a replay at 22:00
+	svc.SetGuides([]ChannelGuide{
+		{
+			Name:      "ESPN 3 HD",
+			Slug:      "espn_3_colombia",
+			StreamURL: StreamESPN3,
+			Entries: []ProgramEntry{
+				{Title: "Aston Villa vs. Fenerbahce", StartTime: "13:40", EndTime: "16:00"},
+				{Title: "Slovan Bratislava vs. Stuttgart", StartTime: "22:00", EndTime: "00:00"},
+			},
+		},
+		{
+			Name:      "ESPN 4 HD",
+			Slug:      "espn_4_colombia",
+			StreamURL: StreamESPN4,
+			Entries: []ProgramEntry{
+				{Title: "Slovan Bratislava vs. Stuttgart", StartTime: "13:40", EndTime: "16:00"},
+				{Title: "Aston Villa vs. Fenerbahce", StartTime: "22:00", EndTime: "00:00"},
+			},
+		},
+	})
+
+	loc, _ := time.LoadLocation("America/Bogota")
+	matchTime := time.Date(2026, 10, 14, 14, 0, 0, 0, loc)
+
+	slovanMatch := model.Match{
+		Title:     "Slovan Bratislava vs VfB Stuttgart",
+		StartTime: matchTime,
+		HomeTeam:  model.Competitor{DisplayName: "Slovan Bratislava"},
+		AwayTeam:  model.Competitor{DisplayName: "VfB Stuttgart"},
+	}
+
+	target, found := svc.ResolveMatch(slovanMatch)
+	if !found {
+		t.Fatalf("expected to resolve Slovan match, got not found")
+	}
+	if target.Name != "ESPN 4 HD" {
+		t.Errorf("expected Slovan to resolve to ESPN 4 HD (live at 13:40), but got %s (replay was on ESPN 3)", target.Name)
+	}
+
+	villaMatch := model.Match{
+		Title:     "Aston Villa vs Fenerbahce",
+		StartTime: matchTime,
+		HomeTeam:  model.Competitor{DisplayName: "Aston Villa"},
+		AwayTeam:  model.Competitor{DisplayName: "Fenerbahce"},
+	}
+
+	targetVilla, foundVilla := svc.ResolveMatch(villaMatch)
+	if !foundVilla {
+		t.Fatalf("expected to resolve Villa match, got not found")
+	}
+	if targetVilla.Name != "ESPN 3 HD" {
+		t.Errorf("expected Aston Villa to resolve to ESPN 3 HD (live at 13:40), but got %s", targetVilla.Name)
+	}
+}
+

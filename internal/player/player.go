@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	defaultPollTimeout = 12 * time.Second
+	defaultPollTimeout = 25 * time.Second
 	defaultDialTimeout = 200 * time.Millisecond
 )
 
@@ -102,16 +102,19 @@ func BuildArgs(req model.PlayRequest, sockPath string) []string {
 
 	return []string{
 		"--fs",
+		"--force-window=immediate",
 		"--hwdec=auto-safe",
 		"--no-terminal",
 		"--no-input-terminal",
 		"--really-quiet",
+		"--no-ytdl",
+		"--user-agent=Mozilla/5.0",
 		fmt.Sprintf("--title=%s", title),
 		"--cache=yes",
-		"--demuxer-max-bytes=120M",
-		"--demuxer-readahead-secs=20",
+		"--demuxer-max-bytes=40M",
+		"--demuxer-readahead-secs=5",
 		fmt.Sprintf("--hls-bitrate=%s", bitrate),
-		"--network-timeout=15",
+		"--network-timeout=20",
 		fmt.Sprintf("--input-ipc-server=%s", sockPath),
 		cleanURL,
 	}
@@ -261,6 +264,10 @@ func (c *Controller) pollIPCConfirmation(ctx context.Context, cmd *exec.Cmd, soc
 			if err == nil && confirmed {
 				_ = os.Remove(sockPath)
 				return nil
+			}
+			if err != nil {
+				_ = conn.Close()
+				conn = nil
 			}
 		}
 

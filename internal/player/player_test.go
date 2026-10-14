@@ -52,14 +52,17 @@ func TestBuildArgs(t *testing.T) {
 
 	expectedSubstrings := []string{
 		"--fs",
+		"--force-window=immediate",
 		"--hwdec=auto-safe",
 		"--no-terminal",
 		"--no-input-terminal",
 		"--really-quiet",
-		"--demuxer-max-bytes=120M",
-		"--demuxer-readahead-secs=20",
+		"--no-ytdl",
+		"--user-agent=Mozilla/5.0",
+		"--demuxer-max-bytes=40M",
+		"--demuxer-readahead-secs=5",
 		"--hls-bitrate=min",
-		"--network-timeout=15",
+		"--network-timeout=20",
 		"--input-ipc-server=/tmp/mock.sock",
 		"--title=kickoff: Barcelona vs Galatasaray (ESPN 5 HD (720p))",
 		// Sanitized URL check (must be http, not https)

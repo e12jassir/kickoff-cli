@@ -96,6 +96,22 @@ curl -fsSL https://raw.githubusercontent.com/e12jassir/kickoff-cli/main/install.
 
 ---
 
+### 🔄 Updating & Diagnostics
+
+Once installed, **kickoff** can update itself and diagnose your system directly from the terminal:
+
+```bash
+# Check and update to the latest release automatically
+kickoff update
+
+# Diagnose dependencies (mpv, emoji fonts, configs, cache)
+kickoff setup
+```
+
+You can also press **`u`** directly in the kickoff main menu whenever an update banner appears!
+
+---
+
 ## ⌨️ Keybindings
 
 | Key | Action |
@@ -104,6 +120,7 @@ curl -fsSL https://raw.githubusercontent.com/e12jassir/kickoff-cli/main/install.
 | `Enter` | Open match modal / Launch selected channel |
 | `1` / `2` / `3` | Switch modal tabs (Timeline / Stats / Lineups) |
 | `←` / `h` · `→` / `l` | Previous / Next tab |
+| `u` | Self-update kickoff (when an update is available) |
 | `r` | Refresh live scores & fixtures |
 | `Esc` / `Backspace` | Back to menu / Close modal |
 | `q` / `Ctrl+C` | Quit |

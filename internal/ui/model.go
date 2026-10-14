@@ -48,6 +48,9 @@ type Model struct {
 
 	width  int
 	height int
+
+	version         string
+	updateAvailable string
 }
 
 // NewModel constructs a new UI model with defaults and dependencies.
@@ -83,6 +86,12 @@ func NewModel(client model.Client, catalog model.Resolver, player model.Controll
 	}
 }
 
+// WithVersion sets the app version on the model.
+func (m Model) WithVersion(v string) Model {
+	m.version = v
+	return m
+}
+
 // CurrentLeague returns the currently selected league.
 func (m Model) CurrentLeague() model.League {
 	if len(m.leagues) == 0 {
@@ -96,9 +105,13 @@ func (m Model) CurrentLeague() model.League {
 
 // Init begins spinner tick, pulse ticker, and automatic smart live-sync ticker.
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(
+	cmds := []tea.Cmd{
 		m.spinner.Tick,
 		pulseTickCmd(),
-		autoSyncTickCmd(15*time.Second),
-	)
+		autoSyncTickCmd(15 * time.Second),
+	}
+	if m.version != "" {
+		cmds = append(cmds, checkUpdateCmd(m.version))
+	}
+	return tea.Batch(cmds...)
 }
