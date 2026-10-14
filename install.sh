@@ -25,7 +25,10 @@ case "$ARCH" in
 esac
 
 case "$OS" in
-  linux|darwin)
+  linux)
+    ;;
+  darwin)
+    OS="macos"
     ;;
   *)
     echo "❌ Unsupported operating system: $OS. For Windows, download kickoff.exe from releases."
@@ -86,7 +89,7 @@ run_elevated() {
 }
 
 has_emoji_font() {
-  if [ "$OS" = "darwin" ]; then
+  if [ "$OS" = "darwin" ] || [ "$OS" = "macos" ]; then
     return 0 # macOS has native Apple Color Emoji
   fi
   if command -v fc-list >/dev/null 2>&1; then
@@ -127,7 +130,7 @@ ensure_dependencies() {
   echo ""
   echo "🔍 Detectando dependencias del sistema requeridas..."
 
-  if [ "$OS" = "darwin" ]; then
+  if [ "$OS" = "darwin" ] || [ "$OS" = "macos" ]; then
     if [ "$need_mpv" -eq 1 ]; then
       if command -v brew >/dev/null 2>&1; then
         echo "📦 Instalando mpv con Homebrew..."

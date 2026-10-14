@@ -46,12 +46,14 @@ jobs:
 
           # 4. macOS Apple Silicon (ARM64)
           GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o kickoff ./cmd/kickoff
-          tar -czf "dist/kickoff_${CLEAN_VER}_darwin_arm64.tar.gz" kickoff LICENSE README.md
+          tar -czf "dist/kickoff_${CLEAN_VER}_macos_arm64.tar.gz" kickoff LICENSE README.md
+          cp "dist/kickoff_${CLEAN_VER}_macos_arm64.tar.gz" "dist/kickoff_${CLEAN_VER}_darwin_arm64.tar.gz"
           rm kickoff
 
           # 5. macOS Intel (x86_64)
           GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -o kickoff ./cmd/kickoff
-          tar -czf "dist/kickoff_${CLEAN_VER}_darwin_amd64.tar.gz" kickoff LICENSE README.md
+          tar -czf "dist/kickoff_${CLEAN_VER}_macos_amd64.tar.gz" kickoff LICENSE README.md
+          cp "dist/kickoff_${CLEAN_VER}_macos_amd64.tar.gz" "dist/kickoff_${CLEAN_VER}_darwin_amd64.tar.gz"
           rm kickoff
 
           # 6. Checksums

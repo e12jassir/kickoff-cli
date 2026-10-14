@@ -113,10 +113,17 @@ func FindAssetURL(rel *ReleaseInfo, goos, goarch string) (string, error) {
 	normOS := strings.ToLower(goos)
 	normArch := strings.ToLower(goarch)
 
-	// In goreleaser tarballs, names typically look like kickoff_0.1.1_linux_amd64.tar.gz
+	matchesOS := func(name string) bool {
+		if normOS == "darwin" || normOS == "macos" {
+			return strings.Contains(name, "macos") || strings.Contains(name, "darwin")
+		}
+		return strings.Contains(name, normOS)
+	}
+
+	// Match appropriate release archive for OS/Arch
 	for _, a := range rel.Assets {
 		name := strings.ToLower(a.Name)
-		if strings.Contains(name, normOS) && strings.Contains(name, normArch) && strings.HasSuffix(name, ".tar.gz") {
+		if matchesOS(name) && strings.Contains(name, normArch) && strings.HasSuffix(name, ".tar.gz") {
 			return a.BrowserDownloadURL, nil
 		}
 	}
