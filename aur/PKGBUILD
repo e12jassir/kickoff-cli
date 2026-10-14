@@ -1,0 +1,34 @@
+# Maintainer: Esteban David Marrugo Jassir <e12jassir@gmail.com>
+pkgname=kickoff-cli
+pkgver=3.0.0
+pkgrel=1
+pkgdesc="An elegant, lightning-fast football TUI and live broadcast launcher for the terminal"
+arch=('x86_64' 'aarch64')
+url="https://github.com/e12jassir/kickoff-cli"
+license=('MIT')
+depends=('mpv')
+makedepends=('go')
+optdepends=(
+    'ffmpeg: enhanced media stream probing and decoding'
+)
+provides=('kickoff')
+conflicts=('kickoff')
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('97027c0dccb398b0b186ddda483a9d60a4d4b15ef1ae5f597024d6c2bd63ae67')
+
+build() {
+    cd "$pkgname-$pkgver"
+    export CGO_CPPFLAGS="${CPPFLAGS}"
+    export CGO_CFLAGS="${CFLAGS}"
+    export CGO_CXXFLAGS="${CXXFLAGS}"
+    export CGO_LDFLAGS="${LDFLAGS}"
+    export GOFLAGS="-buildmode=pie -trimpath -ldflags=-linkmode=external -mod=readonly -modcacherw"
+    go build -v -o bin/kickoff ./cmd/kickoff
+}
+
+package() {
+    cd "$pkgname-$pkgver"
+    install -Dm755 bin/kickoff "$pkgdir/usr/bin/kickoff"
+    install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

@@ -1,0 +1,17 @@
+pkgbase = kickoff-cli
+	pkgdesc = An elegant, lightning-fast football TUI and live broadcast launcher for the terminal
+	pkgver = 3.0.0
+	pkgrel = 1
+	url = https://github.com/e12jassir/kickoff-cli
+	arch = x86_64
+	arch = aarch64
+	license = MIT
+	makedepends = go
+	depends = mpv
+	optdepends = ffmpeg: enhanced media stream probing and decoding
+	provides = kickoff
+	conflicts = kickoff
+	source = kickoff-cli-3.0.0.tar.gz::https://github.com/e12jassir/kickoff-cli/archive/refs/tags/v3.0.0.tar.gz
+	sha256sums = 97027c0dccb398b0b186ddda483a9d60a4d4b15ef1ae5f597024d6c2bd63ae67
+
+pkgname = kickoff-cli
