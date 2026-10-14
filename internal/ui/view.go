@@ -561,14 +561,38 @@ func renderTimeline(events []model.MatchEvent, homeTeamID string, modalContentWi
 
 	var b strings.Builder
 	htShown := false
+	spineStyle := lipgloss.NewStyle().Foreground(ColorBorderSelected)
+
+	formatClock5 := func(clock string) string {
+		c := strings.TrimSpace(clock)
+		switch len(c) {
+		case 2:
+			return fmt.Sprintf("  %s ", c)
+		case 3:
+			return fmt.Sprintf(" %s ", c)
+		case 4:
+			return fmt.Sprintf(" %s", c)
+		case 5:
+			return c
+		default:
+			if len(c) > 5 {
+				return c[:5]
+			}
+			return fmt.Sprintf("%-5s", c)
+		}
+	}
+
 	for _, ev := range sortedEvents {
 		sec := ev.ClockValue
 		if sec <= 0 {
 			sec = float64(parseClockMinute(ev.Clock))
 		}
 		if !htShown && sec > 45*60 {
-			etCapsule := lipgloss.NewStyle().Foreground(ColorBorderSelected).Render("──┤") + " " + StatusPostStyle.Render("E.T.") + " " + lipgloss.NewStyle().Foreground(ColorBorderSelected).Render("├──")
-			b.WriteString(fmt.Sprintf("%24s%s%-24s\n", "", etCapsule, ""))
+			leftBlank := strings.Repeat(" ", 24)
+			etText := " " + StatusPostStyle.Render("E.T") + " "
+			axis := spineStyle.Render("  │") + etText + spineStyle.Render("│  ")
+			rightBlank := strings.Repeat(" ", 25)
+			b.WriteString(fmt.Sprintf("%s%s%s\n", leftBlank, axis, rightBlank))
 			htShown = true
 		}
 
@@ -576,8 +600,7 @@ func renderTimeline(events []model.MatchEvent, homeTeamID string, modalContentWi
 		if clockBadge == "" {
 			clockBadge = "--'"
 		}
-		clkFmt := fmt.Sprintf("%-4s", clockBadge)
-		capsule := lipgloss.NewStyle().Foreground(ColorBorderSelected).Render(fmt.Sprintf("──┤ %s ├──", clkFmt))
+		clkFmt := formatClock5(clockBadge)
 
 		icon := "⚽"
 		if ev.IsRedCard {
@@ -606,13 +629,15 @@ func renderTimeline(events []model.MatchEvent, homeTeamID string, modalContentWi
 		if isHome {
 			eventText := fmt.Sprintf("%s %s ", truncateModalText(pName, 19), icon)
 			leftStyled := lipgloss.NewStyle().Width(24).Align(lipgloss.Right).Foreground(ColorText).Render(eventText)
-			rightBlank := strings.Repeat(" ", 24)
-			b.WriteString(fmt.Sprintf("%s%s%s\n", leftStyled, capsule, rightBlank))
+			axis := spineStyle.Render("──┤") + clkFmt + spineStyle.Render("│  ")
+			rightBlank := strings.Repeat(" ", 25)
+			b.WriteString(fmt.Sprintf("%s%s%s\n", leftStyled, axis, rightBlank))
 		} else {
 			leftBlank := strings.Repeat(" ", 24)
+			axis := spineStyle.Render("  │") + clkFmt + spineStyle.Render("├──")
 			eventText := fmt.Sprintf(" %s %s", icon, truncateModalText(pName, 19))
-			rightStyled := lipgloss.NewStyle().Width(24).Align(lipgloss.Left).Foreground(ColorText).Render(eventText)
-			b.WriteString(fmt.Sprintf("%s%s%s\n", leftBlank, capsule, rightStyled))
+			rightStyled := lipgloss.NewStyle().Width(25).Align(lipgloss.Left).Foreground(ColorText).Render(eventText)
+			b.WriteString(fmt.Sprintf("%s%s%s\n", leftBlank, axis, rightStyled))
 		}
 	}
 	return b.String()
