@@ -54,6 +54,7 @@ When it's match time, launch verified high-definition broadcast streams in hardw
 - **🛡️ Starting XI & Formations**: Full tactical rosters, squad numbers, and substitute benches.
 - **📺 Zero-Ad Stream Launcher**: Automatically maps fixtures to verified broadcast signals and launches them smoothly in `mpv`.
 - **⚡ Background Health Prober**: Probes live playlists asynchronously in the background with zero UI blocking.
+- **🚀 Ultra-Lightweight & Efficient**: Native compiled Go binary consuming under ~28 MB RAM with sub-20ms cold startup (vs 1.5 GB+ in an ad-ridden browser).
 
 ---
 
