@@ -35,9 +35,9 @@ jobs:
           tar -czf "dist/kickoff_${CLEAN_VER}_linux_amd64.tar.gz" kickoff LICENSE README.md
           rm kickoff
 
-          # 2. Windows x86_64 (.zip bundle with kickoff.exe and install-mpv.bat)
+          # 2. Windows x86_64 (.zip bundle with kickoff.exe, Instalar-Kickoff.bat, and kickoff.ico)
           GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o kickoff.exe ./cmd/kickoff
-          zip -j "dist/kickoff_${CLEAN_VER}_windows_amd64.zip" kickoff.exe assets/install-mpv.bat LICENSE README.md
+          zip -j "dist/kickoff_${CLEAN_VER}_windows_amd64.zip" kickoff.exe assets/Instalar-Kickoff.bat assets/install-mpv.bat assets/kickoff.ico LICENSE README.md
           rm kickoff.exe
 
           # 3. macOS Apple Silicon (ARM64)
