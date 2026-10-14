@@ -5,7 +5,7 @@
 ### An elegant, blazing-fast football TUI & live broadcast launcher for your terminal.
 
 [![Release](https://img.shields.io/github/v/release/e12jassir/kickoff-cli?style=flat-square&color=2bbc8a)](https://github.com/e12jassir/kickoff-cli/releases)
-[![AUR version](https://img.shields.io/aur/version/kickoff-cli?style=flat-square&color=1793d1&logo=arch-linux)](https://aur.archlinux.org/packages/kickoff-cli)
+[![AUR](https://img.shields.io/badge/AUR-coming%20soon-blue?style=flat-square&logo=arch-linux)](https://github.com/e12jassir/kickoff-cli/tree/main/aur)
 [![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 
 <br/>
@@ -60,11 +60,14 @@ When it's match time, launch verified high-definition broadcast streams in hardw
 
 ## 🚀 Installation
 
-### Arch Linux (AUR)
+### Arch Linux
 ```bash
-yay -S kickoff-cli
-# or
-paru -S kickoff-cli
+# Direct local package installation:
+git clone https://github.com/e12jassir/kickoff-cli.git
+cd kickoff-cli/aur && makepkg -si
+
+# Direct AUR helper (pending AUR unfreeze):
+# yay -S kickoff-cli
 ```
 
 ### Go Install
