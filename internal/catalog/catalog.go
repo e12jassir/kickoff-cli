@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/e12jassir/kickoff/internal/model"
+	"github.com/e12jassir/kickoff/internal/tvguide"
 )
 
 // Expanded pool of verified sports stream URLs.
@@ -79,13 +80,24 @@ func SanitizeURL(rawURL string) (string, error) {
 	return parsed.String(), nil
 }
 
-// Catalog implements model.Resolver with dynamic broadcast matching and stream health probing.
+// Option configures Catalog resolver options.
+type Option func(*Catalog)
+
+// WithTVGuide sets a custom tvguide.Service.
+func WithTVGuide(svc *tvguide.Service) Option {
+	return func(c *Catalog) {
+		c.tvGuide = svc
+	}
+}
+
+// Catalog implements model.Resolver with dynamic broadcast matching, TV guide crawling, and stream health probing.
 type Catalog struct {
 	mu              sync.RWMutex
 	streamAlive     map[string]bool
 	championsRules  []matchRule
 	customRules     []customMatchRule
 	leagueOverrides map[string][]model.Channel
+	tvGuide         *tvguide.Service
 }
 
 type matchRule struct {
@@ -100,15 +112,26 @@ type customMatchRule struct {
 }
 
 // New creates a new Catalog resolver and starts background health checks on all stream signals.
-func New() *Catalog {
+func New(opts ...Option) *Catalog {
 	c := &Catalog{
 		streamAlive:     make(map[string]bool),
 		leagueOverrides: make(map[string][]model.Channel),
+		tvGuide:         tvguide.NewService(),
+	}
+	for _, opt := range opts {
+		opt(c)
 	}
 	c.initChampionsRules()
 	c.loadExternalConfig()
 	go c.probeAllStreamsBackground()
 	return c
+}
+
+// SetTVGuide sets a custom or updated TV guide service.
+func (c *Catalog) SetTVGuide(svc *tvguide.Service) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.tvGuide = svc
 }
 
 func NewResolver() model.Resolver {
@@ -439,9 +462,44 @@ func espnBySlot(slot int) (name, url string, ok bool) {
 	return slots[slot].name, slots[slot].url, true
 }
 
+func (c *Catalog) buildChannelsForTarget(target tvguide.ChannelTarget) []model.Channel {
+	cleanURL, _ := SanitizeURL(target.StreamURL)
+	switch {
+	case strings.HasPrefix(target.Name, "ESPN"):
+		return espnProfile(target.Name, cleanURL)
+	case strings.HasPrefix(target.Name, "Fox"):
+		return makeDualProfile(target.Name, cleanURL, true)
+	case target.Name == "Win+ Fútbol":
+		return []model.Channel{
+			makeSingleChannel("Win+ Fútbol", StreamWinPlus, "1080p", "max", true),
+			makeSingleChannel("Win Sports HD", StreamWinSports, "1080p", "max", false),
+		}
+	case target.Name == "Win Sports HD":
+		return []model.Channel{
+			makeSingleChannel("Win Sports HD", StreamWinSports, "1080p", "max", true),
+			makeSingleChannel("Win+ Fútbol", StreamWinPlus, "1080p", "max", false),
+		}
+	case target.Name == "Caracol TV HD":
+		return []model.Channel{
+			makeSingleChannel("Caracol TV HD", StreamCaracolTV, "1080p", "max", true),
+			makeSingleChannel("Caracol HD2", StreamCaracolHD2, "1080p", "max", false),
+		}
+	case target.Name == "Canal RCN HD":
+		return []model.Channel{
+			makeSingleChannel("Canal RCN HD", StreamCanalRCN, "1080p", "max", true),
+			makeSingleChannel("RCN HD2", StreamRCNHD2, "1080p", "max", false),
+		}
+	default:
+		return []model.Channel{
+			makeSingleChannel(target.Name, cleanURL, "1080p", "max", true),
+		}
+	}
+}
+
 // GetChannels resolves match-specific broadcast channels.
 // Official broadcasts reported in match.Broadcasts are prioritized and verified without guesswork.
-// If no official broadcasts are reported, simultaneous matches are routed to distinct collision-free channels.
+// If no official broadcasts are reported, the autonomous TV Guide crawler is consulted.
+// If neither matched, simultaneous matches are routed to distinct collision-free channels.
 func (c *Catalog) GetChannels(match model.Match) []model.Channel {
 	if match.Status.Completed || strings.ToLower(match.Status.State) == "post" {
 		return nil
@@ -477,7 +535,17 @@ func (c *Catalog) GetChannels(match model.Match) []model.Channel {
 		}
 	}
 
-	// 3. Fallback resolution when NO official broadcasts are present.
+	// 3. Autonomous Daily TV Guide Crawler resolution
+	if c.tvGuide != nil {
+		if target, found := c.tvGuide.ResolveMatch(match); found {
+			candidates := c.buildChannelsForTarget(target)
+			if len(candidates) > 0 {
+				return c.filterAndDeduplicate(candidates)
+			}
+		}
+	}
+
+	// 4. Fallback resolution when NO official broadcasts nor TV guide matched.
 	// Each simultaneous match slot must map to a DISTINCT, collision-free channel
 	// without blindly appending Fox Sports 1 or duplicate channels across matches.
 	var candidates []model.Channel

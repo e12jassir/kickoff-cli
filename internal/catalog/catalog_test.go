@@ -1,10 +1,13 @@
 package catalog
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/e12jassir/kickoff/internal/model"
+	"github.com/e12jassir/kickoff/internal/tvguide"
 )
 
 func TestSanitizeURL(t *testing.T) {
@@ -492,3 +495,130 @@ func TestDiagnostic_ChampionsFixtures(t *testing.T) {
 		t.Logf("✓ %s (%s) -> %s (OK)", fix.title, fix.timeStr, chs[0].Name)
 	}
 }
+
+func TestDiagnostic_LiveTVGuideResolution(t *testing.T) {
+	guideSvc := tvguide.NewService()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_ = guideSvc.Refresh(ctx)
+	guides := guideSvc.Guides()
+
+	t.Logf("=== LIVE TV GUIDE DIAGNOSTIC ===")
+	t.Logf("Channels crawled: %d", len(guides))
+	for _, g := range guides {
+		t.Logf(" • %s (%s): %d programs scheduled", g.Name, g.Slug, len(g.Programs))
+	}
+
+	cat := New(WithTVGuide(guideSvc))
+
+	sampleMatches := []model.Match{
+		{
+			LeagueKey: "champions",
+			Title:     "LASK Linz vs Liverpool",
+			HomeTeam:  model.Competitor{DisplayName: "LASK Linz"},
+			AwayTeam:  model.Competitor{DisplayName: "Liverpool"},
+		},
+		{
+			LeagueKey: "champions",
+			Title:     "Feyenoord Rotterdam vs Como",
+			HomeTeam:  model.Competitor{DisplayName: "Feyenoord Rotterdam"},
+			AwayTeam:  model.Competitor{DisplayName: "Como"},
+		},
+		{
+			LeagueKey: "champions",
+			Title:     "AS Roma vs Real Madrid",
+			HomeTeam:  model.Competitor{DisplayName: "AS Roma"},
+			AwayTeam:  model.Competitor{DisplayName: "Real Madrid"},
+		},
+	}
+
+	for _, m := range sampleMatches {
+		chs := cat.GetChannels(m)
+		if len(chs) == 0 {
+			t.Errorf("[%s] expected channels, got none", m.Title)
+			continue
+		}
+		t.Logf("✓ %s -> Primary: %s (%s, Rec: %v), Total: %d signals",
+			m.Title, chs[0].Name, chs[0].Resolution, chs[0].Recommended, len(chs))
+	}
+}
+
+func TestCatalog_TVGuideIntegration(t *testing.T) {
+	guideSvc := tvguide.NewService()
+	guideSvc.SetGuides([]tvguide.ChannelGuide{
+		{
+			Name:      "ESPN 3 HD",
+			Slug:      "espn_3_colombia",
+			StreamURL: tvguide.StreamESPN3,
+			Programs:  []string{"Atalanta vs. Arsenal"},
+		},
+		{
+			Name:      "Win+ Fútbol",
+			Slug:      "win_sports_plus",
+			StreamURL: tvguide.StreamWinPlus,
+			Programs:  []string{"Deportivo Pereira vs. Junior"},
+		},
+	})
+
+	cat := New(WithTVGuide(guideSvc))
+
+	t.Run("TV Guide resolves match without ESPN broadcasts and sets Recommended: true", func(t *testing.T) {
+		match := model.Match{
+			LeagueKey: "champions",
+			Title:     "Atalanta vs Arsenal",
+			HomeTeam:  model.Competitor{DisplayName: "Atalanta"},
+			AwayTeam:  model.Competitor{DisplayName: "Arsenal"},
+		}
+		channels := cat.GetChannels(match)
+		if len(channels) == 0 {
+			t.Fatalf("expected channels from tvguide, got none")
+		}
+		if channels[0].Name != "ESPN 3 HD" {
+			t.Errorf("expected primary channel ESPN 3 HD, got %s", channels[0].Name)
+		}
+		if !channels[0].Recommended {
+			t.Errorf("expected top channel to have Recommended: true")
+		}
+		if !strings.Contains(channels[0].URL, "ESPN_3") {
+			t.Errorf("expected ESPN 3 stream URL, got %s", channels[0].URL)
+		}
+	})
+
+	t.Run("Official broadcasts take precedence over TV Guide", func(t *testing.T) {
+		match := model.Match{
+			LeagueKey:  "champions",
+			Title:      "Atalanta vs Arsenal",
+			HomeTeam:   model.Competitor{DisplayName: "Atalanta"},
+			AwayTeam:   model.Competitor{DisplayName: "Arsenal"},
+			Broadcasts: []string{"ESPN 4"},
+		}
+		channels := cat.GetChannels(match)
+		if len(channels) == 0 {
+			t.Fatalf("expected channels from official broadcasts, got none")
+		}
+		if channels[0].Name != "ESPN 4 HD" {
+			t.Errorf("expected official broadcast ESPN 4 HD to take precedence over ESPN 3 HD, got %s", channels[0].Name)
+		}
+	})
+
+	t.Run("TV Guide resolves Colombian league match", func(t *testing.T) {
+		match := model.Match{
+			LeagueKey: "colombia",
+			Title:     "Deportivo Pereira vs Junior FC",
+			HomeTeam:  model.Competitor{DisplayName: "Deportivo Pereira"},
+			AwayTeam:  model.Competitor{DisplayName: "Junior FC"},
+		}
+		channels := cat.GetChannels(match)
+		if len(channels) == 0 {
+			t.Fatalf("expected channels from tvguide, got none")
+		}
+		if channels[0].Name != "Win+ Fútbol" {
+			t.Errorf("expected Win+ Fútbol, got %s", channels[0].Name)
+		}
+		if !channels[0].Recommended {
+			t.Errorf("expected recommended true on top channel")
+		}
+	})
+}
+
