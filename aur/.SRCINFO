@@ -12,6 +12,6 @@ pkgbase = kickoff-cli
 	provides = kickoff
 	conflicts = kickoff
 	source = kickoff-cli-0.1.0.tar.gz::https://github.com/e12jassir/kickoff-cli/archive/refs/tags/v0.1.0.tar.gz
-	sha256sums = c63951f8c29ea54835e5375ac27a1651438e00a82fe68674aff150d0cd706d4b
+	sha256sums = ccf54b40aa71b0a1ebcc3a54a0805c0653edaca60f89162e3cb7d3894d1b3700
 
 pkgname = kickoff-cli
