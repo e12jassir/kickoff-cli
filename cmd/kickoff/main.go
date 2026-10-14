@@ -14,7 +14,7 @@ import (
 	"github.com/e12jassir/kickoff/internal/updater"
 )
 
-const version = "0.1.1"
+var version = "0.1.2"
 
 func main() {
 	if exe, err := os.Executable(); err == nil {

@@ -1,3 +1,4 @@
+VERSION ?= 0.1.2
 BINARY_NAME=bin/kickoff
 SRC=./cmd/kickoff
 INSTALL_DIR=$(HOME)/.local/bin
@@ -9,7 +10,7 @@ all: build
 
 build:
 	@mkdir -p bin
-	go build -o $(BINARY_NAME) $(SRC)
+	go build -ldflags="-s -w -X main.version=$(VERSION)" -o $(BINARY_NAME) $(SRC)
 
 setup-channels:
 	@mkdir -p $(CONFIG_DIR)

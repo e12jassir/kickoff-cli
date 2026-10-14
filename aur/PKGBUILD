@@ -1,6 +1,6 @@
 # Maintainer: Esteban David Marrugo Jassir <e12jassir@gmail.com>
 pkgname=kickoff-cli
-pkgver=0.1.0
+pkgver=0.1.2
 pkgrel=1
 pkgdesc="An elegant, lightning-fast football TUI and live broadcast launcher for the terminal"
 arch=('x86_64' 'aarch64')
@@ -14,7 +14,7 @@ optdepends=(
 provides=('kickoff')
 conflicts=('kickoff')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('f19dd34f495d7e56661f17415a8ebc97a1f3d543d99b4b1e25500217e41ded93')
+sha256sums=('SKIP')
 
 build() {
     cd "$pkgname-$pkgver"

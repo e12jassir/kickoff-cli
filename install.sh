@@ -3,7 +3,7 @@ set -e
 
 # kickoff-cli universal installer for Linux and macOS
 REPO="e12jassir/kickoff-cli"
-VERSION="0.1.1"
+VERSION="0.1.2"
 INSTALL_DIR="$HOME/.local/bin"
 
 mkdir -p "$INSTALL_DIR"
