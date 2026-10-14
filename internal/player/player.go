@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/e12jassir/kickoff/internal/catalog"
@@ -75,9 +74,9 @@ func CreateSocketDir() (string, string, error) {
 		return "", "", fmt.Errorf("failed to create temp dir for socket: %w", err)
 	}
 
-	if err := os.Chmod(dir, 0o700); err != nil {
+	if err := enforceSocketDirPermissions(dir); err != nil {
 		_ = os.RemoveAll(dir)
-		return "", "", fmt.Errorf("failed to enforce 0700 on socket dir: %w", err)
+		return "", "", fmt.Errorf("failed to enforce permissions on socket dir: %w", err)
 	}
 
 	sockPath := filepath.Join(dir, "mpv.sock")
@@ -130,11 +129,7 @@ func (c *Controller) stopLocked() error {
 	var errs []string
 
 	if c.currentCmd != nil && c.currentCmd.Process != nil {
-		pid := c.currentCmd.Process.Pid
-		if pid > 0 {
-			_ = syscall.Kill(-pid, syscall.SIGKILL)
-		}
-		_ = c.currentCmd.Process.Kill()
+		killProcess(c.currentCmd)
 		_ = c.currentCmd.Wait()
 		c.currentCmd = nil
 	}
@@ -185,9 +180,7 @@ func (c *Controller) PlayStream(ctx context.Context, req model.PlayRequest) erro
 	cmd.Stdin = devNull
 	cmd.Stdout = nil
 	cmd.Stderr = nil
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setpgid: true,
-	}
+	setProcessAttrs(cmd)
 
 	if err := cmd.Start(); err != nil {
 		_ = devNull.Close()
@@ -276,12 +269,7 @@ func (c *Controller) pollIPCConfirmation(ctx context.Context, cmd *exec.Cmd, soc
 }
 
 func (c *Controller) cleanupFailure(cmd *exec.Cmd, dir string) {
-	if cmd != nil && cmd.Process != nil {
-		if cmd.Process.Pid > 0 {
-			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		}
-		_ = cmd.Process.Kill()
-	}
+	killProcess(cmd)
 	_ = os.RemoveAll(dir)
 }
 
