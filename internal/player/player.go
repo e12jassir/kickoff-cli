@@ -57,9 +57,28 @@ func WithPollTimeout(d time.Duration) Option {
 	}
 }
 
+// ResolveMPVBinary detects a local mpv binary in the same directory as kickoff,
+// falling back to "mpv" in system PATH.
+func ResolveMPVBinary(custom string) string {
+	if custom != "" {
+		return custom
+	}
+	if exe, err := os.Executable(); err == nil {
+		dir := filepath.Dir(exe)
+		candidate := filepath.Join(dir, "mpv")
+		if runtime.GOOS == "windows" {
+			candidate += ".exe"
+		}
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+	return "mpv"
+}
+
 func NewController(opts ...Option) *Controller {
 	c := &Controller{
-		mpvBinary:   "mpv",
+		mpvBinary:   ResolveMPVBinary(""),
 		pollTimeout: defaultPollTimeout,
 	}
 	for _, opt := range opts {
@@ -156,10 +175,11 @@ func (c *Controller) stopLocked() error {
 func (c *Controller) PlayStream(ctx context.Context, req model.PlayRequest) error {
 	c.mu.Lock()
 
-	if _, err := exec.LookPath(c.mpvBinary); err != nil {
+	bin := ResolveMPVBinary(c.mpvBinary)
+	if _, err := exec.LookPath(bin); err != nil {
 		c.mu.Unlock()
 		if runtime.GOOS == "windows" {
-			return fmt.Errorf("mpv no está instalado en tu sistema. Instálalo con 'winget install mpv.net' (PowerShell) o descarga mpv.exe en https://mpv.io")
+			return fmt.Errorf("mpv no está instalado en tu sistema. Instálalo con 'winget install mpv.net' (PowerShell) o coloca mpv.exe junto a kickoff.exe")
 		}
 		return fmt.Errorf("mpv no está instalado en tu sistema. Instálalo con 'sudo pacman -S mpv' (Arch), 'sudo apt install mpv' (Ubuntu/Debian) o 'brew install mpv' (macOS) — https://mpv.io")
 	}
@@ -176,7 +196,7 @@ func (c *Controller) PlayStream(ctx context.Context, req model.PlayRequest) erro
 	c.currentSock = sockPath
 
 	args := BuildArgs(req, sockPath)
-	cmd := exec.Command(c.mpvBinary, args...)
+	cmd := exec.Command(bin, args...)
 
 	devNull, err := os.OpenFile(os.DevNull, os.O_RDONLY, 0)
 	if err != nil {

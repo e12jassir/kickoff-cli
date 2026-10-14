@@ -35,29 +35,17 @@ jobs:
           tar -czf "dist/kickoff_${CLEAN_VER}_linux_amd64.tar.gz" kickoff LICENSE README.md
           rm kickoff
 
-          # 2. Linux ARM64
-          GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o kickoff ./cmd/kickoff
-          tar -czf "dist/kickoff_${CLEAN_VER}_linux_arm64.tar.gz" kickoff LICENSE README.md
-          rm kickoff
+          # 2. Windows x86_64 (.zip bundle with kickoff.exe and install-mpv.bat)
+          GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o kickoff.exe ./cmd/kickoff
+          zip -j "dist/kickoff_${CLEAN_VER}_windows_amd64.zip" kickoff.exe assets/install-mpv.bat LICENSE README.md
+          rm kickoff.exe
 
-          # 3. Windows x86_64 (Standalone .exe, .zip bundle, and .tar.gz for CLI self-updater)
-          GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o dist/kickoff.exe ./cmd/kickoff
-          zip -j "dist/kickoff_${CLEAN_VER}_windows_amd64.zip" dist/kickoff.exe LICENSE README.md
-          tar -czf "dist/kickoff_${CLEAN_VER}_windows_amd64.tar.gz" -C dist kickoff.exe -C .. LICENSE README.md
-
-          # 4. macOS Apple Silicon (ARM64)
+          # 3. macOS Apple Silicon (ARM64)
           GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o kickoff ./cmd/kickoff
           tar -czf "dist/kickoff_${CLEAN_VER}_macos_arm64.tar.gz" kickoff LICENSE README.md
-          cp "dist/kickoff_${CLEAN_VER}_macos_arm64.tar.gz" "dist/kickoff_${CLEAN_VER}_darwin_arm64.tar.gz"
           rm kickoff
 
-          # 5. macOS Intel (x86_64)
-          GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -o kickoff ./cmd/kickoff
-          tar -czf "dist/kickoff_${CLEAN_VER}_macos_amd64.tar.gz" kickoff LICENSE README.md
-          cp "dist/kickoff_${CLEAN_VER}_macos_amd64.tar.gz" "dist/kickoff_${CLEAN_VER}_darwin_amd64.tar.gz"
-          rm kickoff
-
-          # 6. Checksums
+          # 4. Checksums
           cd dist
           sha256sum * > checksums.txt
           cd ..

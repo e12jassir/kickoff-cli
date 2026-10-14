@@ -2,6 +2,8 @@ package updater
 
 import (
 	"archive/tar"
+	"archive/zip"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"encoding/json"
@@ -123,12 +125,35 @@ func FindAssetURL(rel *ReleaseInfo, goos, goarch string) (string, error) {
 	// Match appropriate release archive for OS/Arch
 	for _, a := range rel.Assets {
 		name := strings.ToLower(a.Name)
-		if matchesOS(name) && strings.Contains(name, normArch) && strings.HasSuffix(name, ".tar.gz") {
+		validExt := strings.HasSuffix(name, ".tar.gz") || (normOS == "windows" && strings.HasSuffix(name, ".zip"))
+		if matchesOS(name) && strings.Contains(name, normArch) && validExt {
 			return a.BrowserDownloadURL, nil
 		}
 	}
 
 	return "", fmt.Errorf("no release asset found for %s/%s", normOS, normArch)
+}
+
+// ExtractBinaryFromZip extracts the executable binary named 'kickoff' (or 'kickoff.exe') from a zip archive.
+func ExtractBinaryFromZip(r io.ReaderAt, size int64) ([]byte, error) {
+	zr, err := zip.NewReader(r, size)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read zip archive: %w", err)
+	}
+
+	for _, f := range zr.File {
+		baseName := filepath.Base(f.Name)
+		if baseName == "kickoff" || baseName == "kickoff.exe" {
+			rc, err := f.Open()
+			if err != nil {
+				return nil, fmt.Errorf("failed to open file inside zip: %w", err)
+			}
+			defer rc.Close()
+			return io.ReadAll(rc)
+		}
+	}
+
+	return nil, errors.New("binary 'kickoff.exe' not found inside zip archive")
 }
 
 // ExtractBinaryFromTarGz extracts the executable binary named 'kickoff' (or 'kickoff.exe') from a gzip tar stream.
@@ -200,7 +225,17 @@ func SelfUpdate(ctx context.Context, repo, currentVersion string) error {
 		return fmt.Errorf("servidor de descargas respondió con código %d", resp.StatusCode)
 	}
 
-	binData, err := ExtractBinaryFromTarGz(resp.Body)
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("error al leer paquete descargado: %w", err)
+	}
+
+	var binData []byte
+	if strings.HasSuffix(strings.ToLower(assetURL), ".zip") {
+		binData, err = ExtractBinaryFromZip(bytes.NewReader(bodyBytes), int64(len(bodyBytes)))
+	} else {
+		binData, err = ExtractBinaryFromTarGz(bytes.NewReader(bodyBytes))
+	}
 	if err != nil {
 		return fmt.Errorf("error al descomprimir binario: %w", err)
 	}
@@ -276,18 +311,33 @@ func RunSetup() error {
 	var warnings []string
 
 	// 1. MPV binary
-	mpvPath, err := exec.LookPath("mpv")
+	mpvBin := "mpv"
+	if exe, err := os.Executable(); err == nil {
+		candidate := filepath.Join(filepath.Dir(exe), "mpv")
+		if runtime.GOOS == "windows" {
+			candidate += ".exe"
+		}
+		if _, err := os.Stat(candidate); err == nil {
+			mpvBin = candidate
+		}
+	}
+
+	mpvPath, err := exec.LookPath(mpvBin)
 	if err != nil {
 		fmt.Println("❌ mpv: NO ENCONTRADO")
 		if runtime.GOOS == "windows" {
-			warnings = append(warnings, "mpv es obligatorio para reproducir partidos. Instálalo con 'winget install mpv.net' en PowerShell o descarga mpv.exe desde https://mpv.io")
+			warnings = append(warnings, "mpv es obligatorio para reproducir partidos. Instálalo con 'winget install mpv.net' en PowerShell o coloca mpv.exe junto a kickoff.exe")
 		} else {
 			warnings = append(warnings, "mpv es obligatorio para reproducir partidos. Instálalo con 'sudo pacman -S mpv' (Arch), 'sudo apt install mpv' (Ubuntu/Debian) o 'brew install mpv' (macOS)")
 		}
 	} else {
-		out, _ := exec.Command("mpv", "--version").Output()
+		out, _ := exec.Command(mpvPath, "--version").Output()
 		firstLine := strings.Split(string(out), "\n")[0]
-		fmt.Printf("✓ mpv: %s (%s)\n", mpvPath, firstLine)
+		if mpvBin != "mpv" {
+			fmt.Printf("✓ mpv (local portable): %s (%s)\n", mpvPath, firstLine)
+		} else {
+			fmt.Printf("✓ mpv: %s (%s)\n", mpvPath, firstLine)
+		}
 	}
 
 	// 2. FFprobe (optional but recommended)

@@ -2,6 +2,7 @@ package updater
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"bytes"
 	"compress/gzip"
 	"testing"
@@ -38,6 +39,7 @@ func TestFindAssetURL(t *testing.T) {
 			{Name: "kickoff_0.1.1_linux_arm64.tar.gz", BrowserDownloadURL: "https://example.com/linux_arm64.tar.gz"},
 			{Name: "kickoff_0.1.1_macos_arm64.tar.gz", BrowserDownloadURL: "https://example.com/macos_arm64.tar.gz"},
 			{Name: "kickoff_0.1.1_darwin_amd64.tar.gz", BrowserDownloadURL: "https://example.com/darwin_amd64.tar.gz"},
+			{Name: "kickoff_0.1.1_windows_amd64.zip", BrowserDownloadURL: "https://example.com/windows_amd64.zip"},
 			{Name: "checksums.txt", BrowserDownloadURL: "https://example.com/checksums.txt"},
 		},
 	}
@@ -55,6 +57,11 @@ func TestFindAssetURL(t *testing.T) {
 	uDarwin, err := FindAssetURL(rel, "darwin", "amd64")
 	if err != nil || uDarwin != "https://example.com/darwin_amd64.tar.gz" {
 		t.Fatalf("expected darwin_amd64 asset for darwin/amd64, got: %s (err: %v)", uDarwin, err)
+	}
+
+	uWin, err := FindAssetURL(rel, "windows", "amd64")
+	if err != nil || uWin != "https://example.com/windows_amd64.zip" {
+		t.Fatalf("expected windows_amd64 zip asset for windows/amd64, got: %s (err: %v)", uWin, err)
 	}
 
 	_, err = FindAssetURL(rel, "freebsd", "riscv64")
@@ -86,6 +93,32 @@ func TestExtractBinaryFromTarGz(t *testing.T) {
 	extracted, err := ExtractBinaryFromTarGz(&buf)
 	if err != nil {
 		t.Fatalf("failed to extract: %v", err)
+	}
+	if string(extracted) != string(content) {
+		t.Errorf("extracted content mismatch: got %q, expected %q", string(extracted), string(content))
+	}
+}
+
+func TestExtractBinaryFromZip(t *testing.T) {
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+
+	content := []byte("MZ Windows binary mock content")
+	fw, err := zw.Create("kickoff.exe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fw.Write(content); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	raw := buf.Bytes()
+	extracted, err := ExtractBinaryFromZip(bytes.NewReader(raw), int64(len(raw)))
+	if err != nil {
+		t.Fatalf("failed to extract zip: %v", err)
 	}
 	if string(extracted) != string(content) {
 		t.Errorf("extracted content mismatch: got %q, expected %q", string(extracted), string(content))
