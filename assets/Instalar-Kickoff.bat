@@ -26,17 +26,30 @@ if %errorlevel% equ 0 (
     if exist "%SCRIPT_DIR%mpv.exe" (
         echo [OK] mpv.exe portable encontrado en la carpeta.
     ) else (
-        echo [!] mpv no encontrado. Instalando automaticamente con winget...
-        echo     (Esto puede tardar unos segundos, relajate...)
-        echo.
-        winget install mpv.net --accept-package-agreements --accept-source-agreements
+        where winget >nul 2>nul
         if !errorlevel! equ 0 (
-            echo.
+            echo [!] Instalando reproductor con winget...
+            echo     (Esto puede tardar unos segundos, relajate...)
+            winget install mpv.net --accept-package-agreements --accept-source-agreements
+        ) else (
+            echo [!] winget no esta presente en tu Windows.
+            echo [!] Descargando mpv.exe portable directamente...
+            powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+              "$url = 'https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/20261014/mpv-x86_64-20261014-git-ec38361c56.7z'; " ^
+              "$zipPath = Join-Path '%SCRIPT_DIR%' 'mpv_temp.7z'; " ^
+              "Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing; "
+        )
+
+        where mpv >nul 2>nul
+        if !errorlevel! equ 0 (
             echo [OK] mpv instalado con exito.
         ) else (
-            echo.
-            echo [AVISO] winget no pudo completar la instalacion automatica.
-            echo Podras ver partidos, pero si quieres video coloca mpv.exe en esta carpeta.
+            if exist "%SCRIPT_DIR%mpv.exe" (
+                echo [OK] mpv.exe configurado en la carpeta local.
+            ) else (
+                echo [AVISO] Podras ver todos los resultados, fixtures y alineaciones.
+                echo         Para ver el video en vivo, coloca mpv.exe en esta misma carpeta.
+            )
         )
     )
 )
