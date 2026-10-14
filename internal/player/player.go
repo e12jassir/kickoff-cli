@@ -45,21 +45,18 @@ type Controller struct {
 // Option configures the player controller.
 type Option func(*Controller)
 
-// WithMPVBinary overrides the MPV executable path.
 func WithMPVBinary(bin string) Option {
 	return func(c *Controller) {
 		c.mpvBinary = bin
 	}
 }
 
-// WithPollTimeout overrides the IPC verification timeout.
 func WithPollTimeout(d time.Duration) Option {
 	return func(c *Controller) {
 		c.pollTimeout = d
 	}
 }
 
-// NewController creates a new Controller instance.
 func NewController(opts ...Option) *Controller {
 	c := &Controller{
 		mpvBinary:   "mpv",
@@ -71,15 +68,13 @@ func NewController(opts ...Option) *Controller {
 	return c
 }
 
-// CreateSocketDir creates an isolated temporary directory with 0700 permissions
-// and returns the directory path and socket file path.
+// CreateSocketDir creates an isolated temporary directory with 0700 permissions.
 func CreateSocketDir() (string, string, error) {
 	dir, err := os.MkdirTemp("", "kickoff-mpv-*")
 	if err != nil {
 		return "", "", fmt.Errorf("failed to create temp dir for socket: %w", err)
 	}
 
-	// Threat matrix mitigation: enforce 0700 directory permissions
 	if err := os.Chmod(dir, 0o700); err != nil {
 		_ = os.RemoveAll(dir)
 		return "", "", fmt.Errorf("failed to enforce 0700 on socket dir: %w", err)
@@ -135,13 +130,14 @@ func (c *Controller) stopLocked() error {
 	var errs []string
 
 	if c.currentCmd != nil && c.currentCmd.Process != nil {
+		pid := c.currentCmd.Process.Pid
+		if pid > 0 {
+			_ = syscall.Kill(-pid, syscall.SIGKILL)
+		}
 		_ = c.currentCmd.Process.Kill()
 		_ = c.currentCmd.Wait()
 		c.currentCmd = nil
 	}
-
-	// Threat matrix mitigation: terminate any stray previous kickoff MPV instances
-	_ = exec.Command("pkill", "-f", "mpv.*kickoff:").Run()
 
 	if c.currentDir != "" {
 		if err := os.RemoveAll(c.currentDir); err != nil {
@@ -172,9 +168,8 @@ func (c *Controller) PlayStream(ctx context.Context, req model.PlayRequest) erro
 	c.currentSock = sockPath
 
 	args := BuildArgs(req, sockPath)
-	cmd := exec.CommandContext(context.Background(), c.mpvBinary, args...)
+	cmd := exec.Command(c.mpvBinary, args...)
 
-	// Threat matrix mitigation: detach stdin via /dev/null and isolate process group
 	devNull, err := os.OpenFile(os.DevNull, os.O_RDONLY, 0)
 	if err != nil {
 		_ = os.RemoveAll(dir)
@@ -201,7 +196,6 @@ func (c *Controller) PlayStream(ctx context.Context, req model.PlayRequest) erro
 	c.currentCmd = cmd
 	c.mu.Unlock()
 
-	// Wait for process exit or IPC telemetry confirmation
 	return c.pollIPCConfirmation(ctx, cmd, sockPath, dir, doneCh)
 }
 
@@ -239,13 +233,11 @@ func (c *Controller) pollIPCConfirmation(ctx context.Context, cmd *exec.Cmd, soc
 	}()
 
 	for {
-		// Check context cancellation
 		select {
 		case <-ctx.Done():
 			c.cleanupFailure(cmd, dir)
 			return ctx.Err()
 		case err := <-exitCh:
-			// Process exited prematurely before confirming video output
 			_ = os.RemoveAll(dir)
 			return fmt.Errorf("%w: %v", model.ErrPlayerExited, err)
 		default:
@@ -268,7 +260,6 @@ func (c *Controller) pollIPCConfirmation(ctx context.Context, cmd *exec.Cmd, soc
 		if conn != nil {
 			confirmed, err := queryVoConfigured(conn)
 			if err == nil && confirmed {
-				// Video output confirmed! Clean up temporary socket file
 				_ = os.Remove(sockPath)
 				return nil
 			}
@@ -280,12 +271,14 @@ func (c *Controller) pollIPCConfirmation(ctx context.Context, cmd *exec.Cmd, soc
 
 func (c *Controller) cleanupFailure(cmd *exec.Cmd, dir string) {
 	if cmd != nil && cmd.Process != nil {
+		if cmd.Process.Pid > 0 {
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
 		_ = cmd.Process.Kill()
 	}
 	_ = os.RemoveAll(dir)
 }
 
-// queryVoConfigured sends a get_property vo-configured request to MPV.
 func queryVoConfigured(conn net.Conn) (bool, error) {
 	_ = conn.SetDeadline(time.Now().Add(300 * time.Millisecond))
 
@@ -318,7 +311,6 @@ func queryVoConfigured(conn net.Conn) (bool, error) {
 			return true, nil
 		}
 
-		// If data is false, continue polling
 		if resp.Data != nil {
 			return false, nil
 		}

@@ -81,7 +81,7 @@ func TestCatalog_GetChannels(t *testing.T) {
 				HomeTeam:  model.Competitor{DisplayName: "FC Barcelona"},
 				AwayTeam:  model.Competitor{DisplayName: "Galatasaray"},
 			},
-			expectedChannels: []string{"ESPN 5 HD (720p)", "ESPN 5 HD (1080p)"},
+			expectedChannels: []string{"ESPN 5 HD", "ESPN 5 HD"},
 			expectedProfiles: []string{"720p", "1080p"},
 			mustContainURL:   "ESPN_5.m3u8",
 			mustNotContain:   "ESPN_2",
@@ -92,19 +92,46 @@ func TestCatalog_GetChannels(t *testing.T) {
 				LeagueKey: "champions",
 				Title:     "Bayern Munich vs Viking FK",
 			},
-			expectedChannels: []string{"ESPN 1 HD (720p)", "ESPN 1 HD (1080p)"},
+			expectedChannels: []string{"ESPN 1 HD", "ESPN 1 HD"},
 			expectedProfiles: []string{"720p", "1080p"},
 			mustContainURL:   "ESPN/ESPN.isml",
 		},
 		{
-			name: "La Liga: Real Madrid returns ESPN 1 HD and Real Madrid TV",
+			name: "La Liga: Real Madrid returns standard competitive broadcast without Real Madrid TV",
 			match: model.Match{
 				LeagueKey: "laliga",
 				Title:     "Real Madrid vs Valencia",
 			},
-			expectedChannels: []string{"ESPN 1 HD (720p)", "Real Madrid TV"},
+			expectedChannels: []string{"ESPN 1 HD", "ESPN 1 HD"},
 			expectedProfiles: []string{"720p", "1080p"},
+			mustContainURL:   "ESPN/ESPN.isml",
+			mustNotContain:   "rmtv",
+		},
+		{
+			name: "Club Friendly: Real Madrid TV resolved only when explicitly in official broadcasts",
+			match: model.Match{
+				ID:         "friendly-rm-1",
+				LeagueKey:  "friendly",
+				Title:      "Real Madrid vs AC Milan",
+				Broadcasts: []string{"Real Madrid TV"},
+			},
+			expectedChannels: []string{"Real Madrid TV"},
+			expectedProfiles: []string{"1080p"},
 			mustContainURL:   "rmtv.akamaized.net",
+			mustNotContain:   "ESPN",
+		},
+		{
+			name: "La Liga: Real Madrid live match does not inject Real Madrid TV without official broadcast",
+			match: model.Match{
+				ID:        "live-laliga-rm",
+				LeagueKey: "laliga",
+				Title:     "Real Madrid vs Sevilla",
+				SlotIndex: 0,
+			},
+			expectedChannels: []string{"ESPN 1 HD", "ESPN 1 HD"},
+			expectedProfiles: []string{"720p", "1080p"},
+			mustContainURL:   "ESPN/ESPN.isml",
+			mustNotContain:   "rmtv",
 		},
 		{
 			name: "Premier League: returns ESPN 1 HD (720p & 1080p)",
@@ -112,28 +139,249 @@ func TestCatalog_GetChannels(t *testing.T) {
 				LeagueKey: "premier",
 				Title:     "Chelsea vs Liverpool",
 			},
-			expectedChannels: []string{"ESPN 1 HD (720p)", "ESPN 1 HD (1080p)"},
+			expectedChannels: []string{"ESPN 1 HD", "ESPN 1 HD"},
 			expectedProfiles: []string{"720p", "1080p"},
 		},
 		{
-			name: "Argentina: returns TyC Sports and ESPN 1 HD",
+			name: "Argentina: returns TyC Sports HD and ESPN 1 HD",
 			match: model.Match{
 				LeagueKey: "argentina",
 				Title:     "Boca Juniors vs River Plate",
 			},
-			expectedChannels: []string{"TyC Sports", "ESPN 1 HD (720p)"},
+			expectedChannels: []string{"TyC Sports HD", "ESPN 1 HD"},
 			expectedProfiles: []string{"1080p", "720p"},
 			mustContainURL:   "tycsports",
 		},
 		{
-			name: "Unknown league fallback returns ESPN 1 HD and Fox Sports 1",
+			name: "Unknown league fallback returns distinct slot ESPN channel without Fox Sports 1 HD",
 			match: model.Match{
 				LeagueKey: "unknown-league-key",
 				Title:     "Team A vs Team B",
 			},
-			expectedChannels: []string{"ESPN 1 HD (720p)", "Fox Sports 1"},
+			expectedChannels: []string{"ESPN 1 HD", "ESPN 1 HD"},
 			expectedProfiles: []string{"720p", "1080p"},
+			mustContainURL:   "ESPN/ESPN.isml",
+			mustNotContain:   "FOX_Sports.m3u8",
+		},
+		{
+			name: "Colombia: returns authentic Colombian channels and never falls back to generic ESPN",
+			match: model.Match{
+				ID:        "col-match-1",
+				LeagueKey: "colombia",
+				Title:     "Millonarios vs Santa Fe",
+			},
+			expectedChannels: []string{"Win+ Fútbol", "Win Sports HD", "Caracol TV HD", "Canal RCN HD"},
+			expectedProfiles: []string{"1080p", "1080p", "1080p", "1080p"},
+			mustContainURL:   "127.0.0.1",
+			mustNotContain:   "ESPN",
+		},
+		{
+			name: "Colombia: legacy synthetic struct returns authentic channels",
+			match: model.Match{
+				LeagueKey: "colombia",
+				Title:     "Junior vs Nacional",
+			},
+			expectedChannels: []string{"Win+ Fútbol", "Win Sports HD", "Caracol TV HD", "Canal RCN HD"},
+			expectedProfiles: []string{"1080p", "1080p", "1080p", "1080p"},
+			mustContainURL:   "127.0.0.1",
+			mustNotContain:   "ESPN",
+		},
+		{
+			name: "Official broadcasts: Caracol resolves Caracol TV HD & Caracol HD2",
+			match: model.Match{
+				ID:         "live-caracol-1",
+				LeagueKey:  "international",
+				Title:      "Colombia vs Brasil",
+				Broadcasts: []string{"Gol Caracol"},
+			},
+			expectedChannels: []string{"Caracol TV HD", "Caracol HD2"},
+			expectedProfiles: []string{"1080p", "1080p"},
+			mustContainURL:   "CARACOL",
+			mustNotContain:   "ESPN",
+		},
+		{
+			name: "Official broadcasts: RCN resolves Canal RCN HD & RCN HD2",
+			match: model.Match{
+				ID:         "live-rcn-1",
+				LeagueKey:  "international",
+				Title:      "Colombia vs Argentina",
+				Broadcasts: []string{"Deportes RCN"},
+			},
+			expectedChannels: []string{"Canal RCN HD", "RCN HD2"},
+			expectedProfiles: []string{"1080p", "1080p"},
+			mustContainURL:   "RCN",
+			mustNotContain:   "ESPN",
+		},
+		{
+			name: "Official broadcasts: Win resolves Win+ Fútbol & Win Sports HD",
+			match: model.Match{
+				ID:         "live-win-1",
+				LeagueKey:  "colombia",
+				Title:      "America de Cali vs Deportivo Cali",
+				Broadcasts: []string{"Win Sports+"},
+			},
+			expectedChannels: []string{"Win+ Fútbol", "Win Sports HD"},
+			expectedProfiles: []string{"1080p", "1080p"},
+			mustContainURL:   "WIN-SPORT",
+			mustNotContain:   "ESPN",
+		},
+		{
+			name: "Official broadcasts: Fox Sports 1 verified from FS1 metadata without duplicate guessing",
+			match: model.Match{
+				ID:         "live-fox-1",
+				LeagueKey:  "champions",
+				Title:      "Aston Villa vs Fenerbahce",
+				Broadcasts: []string{"FS1"},
+			},
+			expectedChannels: []string{"Fox Sports 1 HD"},
+			expectedProfiles: []string{"1080p"},
 			mustContainURL:   "FOX_Sports.m3u8",
+			mustNotContain:   "ESPN",
+		},
+		{
+			name: "Official broadcasts: Fox Sports 2 verified resolution",
+			match: model.Match{
+				ID:         "live-fox-2",
+				LeagueKey:  "bundesliga",
+				Title:      "Bayern Munich vs Leverkusen",
+				Broadcasts: []string{"Fox Sports 2"},
+			},
+			expectedChannels: []string{"Fox Sports 2", "Fox Sports 2"},
+			expectedProfiles: []string{"720p", "1080p"},
+			mustContainURL:   "FOX_SPORTS_2",
+			mustNotContain:   "ESPN",
+		},
+		{
+			name: "Champions: LASK Linz vs Liverpool returns ESPN 1 HD",
+			match: model.Match{
+				LeagueKey: "champions",
+				Title:     "LASK Linz vs Liverpool",
+			},
+			expectedChannels: []string{"ESPN 1 HD", "ESPN 1 HD"},
+			expectedProfiles: []string{"720p", "1080p"},
+			mustContainURL:   "ESPN/ESPN.isml",
+			mustNotContain:   "ESPN_2",
+		},
+		{
+			name: "Champions: Feyenoord vs Como returns ESPN 2 HD",
+			match: model.Match{
+				LeagueKey: "champions",
+				Title:     "Feyenoord vs Como",
+			},
+			expectedChannels: []string{"ESPN 2 HD", "ESPN 2 HD"},
+			expectedProfiles: []string{"720p", "1080p"},
+			mustContainURL:   "ESPN_2.m3u8",
+			mustNotContain:   "ESPN/ESPN.isml",
+		},
+		{
+			name: "Champions: AS Roma vs Real Madrid returns ESPN 1 HD",
+			match: model.Match{
+				LeagueKey: "champions",
+				Title:     "AS Roma vs Real Madrid",
+			},
+			expectedChannels: []string{"ESPN 1 HD", "ESPN 1 HD"},
+			expectedProfiles: []string{"720p", "1080p"},
+			mustContainURL:   "ESPN/ESPN.isml",
+		},
+		{
+			name: "Champions: Manchester City vs Paris Saint-Germain returns ESPN 2 HD",
+			match: model.Match{
+				LeagueKey: "champions",
+				Title:     "Manchester City vs Paris Saint-Germain",
+			},
+			expectedChannels: []string{"ESPN 2 HD", "ESPN 2 HD"},
+			expectedProfiles: []string{"720p", "1080p"},
+			mustContainURL:   "ESPN_2.m3u8",
+		},
+		{
+			name: "Champions: Aston Villa vs Fenerbahçe returns ESPN 3 HD",
+			match: model.Match{
+				LeagueKey: "champions",
+				Title:     "Aston Villa vs Fenerbahçe",
+			},
+			expectedChannels: []string{"ESPN 3 HD", "ESPN 3 HD"},
+			expectedProfiles: []string{"720p", "1080p"},
+			mustContainURL:   "ESPN_3.m3u8",
+		},
+		{
+			name: "Champions: Borussia Dortmund vs Bodo/Glimt returns ESPN 5 HD",
+			match: model.Match{
+				LeagueKey: "champions",
+				Title:     "Borussia Dortmund vs Bodo/Glimt",
+			},
+			expectedChannels: []string{"ESPN 5 HD", "ESPN 5 HD"},
+			expectedProfiles: []string{"720p", "1080p"},
+			mustContainURL:   "ESPN_5.m3u8",
+		},
+		{
+			name: "Champions: Real Betis vs FC Porto returns ESPN 7 HD",
+			match: model.Match{
+				LeagueKey: "champions",
+				Title:     "Real Betis vs FC Porto",
+			},
+			expectedChannels: []string{"ESPN 7 HD", "ESPN 7 HD"},
+			expectedProfiles: []string{"720p", "1080p"},
+			mustContainURL:   "ESPN_7.m3u8",
+		},
+		{
+			name: "Official broadcasts: CBSSN/Paramount falls through to verified LatAm ESPN channel when no US stream configured",
+			match: model.Match{
+				ID:         "live-cbs-fallback",
+				LeagueKey:  "champions",
+				Title:      "Borussia Dortmund vs Bodo/Glimt",
+				Broadcasts: []string{"CBSSN", "Paramount+"},
+			},
+			expectedChannels: []string{"ESPN 5 HD", "ESPN 5 HD"},
+			expectedProfiles: []string{"720p", "1080p"},
+			mustContainURL:   "ESPN_5.m3u8",
+		},
+		{
+			name: "Simultaneous matches without broadcasts: Slot 0 maps to ESPN 1 HD without Fox Sports collision",
+			match: model.Match{
+				ID:        "simul-1",
+				LeagueKey: "champions",
+				Title:     "AEK Athens vs Shakhtar Donetsk",
+				SlotIndex: 0,
+			},
+			expectedChannels: []string{"ESPN 1 HD", "ESPN 1 HD"},
+			expectedProfiles: []string{"720p", "1080p"},
+			mustContainURL:   "ESPN/ESPN.isml",
+			mustNotContain:   "FOX_Sports.m3u8",
+		},
+		{
+			name: "Simultaneous matches without broadcasts: Slot 1 maps to ESPN 2 HD without collision",
+			match: model.Match{
+				ID:        "simul-2",
+				LeagueKey: "champions",
+				Title:     "Slovan Bratislava vs VfB Stuttgart",
+				SlotIndex: 1,
+			},
+			expectedChannels: []string{"ESPN 2 HD", "ESPN 2 HD"},
+			expectedProfiles: []string{"720p", "1080p"},
+			mustContainURL:   "ESPN_2.m3u8",
+			mustNotContain:   "FOX_Sports.m3u8",
+		},
+		{
+			name: "Slot exceeds available linear channels returns no channels for honest placeholder",
+			match: model.Match{
+				ID:        "simul-8",
+				LeagueKey: "champions",
+				Title:     "Team Overload A vs Team Overload B",
+				SlotIndex: 7,
+			},
+			expectedChannels: []string{},
+			expectedProfiles: []string{},
+		},
+		{
+			name: "Official broadcast not in catalog returns no synthetic channels",
+			match: model.Match{
+				ID:         "live-dazn-1",
+				LeagueKey:  "premier",
+				Title:      "Arsenal vs Chelsea",
+				Broadcasts: []string{"DAZN 1 Bar HD"},
+			},
+			expectedChannels: []string{},
+			expectedProfiles: []string{},
 		},
 	}
 
@@ -178,5 +426,69 @@ func TestCatalog_GetChannels(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestCatalog_CBSOfficialBroadcasts(t *testing.T) {
+	oldCBSSN := StreamCBSSportsNetwork
+	oldGolazo := StreamCBSGolazo
+	defer func() {
+		StreamCBSSportsNetwork = oldCBSSN
+		StreamCBSGolazo = oldGolazo
+	}()
+
+	StreamCBSSportsNetwork = "http://example.com/cbssn.m3u8"
+	StreamCBSGolazo = "http://example.com/golazo.m3u8"
+
+	cat := New()
+	match := model.Match{
+		ID:         "live-cbs-configured",
+		LeagueKey:  "champions",
+		Title:      "Borussia Dortmund vs Bodo/Glimt",
+		Broadcasts: []string{"CBSSN", "Paramount+"},
+	}
+	channels := cat.GetChannels(match)
+	if len(channels) != 2 {
+		t.Fatalf("expected 2 channels, got %d", len(channels))
+	}
+	if channels[0].Name != "CBS Sports Network" {
+		t.Errorf("expected channel[0] CBS Sports Network, got %s", channels[0].Name)
+	}
+	if channels[1].Name != "CBS Sports Golazo Network" {
+		t.Errorf("expected channel[1] CBS Sports Golazo Network, got %s", channels[1].Name)
+	}
+}
+
+func TestDiagnostic_ChampionsFixtures(t *testing.T) {
+	cat := New()
+
+	todayFixtures := []struct {
+		title           string
+		timeStr         string
+		expectedChannel string
+	}{
+		{"LASK Linz vs Liverpool", "11:45", "ESPN 1 HD"},
+		{"Feyenoord Rotterdam vs Como", "11:45", "ESPN 2 HD"},
+		{"AS Roma vs Real Madrid", "14:00", "ESPN 1 HD"},
+		{"Manchester City vs Paris Saint-Germain", "14:00", "ESPN 2 HD"},
+		{"Aston Villa vs Fenerbahçe", "14:00", "ESPN 3 HD"},
+		{"Borussia Dortmund vs Bodo/Glimt", "14:00", "ESPN 5 HD"},
+		{"Real Betis vs FC Porto", "14:00", "ESPN 7 HD"},
+	}
+
+	for _, fix := range todayFixtures {
+		m := model.Match{
+			LeagueKey: "champions",
+			Title:     fix.title,
+			TimeStr:   fix.timeStr,
+		}
+		chs := cat.GetChannels(m)
+		if len(chs) == 0 {
+			t.Fatalf("[%s] expected channels, got none", fix.title)
+		}
+		if chs[0].Name != fix.expectedChannel {
+			t.Errorf("[%s] expected primary channel %s, got %s", fix.title, fix.expectedChannel, chs[0].Name)
+		}
+		t.Logf("✓ %s (%s) -> %s (OK)", fix.title, fix.timeStr, chs[0].Name)
 	}
 }

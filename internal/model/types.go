@@ -18,6 +18,24 @@ var (
 	ErrInvalidURL       = errors.New("invalid stream url")
 )
 
+type contextKey string
+
+const forceRefreshKey contextKey = "force_refresh"
+
+// WithForceRefresh returns a context that instructs the client to bypass local TTL cache.
+func WithForceRefresh(ctx context.Context) context.Context {
+	return context.WithValue(ctx, forceRefreshKey, true)
+}
+
+// IsForceRefresh checks if the context requests a cache bypass.
+func IsForceRefresh(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	v, ok := ctx.Value(forceRefreshKey).(bool)
+	return ok && v
+}
+
 // League represents a football league or competition.
 type League struct {
 	Key      string `json:"key"`
@@ -47,17 +65,17 @@ type MatchStatus struct {
 
 // MatchEvent represents an in-game event (goal, card, penalty, own goal).
 type MatchEvent struct {
-	Type        string `json:"type"`        // "goal", "penalty", "owngoal", "card_yellow", "card_red"
-	Description string `json:"description"` // e.g. "Goal - Header", "Penalty - Scored"
-	Clock       string  `json:"clock"`       // e.g. "38'"
+	Type        string  `json:"type"`
+	Description string  `json:"description"`
+	Clock       string  `json:"clock"`
 	ClockValue  float64 `json:"clockValue"`
 	TeamID      string  `json:"teamId"`
-	PlayerName  string `json:"playerName"`  // e.g. "Robert Lewandowski"
-	IsScoring   bool   `json:"isScoring"`
-	IsPenalty   bool   `json:"isPenalty"`
-	IsOwnGoal   bool   `json:"isOwnGoal"`
-	IsRedCard   bool   `json:"isRedCard"`
-	IsYellow    bool   `json:"isYellow"`
+	PlayerName  string  `json:"playerName"`
+	IsScoring   bool    `json:"isScoring"`
+	IsPenalty   bool    `json:"isPenalty"`
+	IsOwnGoal   bool    `json:"isOwnGoal"`
+	IsRedCard   bool    `json:"isRedCard"`
+	IsYellow    bool    `json:"isYellow"`
 }
 
 // Player represents an athlete on the match sheet.
@@ -83,42 +101,44 @@ type MatchLineups struct {
 
 // MatchStats represents team statistics for a fixture.
 type MatchStats struct {
-	HomePossession  string `json:"homePossession"`  // "58%"
-	AwayPossession  string `json:"awayPossession"`  // "42%"
-	HomeShots       string `json:"homeShots"`       // "14"
-	AwayShots       string `json:"awayShots"`       // "8"
-	HomeShotsOnGoal string `json:"homeShotsOnGoal"` // "6"
-	AwayShotsOnGoal string `json:"awayShotsOnGoal"` // "2"
-	HomeCorners     string `json:"homeCorners"`     // "7"
-	AwayCorners     string `json:"awayCorners"`     // "3"
-	HomeFouls       string `json:"homeFouls"`       // "11"
-	AwayFouls       string `json:"awayFouls"`       // "13"
-	HomePasses      string `json:"homePasses"`      // "450"
-	AwayPasses      string `json:"awayPasses"`      // "380"
-	HomePassPct     string `json:"homePassPct"`     // "88%"
-	AwayPassPct     string `json:"awayPassPct"`     // "82%"
-	HomeOffsides    string `json:"homeOffsides"`    // "2"
-	AwayOffsides    string `json:"awayOffsides"`    // "1"
-	HomeSaves       string `json:"homeSaves"`       // "4"
-	AwaySaves       string `json:"awaySaves"`       // "2"
+	HomePossession  string `json:"homePossession"`
+	AwayPossession  string `json:"awayPossession"`
+	HomeShots       string `json:"homeShots"`
+	AwayShots       string `json:"awayShots"`
+	HomeShotsOnGoal string `json:"homeShotsOnGoal"`
+	AwayShotsOnGoal string `json:"awayShotsOnGoal"`
+	HomeCorners     string `json:"homeCorners"`
+	AwayCorners     string `json:"awayCorners"`
+	HomeFouls       string `json:"homeFouls"`
+	AwayFouls       string `json:"awayFouls"`
+	HomePasses      string `json:"homePasses"`
+	AwayPasses      string `json:"awayPasses"`
+	HomePassPct     string `json:"homePassPct"`
+	AwayPassPct     string `json:"awayPassPct"`
+	HomeOffsides    string `json:"homeOffsides"`
+	AwayOffsides    string `json:"awayOffsides"`
+	HomeSaves       string `json:"homeSaves"`
+	AwaySaves       string `json:"awaySaves"`
 }
 
 // Match represents a soccer fixture.
 type Match struct {
-	ID        string        `json:"id"`
-	Title     string        `json:"title"`
-	HomeTeam  Competitor    `json:"homeTeam"`
-	AwayTeam  Competitor    `json:"awayTeam"`
-	StartTime time.Time     `json:"startTime"`
-	TimeStr   string        `json:"timeStr"`
-	Venue     string        `json:"venue"`
-	Status    MatchStatus   `json:"status"`
-	LeagueKey string        `json:"leagueKey"`
+	ID         string        `json:"id"`
+	Title      string        `json:"title"`
+	HomeTeam   Competitor    `json:"homeTeam"`
+	AwayTeam   Competitor    `json:"awayTeam"`
+	StartTime  time.Time     `json:"startTime"`
+	TimeStr    string        `json:"timeStr"`
+	Venue      string        `json:"venue"`
+	Status     MatchStatus   `json:"status"`
+	LeagueKey  string        `json:"leagueKey"`
 	Events     []MatchEvent  `json:"events"`
 	Stats      *MatchStats   `json:"stats"`
 	Lineups    *MatchLineups `json:"lineups"`
 	Referee    string        `json:"referee"`
 	Attendance int           `json:"attendance"`
+	Broadcasts []string      `json:"broadcasts,omitempty"`
+	SlotIndex  int           `json:"slotIndex,omitempty"`
 }
 
 // Channel represents an HLS stream signal for a match.
@@ -126,7 +146,7 @@ type Channel struct {
 	DisplayName string `json:"displayName"`
 	Name        string `json:"name"`
 	URL         string `json:"url"`
-	Resolution  string `json:"resolution"` // "720p", "1080p"
+	Resolution  string `json:"resolution"`  // "720p", "1080p"
 	BitrateMode string `json:"bitrateMode"` // "min", "max"
 	Recommended bool   `json:"recommended"`
 }

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/e12jassir/kickoff/internal/model"
@@ -17,11 +18,11 @@ import (
 const (
 	defaultBaseURL  = "https://site.api.espn.com/apis/site/v2/sports/soccer"
 	defaultCacheTTL = 300 * time.Second
+	liveCacheTTL    = 15 * time.Second
 	defaultTimeout  = 10 * time.Second
 	userAgent       = "Mozilla/5.0"
 )
 
-// Raw ESPN response structures for defensive unmarshaling.
 type rawResponse struct {
 	Events []rawEvent `json:"events"`
 }
@@ -34,12 +35,25 @@ type rawEvent struct {
 }
 
 type rawCompetition struct {
-	ID          string          `json:"id"`
-	Venue       *rawVenue       `json:"venue"`
-	Competitors []rawCompetitor `json:"competitors"`
-	Details     []rawDetail     `json:"details"`
-	Attendance  int             `json:"attendance"`
-	Officials   []rawOfficial   `json:"officials"`
+	ID            string            `json:"id"`
+	Venue         *rawVenue         `json:"venue"`
+	Competitors   []rawCompetitor   `json:"competitors"`
+	Details       []rawDetail       `json:"details"`
+	Attendance    int               `json:"attendance"`
+	Officials     []rawOfficial     `json:"officials"`
+	Broadcasts    []rawBroadcast    `json:"broadcasts"`
+	GeoBroadcasts []rawGeoBroadcast `json:"geoBroadcasts"`
+}
+
+type rawBroadcast struct {
+	Market string   `json:"market"`
+	Names  []string `json:"names"`
+}
+
+type rawGeoBroadcast struct {
+	Media *struct {
+		ShortName string `json:"shortName"`
+	} `json:"media"`
 }
 
 type rawDetail struct {
@@ -174,52 +188,44 @@ type Client struct {
 	now        func() time.Time
 }
 
-// Option configures the ESPN Client.
 type Option func(*Client)
 
-// WithBaseURL overrides the ESPN base URL (useful for testing).
 func WithBaseURL(url string) Option {
 	return func(c *Client) {
 		c.baseURL = strings.TrimRight(url, "/")
 	}
 }
 
-// WithHTTPClient overrides the internal HTTP client.
 func WithHTTPClient(client *http.Client) Option {
 	return func(c *Client) {
 		c.httpClient = client
 	}
 }
 
-// WithCacheDir overrides the cache directory.
 func WithCacheDir(dir string) Option {
 	return func(c *Client) {
 		c.cacheDir = dir
 	}
 }
 
-// WithCacheTTL overrides the cache expiration duration.
 func WithCacheTTL(ttl time.Duration) Option {
 	return func(c *Client) {
 		c.cacheTTL = ttl
 	}
 }
 
-// WithTimezone overrides the target timezone for filtering current-day matches.
 func WithTimezone(loc *time.Location) Option {
 	return func(c *Client) {
 		c.loc = loc
 	}
 }
 
-// WithNow overrides the current time supplier (useful for deterministic tests).
 func WithNow(nowFunc func() time.Time) Option {
 	return func(c *Client) {
 		c.now = nowFunc
 	}
 }
 
-// NewClient initializes a new ESPN client with sensible defaults.
 func NewClient(opts ...Option) *Client {
 	cacheBase := os.Getenv("XDG_CACHE_HOME")
 	if cacheBase == "" {
@@ -232,7 +238,6 @@ func NewClient(opts ...Option) *Client {
 	}
 	defaultCache := filepath.Join(cacheBase, "kickoff")
 
-	// Default timezone UTC-5 (America/Bogota / Colombia)
 	loc := time.FixedZone("America/Bogota", -5*3600)
 
 	c := &Client{
@@ -253,7 +258,29 @@ func NewClient(opts ...Option) *Client {
 	return c
 }
 
-// LeagueCode maps a league key to the ESPN league identifier.
+// WarmupCache concurrently pre-fetches all given leagues in the background.
+func (c *Client) WarmupCache(ctx context.Context, leagues []model.League) {
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 5)
+
+	for _, lg := range leagues {
+		wg.Add(1)
+		go func(key string) {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				return
+			}
+			reqCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
+			defer cancel()
+			_, _ = c.FetchMatches(reqCtx, key)
+		}(lg.Key)
+	}
+	wg.Wait()
+}
+
 func LeagueCode(leagueKey string) string {
 	switch strings.ToLower(leagueKey) {
 	case "laliga":
@@ -277,7 +304,6 @@ func LeagueCode(leagueKey string) string {
 	case "brasil":
 		return "bra.1"
 	default:
-		// Check DefaultLeagues
 		for _, l := range model.DefaultLeagues {
 			if strings.EqualFold(l.Key, leagueKey) || strings.EqualFold(l.Code, leagueKey) {
 				return l.Code
@@ -305,7 +331,17 @@ func (c *Client) getCached(leagueKey string) ([]model.Match, bool) {
 		return nil, false
 	}
 
-	if c.now().Sub(cached.CachedAt) > c.cacheTTL {
+	effectiveTTL := c.cacheTTL
+	for _, m := range cached.Matches {
+		if strings.EqualFold(m.Status.State, "in") {
+			if liveCacheTTL < effectiveTTL {
+				effectiveTTL = liveCacheTTL
+			}
+			break
+		}
+	}
+
+	if c.now().Sub(cached.CachedAt) > effectiveTTL {
 		return nil, false
 	}
 
@@ -379,15 +415,19 @@ func (c *Client) setCachedSummary(eventID string, stats *model.MatchStats, lineu
 	_ = os.WriteFile(cachePath, data, 0o644)
 }
 
-// FetchMatches queries ESPN scoreboard API, defensive parses fixtures, and caches results.
+// FetchMatches queries ESPN scoreboard API, extracts official TV broadcasts, and caches results.
 func (c *Client) FetchMatches(ctx context.Context, leagueKey string) ([]model.Match, error) {
-	// Check TTL cache first
-	if matches, found := c.getCached(leagueKey); found {
-		return matches, nil
+	if !model.IsForceRefresh(ctx) {
+		if matches, found := c.getCached(leagueKey); found {
+			return matches, nil
+		}
 	}
 
 	leagueCode := LeagueCode(leagueKey)
 	endpoint := fmt.Sprintf("%s/%s/scoreboard", c.baseURL, leagueCode)
+	if strings.Contains(c.baseURL, "espn.com") {
+		endpoint += "?region=co&lang=es"
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
@@ -473,7 +513,6 @@ func (c *Client) FetchMatches(ctx context.Context, leagueKey string) ([]model.Ma
 			}
 		}
 
-		// Ensure we have at least partial competitor names
 		if !hasHome {
 			homeComp = model.Competitor{DisplayName: "Local", IsHome: true}
 		}
@@ -562,6 +601,31 @@ func (c *Client) FetchMatches(ctx context.Context, leagueKey string) ([]model.Ma
 			ref = comp.Officials[0].DisplayName
 		}
 
+		// Extract official TV/stream broadcasters from ESPN payload
+		var broadcasts []string
+		seenB := make(map[string]bool)
+		addBroadcast := func(bName string) {
+			bName = strings.TrimSpace(bName)
+			if bName == "" {
+				return
+			}
+			key := strings.ToLower(bName)
+			if !seenB[key] {
+				seenB[key] = true
+				broadcasts = append(broadcasts, bName)
+			}
+		}
+		for _, b := range comp.Broadcasts {
+			for _, n := range b.Names {
+				addBroadcast(n)
+			}
+		}
+		for _, gb := range comp.GeoBroadcasts {
+			if gb.Media != nil {
+				addBroadcast(gb.Media.ShortName)
+			}
+		}
+
 		match := model.Match{
 			ID:         ev.ID,
 			Title:      fmt.Sprintf("%s vs %s", homeComp.DisplayName, awayComp.DisplayName),
@@ -575,22 +639,36 @@ func (c *Client) FetchMatches(ctx context.Context, leagueKey string) ([]model.Ma
 			Events:     events,
 			Referee:    ref,
 			Attendance: comp.Attendance,
+			Broadcasts: broadcasts,
 		}
 
 		matches = append(matches, match)
 	}
 
-	// Sort matches chronologically by StartTime
 	sort.Slice(matches, func(i, j int) bool {
 		return matches[i].StartTime.Before(matches[j].StartTime)
 	})
+
+	// Assign collision-free SlotIndex for simultaneous matches so they don't all map to ESPN 1
+	for i := range matches {
+		slot := 0
+		for j := 0; j < i; j++ {
+			diff := matches[i].StartTime.Sub(matches[j].StartTime)
+			if diff < 0 {
+				diff = -diff
+			}
+			if diff <= 90*time.Minute {
+				slot++
+			}
+		}
+		matches[i].SlotIndex = slot
+	}
 
 	c.setCache(leagueKey, matches)
 	return matches, nil
 }
 
 func parseESPNTime(s string) (time.Time, error) {
-	// Try standard RFC3339 formats
 	formats := []string{
 		time.RFC3339,
 		"2006-01-02T15:04Z",
@@ -607,20 +685,20 @@ func parseESPNTime(s string) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("unrecognized time format: %s", s)
 }
 
-// FetchMatchDetails queries ESPN summary API for team boxscore statistics, tactical lineups, and game info.
 func (c *Client) FetchMatchDetails(ctx context.Context, leagueKey, eventID string) (*model.MatchDetails, error) {
 	if eventID == "" {
 		return nil, nil
 	}
 
-	// Check TTL cache first
-	if stats, lineups, ref, att, found := c.getCachedSummary(eventID); found {
-		return &model.MatchDetails{
-			Stats:      stats,
-			Lineups:    lineups,
-			Referee:    ref,
-			Attendance: att,
-		}, nil
+	if !model.IsForceRefresh(ctx) {
+		if stats, lineups, ref, att, found := c.getCachedSummary(eventID); found {
+			return &model.MatchDetails{
+				Stats:      stats,
+				Lineups:    lineups,
+				Referee:    ref,
+				Attendance: att,
+			}, nil
+		}
 	}
 
 	leagueCode := LeagueCode(leagueKey)
@@ -650,7 +728,6 @@ func (c *Client) FetchMatchDetails(ctx context.Context, leagueKey, eventID strin
 	var stats *model.MatchStats
 	var lineups *model.MatchLineups
 
-	// 1. Extract MatchStats from Boxscore
 	if raw.Boxscore != nil && len(raw.Boxscore.Teams) > 0 {
 		var homeStats, awayStats []rawStatisticItem
 		if len(raw.Boxscore.Teams) >= 2 {
@@ -733,7 +810,6 @@ func (c *Client) FetchMatchDetails(ctx context.Context, leagueKey, eventID strin
 		}
 	}
 
-	// 2. Extract MatchLineups from Rosters
 	if len(raw.Rosters) > 0 {
 		var homeRoster, awayRoster *rawRoster
 		var homeTeamID, awayTeamID string
@@ -763,7 +839,6 @@ func (c *Client) FetchMatchDetails(ctx context.Context, leagueKey, eventID strin
 			}
 		}
 
-		// Fallback to team 0 and team 1 if not matched by ID
 		if homeRoster == nil && len(raw.Rosters) > 0 {
 			homeRoster = &raw.Rosters[0]
 		}
@@ -798,7 +873,6 @@ func (c *Client) FetchMatchDetails(ctx context.Context, leagueKey, eventID strin
 				}
 			}
 
-			// Defensive fallback: if no players were flagged starter, take up to 11
 			if len(starters) == 0 && len(r.Roster) > 0 {
 				limit := 11
 				if len(r.Roster) < limit {
@@ -862,7 +936,6 @@ func (c *Client) FetchMatchDetails(ctx context.Context, leagueKey, eventID strin
 	}, nil
 }
 
-// FetchMatchStats queries ESPN summary API for team boxscore statistics.
 func (c *Client) FetchMatchStats(ctx context.Context, leagueKey, eventID string) (*model.MatchStats, error) {
 	details, err := c.FetchMatchDetails(ctx, leagueKey, eventID)
 	if err != nil || details == nil {

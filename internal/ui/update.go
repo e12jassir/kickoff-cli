@@ -15,6 +15,7 @@ type matchesLoadedMsg struct {
 	leagueKey string
 	matches   []model.Match
 	err       error
+	isSilent  bool
 }
 
 type matchStatsLoadedMsg struct {
@@ -40,10 +41,55 @@ type playbackFinishedMsg struct {
 
 type pulseTickMsg time.Time
 
+type autoSyncTickMsg time.Time
+
 func pulseTickCmd() tea.Cmd {
 	return tea.Tick(600*time.Millisecond, func(t time.Time) tea.Msg {
 		return pulseTickMsg(t)
 	})
+}
+
+func autoSyncTickCmd(d time.Duration) tea.Cmd {
+	return tea.Tick(d, func(t time.Time) tea.Msg {
+		return autoSyncTickMsg(t)
+	})
+}
+
+// nextSyncInterval dynamically computes the polling frequency based on match states.
+func (m Model) nextSyncInterval() time.Duration {
+	if m.state != StateBrowsing && m.state != StateChannelSelect && m.state != StatePlaying {
+		return 30 * time.Second
+	}
+	if len(m.matches) == 0 {
+		return 60 * time.Second
+	}
+
+	hasLive := false
+	hasUpcomingSoon := false
+	allFinished := true
+	now := time.Now()
+
+	for _, match := range m.matches {
+		if !match.Status.Completed && match.Status.State != "post" {
+			allFinished = false
+		}
+		if match.Status.State == "in" {
+			hasLive = true
+			break
+		}
+		diff := match.StartTime.Sub(now)
+		if match.Status.State == "pre" && diff <= 15*time.Minute && diff >= -15*time.Minute {
+			hasUpcomingSoon = true
+		}
+	}
+
+	if hasLive || hasUpcomingSoon {
+		return 15 * time.Second
+	}
+	if allFinished {
+		return 5 * time.Minute
+	}
+	return 60 * time.Second
 }
 
 func fetchMatchesCmd(client model.Client, leagueKey string) tea.Cmd {
@@ -53,6 +99,20 @@ func fetchMatchesCmd(client model.Client, leagueKey string) tea.Cmd {
 			leagueKey: leagueKey,
 			matches:   matches,
 			err:       err,
+			isSilent:  false,
+		}
+	}
+}
+
+func forceRefreshMatchesCmd(client model.Client, leagueKey string, isSilent bool) tea.Cmd {
+	return func() tea.Msg {
+		ctx := model.WithForceRefresh(context.Background())
+		matches, err := client.FetchMatches(ctx, leagueKey)
+		return matchesLoadedMsg{
+			leagueKey: leagueKey,
+			matches:   matches,
+			err:       err,
+			isSilent:  isSilent,
 		}
 	}
 }
@@ -60,6 +120,23 @@ func fetchMatchesCmd(client model.Client, leagueKey string) tea.Cmd {
 func fetchMatchStatsCmd(client model.Client, leagueKey, eventID string) tea.Cmd {
 	return func() tea.Msg {
 		details, _ := client.FetchMatchDetails(context.Background(), leagueKey, eventID)
+		if details != nil {
+			return matchStatsLoadedMsg{
+				matchID:    eventID,
+				stats:      details.Stats,
+				lineups:    details.Lineups,
+				referee:    details.Referee,
+				attendance: details.Attendance,
+			}
+		}
+		return matchStatsLoadedMsg{matchID: eventID}
+	}
+}
+
+func forceFetchMatchStatsCmd(client model.Client, leagueKey, eventID string) tea.Cmd {
+	return func() tea.Msg {
+		ctx := model.WithForceRefresh(context.Background())
+		details, _ := client.FetchMatchDetails(ctx, leagueKey, eventID)
 		if details != nil {
 			return matchStatsLoadedMsg{
 				matchID:    eventID,
@@ -109,19 +186,45 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.livePulse = !m.livePulse
 		return m, pulseTickCmd()
 
+	case autoSyncTickMsg:
+		cmds := []tea.Cmd{autoSyncTickCmd(m.nextSyncInterval())}
+		if m.state == StateBrowsing || m.state == StateChannelSelect || m.state == StatePlaying {
+			league := m.CurrentLeague()
+			cmds = append(cmds, forceRefreshMatchesCmd(m.client, league.Key, true))
+
+			if m.state == StateChannelSelect && len(m.matches) > 0 && m.matchCursor < len(m.matches) {
+				selID := m.matches[m.matchCursor].ID
+				if selID != "" {
+					cmds = append(cmds, forceFetchMatchStatsCmd(m.client, league.Key, selID))
+				}
+			}
+		}
+		return m, tea.Batch(cmds...)
+
 	case matchesLoadedMsg:
 		curr := m.CurrentLeague()
 		if msg.leagueKey == curr.Key {
 			if msg.err != nil {
+				if msg.isSilent {
+					return m, nil
+				}
 				m.state = StateError
 				m.errorMsg = msg.err.Error()
 				m.statusMsg = ""
 			} else {
-				m.state = StateBrowsing
-				// Sort matches chronologically by StartTime
+				var prevSelectedID string
+				if len(m.matches) > 0 && m.matchCursor >= 0 && m.matchCursor < len(m.matches) {
+					prevSelectedID = m.matches[m.matchCursor].ID
+				}
+
+				if !msg.isSilent {
+					m.state = StateBrowsing
+				}
+
 				sort.Slice(msg.matches, func(i, j int) bool {
 					return msg.matches[i].StartTime.Before(msg.matches[j].StartTime)
 				})
+
 				if len(m.matches) > 0 {
 					statsMap := make(map[string]*model.MatchStats)
 					lineupsMap := make(map[string]*model.MatchLineups)
@@ -142,8 +245,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						}
 					}
 				}
+
 				m.matches = msg.matches
-				m.matchCursor = 0
+
+				if msg.isSilent && prevSelectedID != "" {
+					foundIdx := -1
+					for i, mt := range m.matches {
+						if mt.ID == prevSelectedID {
+							foundIdx = i
+							break
+						}
+					}
+					if foundIdx != -1 {
+						m.matchCursor = foundIdx
+					} else if m.matchCursor >= len(m.matches) && len(m.matches) > 0 {
+						m.matchCursor = len(m.matches) - 1
+					}
+				} else {
+					m.matchCursor = 0
+				}
 				m.errorMsg = ""
 			}
 		}
@@ -257,7 +377,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				league := m.CurrentLeague()
 				m.loadingMsg = "Recargando partidos (" + league.Name + ")..."
 				m.errorMsg = ""
-				return m, tea.Batch(m.spinner.Tick, fetchMatchesCmd(m.client, league.Key))
+				return m, tea.Batch(m.spinner.Tick, forceRefreshMatchesCmd(m.client, league.Key, false))
 			}
 
 		case StateChannelSelect:
@@ -322,7 +442,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				league := m.CurrentLeague()
 				m.loadingMsg = "Recargando partidos (" + league.Name + ")..."
 				m.errorMsg = ""
-				return m, tea.Batch(m.spinner.Tick, fetchMatchesCmd(m.client, league.Key))
+				return m, tea.Batch(m.spinner.Tick, forceRefreshMatchesCmd(m.client, league.Key, false))
 			}
 		}
 	}

@@ -1,29 +1,31 @@
-PREFIX ?= $(HOME)/.local
-BINDIR ?= $(PREFIX)/bin
+BINARY_NAME=bin/kickoff
+SRC=./cmd/kickoff
+INSTALL_DIR=$(HOME)/.local/bin
+CONFIG_DIR=$(HOME)/.config/kickoff
 
-.PHONY: all build test run clean install uninstall
+.PHONY: all build install test clean setup-channels
 
 all: build
 
 build:
 	@mkdir -p bin
-	go build -o bin/kickoff ./cmd/kickoff
+	go build -o $(BINARY_NAME) $(SRC)
+
+setup-channels:
+	@mkdir -p $(CONFIG_DIR)
+	@if [ ! -f $(CONFIG_DIR)/channels.json ]; then \
+		echo "Inicializando configuración de canales en $(CONFIG_DIR)/channels.json..."; \
+		cp -n assets/channels.default.json $(CONFIG_DIR)/channels.json 2>/dev/null || true; \
+	fi
+
+install: build setup-channels
+	@mkdir -p $(INSTALL_DIR)
+	@install -m 755 $(BINARY_NAME) $(INSTALL_DIR)/kickoff
+	@chmod +x $(INSTALL_DIR)/kickoff
+	@echo "kickoff instalado exitosamente en $(INSTALL_DIR)"
 
 test:
 	go test -v ./...
 
-run:
-	go run ./cmd/kickoff
-
 clean:
-	rm -rf bin/kickoff
-
-install: build
-	@mkdir -p $(BINDIR)
-	@install -m 755 bin/kickoff $(BINDIR)/kickoff
-	@rm -f $(BINDIR)/kickoff-preview $(BINDIR)/futbol $(BINDIR)/futbol-preview
-	@echo "kickoff instalado exitosamente en $(BINDIR)"
-
-uninstall:
-	@rm -f $(BINDIR)/kickoff $(BINDIR)/kickoff-preview $(BINDIR)/futbol $(BINDIR)/futbol-preview
-	@echo "kickoff desinstalado de $(BINDIR)"
+	@rm -rf bin

@@ -853,3 +853,67 @@ func TestModel_Modal_CursorGatingAndFallbacks(t *testing.T) {
 		t.Errorf("expected state to remain StateChannelSelect, got %d", m.state)
 	}
 }
+
+func TestModel_ChannelModal_SanitizedAndAligned(t *testing.T) {
+	channels := []model.Channel{
+		{
+			DisplayName: "  · Win+ Fútbol (1080p Directo)   [Recomendado]",
+			Name:        "Win+ Fútbol",
+			Resolution:  "1080p",
+			BitrateMode: "max",
+			Recommended: true,
+		},
+		{
+			DisplayName: "  · Win Sports HD (720p)",
+			Name:        "Win Sports HD",
+			Resolution:  "720p",
+			BitrateMode: "min",
+			Recommended: false,
+		},
+		{
+			DisplayName: "Caracol TV HD",
+			Name:        "Caracol TV HD",
+			Resolution:  "1080p",
+			BitrateMode: "max",
+			Recommended: false,
+		},
+	}
+
+	match := model.Match{
+		ID:        "m-col",
+		Title:     "Millonarios vs Santa Fe",
+		LeagueKey: "colombia",
+		Status:    model.MatchStatus{State: "in", Description: "1T 25'"},
+	}
+
+	out := renderChannelModal(match, channels, 0, 0, false, "")
+
+	// 1. Must NOT contain bullet indentations "·" preceding channel names
+	if strings.Contains(out, "· Win+ Fútbol") || strings.Contains(out, "· Win Sports") {
+		t.Errorf("channel modal still contains bullet indentation:\n%s", out)
+	}
+
+	// 2. Must NOT contain truncated mid-string suffixes or raw paren suffixes in channel names
+	if strings.Contains(out, "Directo") || strings.Contains(out, "Fluido") {
+		t.Errorf("channel modal still contains parenthesized suffixes:\n%s", out)
+	}
+
+	// 3. Must contain clean channel names
+	if !strings.Contains(out, "Win+ Fútbol") {
+		t.Errorf("expected clean name 'Win+ Fútbol' in modal")
+	}
+	if !strings.Contains(out, "Win Sports HD") {
+		t.Errorf("expected clean name 'Win Sports HD' in modal")
+	}
+	if !strings.Contains(out, "Caracol TV HD") {
+		t.Errorf("expected clean name 'Caracol TV HD' in modal")
+	}
+
+	// 4. Must contain formatted badges
+	if !strings.Contains(out, "[1080p · max]") || !strings.Contains(out, "[720p · min]") {
+		t.Errorf("expected resolution badges in modal")
+	}
+	if !strings.Contains(out, "★ Recomendado") {
+		t.Errorf("expected recommended badge in modal")
+	}
+}

@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"math"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -307,6 +308,24 @@ func renderChannelModal(match model.Match, channels []model.Channel, selectedIdx
 				if i == selectedIdx {
 					prefix = " › "
 				}
+
+				cleanName := cleanChannelName(ch.DisplayName)
+				if cleanName == "" {
+					cleanName = cleanChannelName(ch.Name)
+				}
+				if cleanName == "" {
+					cleanName = "Canal"
+				}
+
+				nameCol := lipgloss.NewStyle().Width(22).MaxWidth(22).Render(truncateModalText(cleanName, 22))
+
+				var prefixAndName string
+				if i == selectedIdx {
+					prefixAndName = ChannelItemSelected.Render(prefix + nameCol)
+				} else {
+					prefixAndName = ChannelItemNormal.Render(prefix + nameCol)
+				}
+
 				res := ch.Resolution
 				if res == "" {
 					res = "720p"
@@ -315,19 +334,16 @@ func renderChannelModal(match model.Match, channels []model.Channel, selectedIdx
 				if bitrate == "" {
 					bitrate = "auto"
 				}
-				badge := ResolutionBadge.Render(fmt.Sprintf("[%s · %s]", res, bitrate))
+				badgeText := fmt.Sprintf("[%s · %s]", res, bitrate)
+				badgeCol := ResolutionBadge.Width(14).MaxWidth(14).Render(badgeText)
+
 				recBadge := ""
 				if ch.Recommended {
 					recBadge = "  " + RecommendedBadge.Render("★ Recomendado")
 				}
 
-				nameFormatted := truncateModalText(ch.DisplayName, 24)
-				itemLine := fmt.Sprintf("%s%-24s  %s%s", prefix, nameFormatted, badge, recBadge)
-				if i == selectedIdx {
-					modal.WriteString(ChannelItemSelected.Render(itemLine) + "\n")
-				} else {
-					modal.WriteString(ChannelItemNormal.Render(itemLine) + "\n")
-				}
+				itemLine := fmt.Sprintf("%s  %s%s", prefixAndName, badgeCol, recBadge)
+				modal.WriteString(itemLine + "\n")
 			}
 		}
 
@@ -516,6 +532,20 @@ func truncateModalText(s string, maxLen int) string {
 		return string(r[:maxLen-1]) + "…"
 	}
 	return s
+}
+
+var (
+	reBracketTag   = regexp.MustCompile(`\[.*?\]`)
+	reParenSuffix  = regexp.MustCompile(`\s*\(.*?\)`)
+	reBulletPrefix = regexp.MustCompile(`^[\s·•\-\*]+`)
+)
+
+func cleanChannelName(raw string) string {
+	s := strings.TrimSpace(raw)
+	s = reBracketTag.ReplaceAllString(s, "")
+	s = reParenSuffix.ReplaceAllString(s, "")
+	s = reBulletPrefix.ReplaceAllString(s, "")
+	return strings.TrimSpace(s)
 }
 
 func renderStatRow(leftVal, label, rightVal string) string {

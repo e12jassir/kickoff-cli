@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"time"
+
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/e12jassir/kickoff/internal/model"
@@ -36,7 +38,7 @@ type Model struct {
 	channelCursor int
 	modalTab      int
 
-	livePulse bool
+	livePulse  bool
 	playbackID int64
 
 	spinner    spinner.Model
@@ -92,10 +94,11 @@ func (m Model) CurrentLeague() model.League {
 	return m.leagues[m.activeTab]
 }
 
-// Init begins spinner tick and pulse ticker for live animations.
+// Init begins spinner tick, pulse ticker, and automatic smart live-sync ticker.
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(
 		m.spinner.Tick,
 		pulseTickCmd(),
+		autoSyncTickCmd(15*time.Second),
 	)
 }
