@@ -162,7 +162,7 @@ type PlayRequest struct {
 var DefaultLeagues = []League{
 	{Key: "champions", Name: "UEFA Champions League", Code: "uefa.champions", Emoji: "🏆", Category: "Torneos Internacionales"},
 	{Key: "libertadores", Name: "Copa Libertadores", Code: "conmebol.libertadores", Emoji: "🌎", Category: "Torneos Internacionales"},
-	{Key: "premier", Name: "Premier League", Code: "eng.1", Emoji: "🏴󠁧󠁢󠁥󠁮󠁧󠁿", Category: "Ligas Europeas"},
+	{Key: "premier", Name: "Premier League", Code: "eng.1", Emoji: "🇬🇧", Category: "Ligas Europeas"},
 	{Key: "laliga", Name: "La Liga", Code: "esp.1", Emoji: "🇪🇸", Category: "Ligas Europeas"},
 	{Key: "seriea", Name: "Serie A", Code: "ita.1", Emoji: "🇮🇹", Category: "Ligas Europeas"},
 	{Key: "bundesliga", Name: "Bundesliga", Code: "ger.1", Emoji: "🇩🇪", Category: "Ligas Europeas"},
