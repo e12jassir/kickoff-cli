@@ -53,6 +53,7 @@ When it's match time, launch verified high-definition broadcast streams in hardw
 - **📊 In-Depth Analytics**: Live possession bars, shot distribution, passing accuracy, corner kicks, and discipline metrics.
 - **🛡️ Starting XI & Formations**: Full tactical rosters, squad numbers, and substitute benches.
 - **📺 Zero-Ad Stream Launcher**: Automatically maps fixtures to verified broadcast signals and launches them smoothly in `mpv`.
+- **📡 Autonomous TV Guide Crawler**: Dynamically scrapes live sports EPG schedules daily to map matches to their verified broadcast channels (ESPN 1-7, Win Sports, Caracol, RCN) without static rules.
 - **⚡ Background Health Prober**: Probes live playlists asynchronously in the background with zero UI blocking.
 - **🚀 Ultra-Lightweight & Efficient**: Native compiled Go binary consuming under ~28 MB RAM with sub-20ms cold startup (vs 1.5 GB+ in an ad-ridden browser).
 
@@ -75,12 +76,19 @@ cd kickoff-cli/aur && makepkg -si
 go install github.com/e12jassir/kickoff/cmd/kickoff@latest
 ```
 
-### Prebuilt Binaries (Linux / macOS)
+### Prebuilt Binaries (Linux / Windows / macOS)
 Download the latest precompiled release for your architecture from the [Releases](https://github.com/e12jassir/kickoff-cli/releases) page:
 
+**Linux / macOS:**
 ```bash
 tar -xzf kickoff_*_linux_amd64.tar.gz
 sudo mv kickoff /usr/local/bin/
+```
+
+**Windows:**
+Download `kickoff.exe` (or extract `kickoff_windows_amd64.zip`) and run from PowerShell or Windows Terminal:
+```powershell
+.\kickoff.exe
 ```
 
 ### Build from Source
@@ -95,6 +103,7 @@ make install
 > - **Arch Linux / Manjaro:** `sudo pacman -S mpv` *(handled automatically if installing via AUR)*
 > - **Debian / Ubuntu:** `sudo apt install mpv`
 > - **Fedora:** `sudo dnf install mpv`
+> - **Windows:** `winget install mpv.net` *(or `choco install mpv`)*
 > - **macOS:** `brew install mpv`
 
 ---
