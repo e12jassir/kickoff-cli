@@ -233,8 +233,21 @@ func SelfUpdate(ctx context.Context, repo, currentVersion string) error {
 	}
 	_ = tmpFile.Close()
 
+	oldPath := exePath + ".old"
+	_ = os.Remove(oldPath)
+	if runtime.GOOS == "windows" {
+		if err := os.Rename(exePath, oldPath); err != nil {
+			return fmt.Errorf("no se pudo mover binario activo: %w", err)
+		}
+	}
 	if err := os.Rename(tmpName, exePath); err != nil {
+		if runtime.GOOS == "windows" {
+			_ = os.Rename(oldPath, exePath) // Rollback
+		}
 		return fmt.Errorf("error al reemplazar binario en %s: %w", exePath, err)
+	}
+	if runtime.GOOS != "windows" {
+		_ = os.Remove(oldPath)
 	}
 
 	// Clean outdated cache files so newly installed version fetches fresh data
@@ -266,7 +279,11 @@ func RunSetup() error {
 	mpvPath, err := exec.LookPath("mpv")
 	if err != nil {
 		fmt.Println("❌ mpv: NO ENCONTRADO")
-		warnings = append(warnings, "mpv es obligatorio para reproducir partidos. Instálalo con 'sudo pacman -S mpv' o 'sudo apt install mpv'")
+		if runtime.GOOS == "windows" {
+			warnings = append(warnings, "mpv es obligatorio para reproducir partidos. Instálalo con 'winget install mpv.net' en PowerShell o descarga mpv.exe desde https://mpv.io")
+		} else {
+			warnings = append(warnings, "mpv es obligatorio para reproducir partidos. Instálalo con 'sudo pacman -S mpv' (Arch), 'sudo apt install mpv' (Ubuntu/Debian) o 'brew install mpv' (macOS)")
+		}
 	} else {
 		out, _ := exec.Command("mpv", "--version").Output()
 		firstLine := strings.Split(string(out), "\n")[0]

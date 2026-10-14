@@ -17,6 +17,10 @@ import (
 const version = "0.1.1"
 
 func main() {
+	if exe, err := os.Executable(); err == nil {
+		_ = os.Remove(exe + ".old")
+	}
+
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "update":

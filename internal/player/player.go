@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -157,7 +158,10 @@ func (c *Controller) PlayStream(ctx context.Context, req model.PlayRequest) erro
 
 	if _, err := exec.LookPath(c.mpvBinary); err != nil {
 		c.mu.Unlock()
-		return fmt.Errorf("mpv no está instalado en tu sistema. Instálalo con 'sudo pacman -S mpv' (Arch) o 'sudo apt install mpv' (Ubuntu/Debian) — https://mpv.io")
+		if runtime.GOOS == "windows" {
+			return fmt.Errorf("mpv no está instalado en tu sistema. Instálalo con 'winget install mpv.net' (PowerShell) o descarga mpv.exe en https://mpv.io")
+		}
+		return fmt.Errorf("mpv no está instalado en tu sistema. Instálalo con 'sudo pacman -S mpv' (Arch), 'sudo apt install mpv' (Ubuntu/Debian) o 'brew install mpv' (macOS) — https://mpv.io")
 	}
 
 	_ = c.stopLocked()
@@ -224,55 +228,7 @@ func (c *Controller) pollIPCConfirmation(ctx context.Context, cmd *exec.Cmd, soc
 		close(doneCh)
 	}()
 
-	start := time.Now()
-	timeout := c.pollTimeout
-
-	var conn net.Conn
-	defer func() {
-		if conn != nil {
-			_ = conn.Close()
-		}
-	}()
-
-	for {
-		select {
-		case <-ctx.Done():
-			c.cleanupFailure(cmd, dir)
-			return ctx.Err()
-		case err := <-exitCh:
-			_ = os.RemoveAll(dir)
-			return fmt.Errorf("%w: %v", model.ErrPlayerExited, err)
-		default:
-		}
-
-		if time.Since(start) > timeout {
-			c.cleanupFailure(cmd, dir)
-			return model.ErrPlayerTimeout
-		}
-
-		if conn == nil {
-			if _, err := os.Stat(sockPath); err == nil {
-				dConn, err := net.DialTimeout("unix", sockPath, defaultDialTimeout)
-				if err == nil {
-					conn = dConn
-				}
-			}
-		}
-
-		if conn != nil {
-			confirmed, err := queryVoConfigured(conn)
-			if err == nil && confirmed {
-				_ = os.Remove(sockPath)
-				return nil
-			}
-			if err != nil {
-				_ = conn.Close()
-				conn = nil
-			}
-		}
-
-		time.Sleep(50 * time.Millisecond)
-	}
+	return c.platformWait(ctx, cmd, sockPath, dir, exitCh)
 }
 
 func (c *Controller) cleanupFailure(cmd *exec.Cmd, dir string) {
