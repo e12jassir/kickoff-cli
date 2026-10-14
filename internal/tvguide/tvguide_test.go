@@ -245,13 +245,13 @@ func TestService_ResolveMatch(t *testing.T) {
 		{
 			Name:      "ESPN 1 HD",
 			Slug:      "espn_colombia",
-			StreamURL: StreamESPN1,
+			StreamURL: "http://example.com/espn1.m3u8",
 			Programs:  []string{"SportsCenter", "LASK vs. Liverpool", "Roma vs. Real Madrid"},
 		},
 		{
 			Name:      "ESPN 2 HD",
 			Slug:      "espn_2_colombia",
-			StreamURL: StreamESPN2,
+			StreamURL: "http://example.com/espn2.m3u8",
 			Programs:  []string{"Feyenoord vs. Como", "Manchester City vs. Paris Saint-Germain"},
 		},
 	})
@@ -331,7 +331,7 @@ func TestCacheSerialization_FreshAndExpired(t *testing.T) {
 		{
 			Name:      "ESPN 1 HD",
 			Slug:      "espn_colombia",
-			StreamURL: StreamESPN1,
+			StreamURL: "http://example.com/espn1.m3u8",
 			Programs:  []string{"LASK vs. Liverpool"},
 		},
 	}
@@ -396,9 +396,9 @@ func TestCrawler_WorkerPool_And_OfflineFallback(t *testing.T) {
 	defer server.Close()
 
 	targets := []ChannelTarget{
-		{Name: "ESPN 1 HD", Slug: "espn_colombia", StreamURL: StreamESPN1},
-		{Name: "ESPN 2 HD", Slug: "espn_2_colombia", StreamURL: StreamESPN2},
-		{Name: "Win Sports HD", Slug: "win_sports", StreamURL: StreamWinSports},
+		{Name: "ESPN 1 HD", Slug: "espn_colombia", StreamURL: "http://example.com/espn1.m3u8"},
+		{Name: "ESPN 2 HD", Slug: "espn_2_colombia", StreamURL: "http://example.com/espn2.m3u8"},
+		{Name: "Win Sports HD", Slug: "win_sports", StreamURL: "http://example.com/winsports.m3u8"},
 		{Name: "Broken Channel", Slug: "broken_slug", StreamURL: "http://example.com"},
 	}
 
@@ -506,7 +506,7 @@ func TestResolveMatch_TimeAwareReplayDisqualification(t *testing.T) {
 		{
 			Name:      "ESPN 3 HD",
 			Slug:      "espn_3_colombia",
-			StreamURL: StreamESPN3,
+			StreamURL: "http://example.com/espn3.m3u8",
 			Entries: []ProgramEntry{
 				{Title: "Aston Villa vs. Fenerbahce", StartTime: "13:40", EndTime: "16:00"},
 				{Title: "Slovan Bratislava vs. Stuttgart", StartTime: "22:00", EndTime: "00:00"},
@@ -515,7 +515,7 @@ func TestResolveMatch_TimeAwareReplayDisqualification(t *testing.T) {
 		{
 			Name:      "ESPN 4 HD",
 			Slug:      "espn_4_colombia",
-			StreamURL: StreamESPN4,
+			StreamURL: "http://example.com/espn4.m3u8",
 			Entries: []ProgramEntry{
 				{Title: "Slovan Bratislava vs. Stuttgart", StartTime: "13:40", EndTime: "16:00"},
 				{Title: "Aston Villa vs. Fenerbahce", StartTime: "22:00", EndTime: "00:00"},

@@ -1,0 +1,44 @@
+{
+  "streams": {
+    "espn1": "http://your-iptv-provider.example/stream/espn1.m3u8",
+    "espn2": "http://your-iptv-provider.example/stream/espn2.m3u8",
+    "espn3": "http://your-iptv-provider.example/stream/espn3.m3u8",
+    "espn4": "http://your-iptv-provider.example/stream/espn4.m3u8",
+    "espn5": "http://your-iptv-provider.example/stream/espn5.m3u8",
+    "espn6": "http://your-iptv-provider.example/stream/espn6.m3u8",
+    "espn7": "http://your-iptv-provider.example/stream/espn7.m3u8",
+    "espn_extra": "http://your-iptv-provider.example/stream/espn_extra.m3u8",
+    "fox1": "http://your-iptv-provider.example/stream/fox1.m3u8",
+    "fox2": "http://your-iptv-provider.example/stream/fox2.m3u8",
+    "fox3": "http://your-iptv-provider.example/stream/fox3.m3u8",
+    "tyc": "http://your-iptv-provider.example/stream/tyc.m3u8",
+    "win": "http://your-iptv-provider.example/stream/win.m3u8",
+    "win_plus": "http://your-iptv-provider.example/stream/win_plus.m3u8",
+    "caracol": "http://your-iptv-provider.example/stream/caracol.m3u8",
+    "caracol_hd2": "http://your-iptv-provider.example/stream/caracol_hd2.m3u8",
+    "rcn": "http://your-iptv-provider.example/stream/rcn.m3u8",
+    "rcn_hd2": "http://your-iptv-provider.example/stream/rcn_hd2.m3u8",
+    "realmadrid": "https://rmtv.akamaized.net/hls/live/2043153/rmtv-es-web/master.m3u8",
+    "teledeporte": "https://rtvelivestream.akamaized.net/rtvesec/tdp/tdp_main.m3u8"
+  },
+  "league_channels": {
+    "champions": [],
+    "premier": []
+  },
+  "custom_rules": [
+    {
+      "league": "premier",
+      "pattern": "(?i)Arsenal",
+      "channels": [
+        {
+          "displayName": "My Custom Stream",
+          "name": "Custom 1080p",
+          "url": "http://my-stream.example/live.m3u8",
+          "resolution": "1080p",
+          "bitrateMode": "max",
+          "recommended": true
+        }
+      ]
+    }
+  ]
+}

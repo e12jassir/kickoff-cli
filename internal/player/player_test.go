@@ -38,8 +38,8 @@ func TestCreateSocketDir(t *testing.T) {
 func TestBuildArgs(t *testing.T) {
 	req := model.PlayRequest{
 		Channel: model.Channel{
-			Name:        "ESPN 5 HD (720p)",
-			URL:         "https://example.com/espn5.m3u8",
+			Name:        "Sports HD (720p)",
+			URL:         "https://test.boldmss.com/live/feed.m3u8",
 			BitrateMode: "min",
 		},
 		Match: model.Match{
@@ -64,9 +64,9 @@ func TestBuildArgs(t *testing.T) {
 		"--hls-bitrate=min",
 		"--network-timeout=20",
 		"--input-ipc-server=/tmp/mock.sock",
-		"--title=kickoff: Barcelona vs Galatasaray (ESPN 5 HD (720p))",
+		"--title=kickoff: Barcelona vs Galatasaray (Sports HD (720p))",
 		// Sanitized URL check (must be http, not https)
-		"http://example.com/espn5.m3u8",
+		"http://test.boldmss.com/live/feed.m3u8",
 	}
 
 	argStr := strings.Join(args, " ")

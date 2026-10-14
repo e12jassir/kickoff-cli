@@ -18,28 +18,10 @@ import (
 	"github.com/e12jassir/kickoff/internal/tvguide"
 )
 
-// Expanded pool of verified sports stream URLs.
+// Public free-to-air (FTA) channels with legal webcasts.
 const (
-	StreamESPN1       = "http://example.com/espn.m3u8"
-	StreamESPN2       = "http://example.com/espn2.m3u8"
-	StreamESPN3       = "http://example.com/espn3.m3u8"
-	StreamESPN4       = "http://example.com/espn4.m3u8"
-	StreamESPN5       = "http://example.com/espn5.m3u8"
-	StreamESPN6       = "http://example.com/espn6.m3u8"
-	StreamESPN7       = "http://example.com/espn7.m3u8"
-	StreamESPNExtra   = "http://example.com/espnextra.m3u8"
-	StreamFoxSports1  = "http://example.com/fox1.m3u8"
-	StreamFoxSports2  = "http://example.com/fox2.m3u8"
-	StreamFoxSports3  = "http://example.com/fox3.m3u8"
 	StreamRealMadrid  = "https://rmtv.akamaized.net/hls/live/2043153/rmtv-es-web/master.m3u8"
-	StreamTyCSports   = "http://example.com/tyc.m3u8"
 	StreamTeledeporte = "https://rtvelivestream.akamaized.net/rtvesec/tdp/tdp_main.m3u8"
-	StreamCaracolTV   = "http://example.com/caracol.m3u8"
-	StreamCaracolHD2  = "http://example.com/caracolhd2.m3u8"
-	StreamCanalRCN    = "http://example.com/rcn.m3u8"
-	StreamRCNHD2      = "http://example.com/rcnhd2.m3u8"
-	StreamWinSports   = "http://example.com/win.m3u8"
-	StreamWinPlus     = "http://example.com/winplus.m3u8"
 )
 
 // Optional US stream endpoints (configurable via environment variables).
@@ -49,6 +31,7 @@ var (
 )
 
 type ExternalConfig struct {
+	Streams        map[string]string          `json:"streams"`
 	LeagueChannels map[string][]model.Channel `json:"league_channels"`
 	CustomRules    []struct {
 		League   string          `json:"league"`
@@ -90,13 +73,35 @@ func WithTVGuide(svc *tvguide.Service) Option {
 	}
 }
 
-// Catalog implements model.Resolver with dynamic broadcast matching, TV guide crawling, and stream health probing.
+// WithConfigFile sets a custom path for the channels configuration file.
+func WithConfigFile(path string) Option {
+	return func(c *Catalog) {
+		c.configPath = path
+	}
+}
+
+// WithStreams sets in-memory stream endpoints (ideal for testing or dynamic injection).
+func WithStreams(streams map[string]string) Option {
+	return func(c *Catalog) {
+		if c.userStreams == nil {
+			c.userStreams = make(map[string]string)
+		}
+		for k, v := range streams {
+			c.userStreams[strings.ToLower(strings.TrimSpace(k))] = v
+		}
+	}
+}
+
+// Catalog implements model.Resolver with dynamic broadcast matching, TV guide crawling,
+// and user-configured stream mapping.
 type Catalog struct {
 	mu              sync.RWMutex
 	streamAlive     map[string]bool
 	championsRules  []matchRule
 	customRules     []customMatchRule
 	leagueOverrides map[string][]model.Channel
+	userStreams     map[string]string
+	configPath      string
 	tvGuide         *tvguide.Service
 }
 
@@ -111,18 +116,19 @@ type customMatchRule struct {
 	channels []model.Channel
 }
 
-// New creates a new Catalog resolver and starts background health checks on all stream signals.
+// New creates a new Catalog resolver and starts background health checks on stream signals.
 func New(opts ...Option) *Catalog {
 	c := &Catalog{
 		streamAlive:     make(map[string]bool),
 		leagueOverrides: make(map[string][]model.Channel),
+		userStreams:     make(map[string]string),
 		tvGuide:         tvguide.NewService(),
 	}
+	c.loadExternalConfig()
 	for _, opt := range opts {
 		opt(c)
 	}
 	c.initChampionsRules()
-	c.loadExternalConfig()
 	go c.probeAllStreamsBackground()
 	return c
 }
@@ -138,14 +144,30 @@ func NewResolver() model.Resolver {
 	return New()
 }
 
-// probeAllStreamsBackground checks in parallel which M3U8 endpoints are online.
-func (c *Catalog) probeAllStreamsBackground() {
-	urls := []string{
-		StreamESPN1, StreamESPN2, StreamESPN3, StreamESPN4, StreamESPN5, StreamESPN6, StreamESPN7,
-		StreamESPNExtra, StreamFoxSports1, StreamFoxSports2, StreamFoxSports3,
-		StreamRealMadrid, StreamTyCSports, StreamTeledeporte,
-		StreamCaracolTV, StreamCaracolHD2, StreamCanalRCN, StreamRCNHD2, StreamWinSports, StreamWinPlus,
+// StreamEndpoint resolves a user-configured stream URL by canonical key.
+func (c *Catalog) StreamEndpoint(key string) (string, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	cleanKey := strings.ToLower(strings.TrimSpace(key))
+	u, ok := c.userStreams[cleanKey]
+	if !ok || strings.TrimSpace(u) == "" {
+		return "", false
 	}
+	return u, true
+}
+
+func (c *Catalog) probeAllStreamsBackground() {
+	var urls []string
+
+	c.mu.RLock()
+	for _, u := range c.userStreams {
+		if u != "" {
+			urls = append(urls, u)
+		}
+	}
+	c.mu.RUnlock()
+
+	urls = append(urls, StreamRealMadrid, StreamTeledeporte)
 	if StreamCBSSportsNetwork != "" {
 		urls = append(urls, StreamCBSSportsNetwork)
 	}
@@ -196,15 +218,22 @@ func (c *Catalog) probeAllStreamsBackground() {
 }
 
 func (c *Catalog) loadExternalConfig() {
-	configBase := os.Getenv("XDG_CONFIG_HOME")
-	if configBase == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return
-		}
-		configBase = filepath.Join(home, ".config")
+	cfgPath := c.configPath
+	if cfgPath == "" {
+		cfgPath = os.Getenv("KICKOFF_CHANNELS_PATH")
 	}
-	cfgPath := filepath.Join(configBase, "kickoff", "channels.json")
+	if cfgPath == "" {
+		configBase := os.Getenv("XDG_CONFIG_HOME")
+		if configBase == "" {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return
+			}
+			configBase = filepath.Join(home, ".config")
+		}
+		cfgPath = filepath.Join(configBase, "kickoff", "channels.json")
+	}
+
 	data, err := os.ReadFile(cfgPath)
 	if err != nil {
 		return
@@ -213,6 +242,13 @@ func (c *Catalog) loadExternalConfig() {
 	var ext ExternalConfig
 	if err := json.Unmarshal(data, &ext); err != nil {
 		return
+	}
+
+	for k, v := range ext.Streams {
+		cleanK := strings.ToLower(strings.TrimSpace(k))
+		if cleanU, err := SanitizeURL(v); err == nil {
+			c.userStreams[cleanK] = cleanU
+		}
 	}
 
 	for lg, chs := range ext.LeagueChannels {
@@ -251,7 +287,10 @@ func (c *Catalog) loadExternalConfig() {
 }
 
 func espnProfile(name, rawURL string) []model.Channel {
-	cleanURL, _ := SanitizeURL(rawURL)
+	cleanURL, err := SanitizeURL(rawURL)
+	if err != nil || cleanURL == "" {
+		return nil
+	}
 	return []model.Channel{
 		{
 			DisplayName: name,
@@ -273,7 +312,10 @@ func espnProfile(name, rawURL string) []model.Channel {
 }
 
 func makeDualProfile(label, rawURL string, recommended bool) []model.Channel {
-	cleanURL, _ := SanitizeURL(rawURL)
+	cleanURL, err := SanitizeURL(rawURL)
+	if err != nil || cleanURL == "" {
+		return nil
+	}
 	return []model.Channel{
 		{
 			DisplayName: label,
@@ -294,8 +336,11 @@ func makeDualProfile(label, rawURL string, recommended bool) []model.Channel {
 	}
 }
 
-func makeSingleChannel(label, rawURL, res, bitrate string, recommended bool) model.Channel {
-	cleanURL, _ := SanitizeURL(rawURL)
+func makeSingleChannel(label, rawURL, res, bitrate string, recommended bool) (model.Channel, bool) {
+	cleanURL, err := SanitizeURL(rawURL)
+	if err != nil || cleanURL == "" {
+		return model.Channel{}, false
+	}
 	return model.Channel{
 		DisplayName: label,
 		Name:        label,
@@ -303,128 +348,163 @@ func makeSingleChannel(label, rawURL, res, bitrate string, recommended bool) mod
 		Resolution:  res,
 		BitrateMode: bitrate,
 		Recommended: recommended,
-	}
+	}, true
 }
 
 func (c *Catalog) initChampionsRules() {
-	c.championsRules = []matchRule{
-		{
-			pattern:  regexp.MustCompile(`(?i)(Liverpool|LASK)`),
-			channels: espnProfile("ESPN 1 HD", StreamESPN1),
-		},
-		{
-			pattern:  regexp.MustCompile(`(?i)(Feyenoord|Como)`),
-			channels: espnProfile("ESPN 2 HD", StreamESPN2),
-		},
-		{
-			pattern:  regexp.MustCompile(`(?i)(Real Madrid|Roma)`),
-			channels: espnProfile("ESPN 1 HD", StreamESPN1),
-		},
-		{
-			pattern:  regexp.MustCompile(`(?i)(Manchester City|Paris Saint-Germain|PSG)`),
-			channels: espnProfile("ESPN 2 HD", StreamESPN2),
-		},
-		{
-			pattern:  regexp.MustCompile(`(?i)(Aston Villa|Fenerbahce|Fenerbahçe)`),
-			channels: espnProfile("ESPN 3 HD", StreamESPN3),
-		},
-		{
-			pattern:  regexp.MustCompile(`(?i)(Bodo|Dortmund|Glimt)`),
-			channels: espnProfile("ESPN 5 HD", StreamESPN5),
-		},
-		{
-			pattern:  regexp.MustCompile(`(?i)(Betis|Porto)`),
-			channels: espnProfile("ESPN 7 HD", StreamESPN7),
-		},
-		{
-			pattern:  regexp.MustCompile(`(?i)(Barcelona|Galatasaray)`),
-			channels: espnProfile("ESPN 5 HD", StreamESPN5),
-		},
-		{
-			pattern:  regexp.MustCompile(`(?i)(Bayern|Viking)`),
-			channels: espnProfile("ESPN 1 HD", StreamESPN1),
-		},
-		{
-			pattern:  regexp.MustCompile(`(?i)(Atlético|Atletico)`),
-			channels: espnProfile("ESPN 2 HD", StreamESPN2),
-		},
-		{
-			pattern:  regexp.MustCompile(`(?i)(Inter|Internazionale|Brugge)`),
-			channels: espnProfile("ESPN 3 HD", StreamESPN3),
-		},
-		{
-			pattern:  regexp.MustCompile(`(?i)(Arsenal|Lille)`),
-			channels: espnProfile("ESPN 4 HD", StreamESPN4),
-		},
-		{
-			pattern:  regexp.MustCompile(`(?i)(Villarreal|Napoli)`),
-			channels: espnProfile("ESPN 6 HD", StreamESPN6),
-		},
-		{
-			pattern:  regexp.MustCompile(`(?i)(Leipzig|PSV)`),
-			channels: espnProfile("ESPN 7 HD", StreamESPN7),
-		},
-		{
-			pattern:  regexp.MustCompile(`(?i)(Lens|Sporting)`),
-			channels: espnProfile("ESPN 1 HD", StreamESPN1),
-		},
-		{
-			pattern:  regexp.MustCompile(`(?i)(Slavia|Sabah)`),
-			channels: espnProfile("ESPN 2 HD", StreamESPN2),
-		},
+	ruleDefs := []struct {
+		pattern string
+		name    string
+		streamK string
+	}{
+		{`(?i)(Liverpool|LASK)`, "ESPN 1 HD", "espn1"},
+		{`(?i)(Feyenoord|Como)`, "ESPN 2 HD", "espn2"},
+		{`(?i)(Real Madrid|Roma)`, "ESPN 1 HD", "espn1"},
+		{`(?i)(Manchester City|Paris Saint-Germain|PSG)`, "ESPN 2 HD", "espn2"},
+		{`(?i)(Aston Villa|Fenerbahce|Fenerbahçe)`, "ESPN 3 HD", "espn3"},
+		{`(?i)(Bodo|Dortmund|Glimt)`, "ESPN 5 HD", "espn5"},
+		{`(?i)(Betis|Porto)`, "ESPN 7 HD", "espn7"},
+		{`(?i)(Barcelona|Galatasaray)`, "ESPN 5 HD", "espn5"},
+		{`(?i)(Bayern|Viking)`, "ESPN 1 HD", "espn1"},
+		{`(?i)(Atlético|Atletico)`, "ESPN 2 HD", "espn2"},
+		{`(?i)(Inter|Internazionale|Brugge)`, "ESPN 3 HD", "espn3"},
+		{`(?i)(Arsenal|Lille)`, "ESPN 4 HD", "espn4"},
+		{`(?i)(Villarreal|Napoli)`, "ESPN 6 HD", "espn6"},
+		{`(?i)(Leipzig|PSV)`, "ESPN 7 HD", "espn7"},
+		{`(?i)(Lens|Sporting)`, "ESPN 1 HD", "espn1"},
+		{`(?i)(Slavia|Sabah)`, "ESPN 2 HD", "espn2"},
+	}
+
+	c.championsRules = nil
+	for _, r := range ruleDefs {
+		u, ok := c.StreamEndpoint(r.streamK)
+		if !ok || u == "" {
+			continue
+		}
+		c.championsRules = append(c.championsRules, matchRule{
+			pattern:  regexp.MustCompile(r.pattern),
+			channels: espnProfile(r.name, u),
+		})
 	}
 }
 
-// resolveFromOfficialBroadcasts maps ESPN's official broadcast metadata for the match to exact stream signals.
 func (c *Catalog) resolveFromOfficialBroadcasts(broadcasts []string) []model.Channel {
 	var result []model.Channel
 	for _, b := range broadcasts {
 		bl := strings.ToLower(strings.TrimSpace(b))
 		switch {
 		case strings.Contains(bl, "caracol") || strings.Contains(bl, "gol caracol"):
-			result = append(result, makeSingleChannel("Caracol TV HD", StreamCaracolTV, "1080p", "max", len(result) == 0))
-			result = append(result, makeSingleChannel("Caracol HD2", StreamCaracolHD2, "1080p", "max", false))
+			if u, ok := c.StreamEndpoint("caracol"); ok {
+				if ch, valid := makeSingleChannel("Caracol TV HD", u, "1080p", "max", len(result) == 0); valid {
+					result = append(result, ch)
+				}
+			}
+			if u, ok := c.StreamEndpoint("caracol_hd2"); ok {
+				if ch, valid := makeSingleChannel("Caracol HD2", u, "1080p", "max", false); valid {
+					result = append(result, ch)
+				}
+			}
 		case strings.Contains(bl, "rcn") || strings.Contains(bl, "canal rcn") || strings.Contains(bl, "deportes rcn"):
-			result = append(result, makeSingleChannel("Canal RCN HD", StreamCanalRCN, "1080p", "max", len(result) == 0))
-			result = append(result, makeSingleChannel("RCN HD2", StreamRCNHD2, "1080p", "max", false))
+			if u, ok := c.StreamEndpoint("rcn"); ok {
+				if ch, valid := makeSingleChannel("Canal RCN HD", u, "1080p", "max", len(result) == 0); valid {
+					result = append(result, ch)
+				}
+			}
+			if u, ok := c.StreamEndpoint("rcn_hd2"); ok {
+				if ch, valid := makeSingleChannel("RCN HD2", u, "1080p", "max", false); valid {
+					result = append(result, ch)
+				}
+			}
 		case strings.Contains(bl, "win") || strings.Contains(bl, "win sports") || strings.Contains(bl, "win+"):
-			result = append(result, makeSingleChannel("Win+ Fútbol", StreamWinPlus, "1080p", "max", len(result) == 0))
-			result = append(result, makeSingleChannel("Win Sports HD", StreamWinSports, "1080p", "max", false))
+			if u, ok := c.StreamEndpoint("win_plus"); ok {
+				if ch, valid := makeSingleChannel("Win+ Fútbol", u, "1080p", "max", len(result) == 0); valid {
+					result = append(result, ch)
+				}
+			}
+			if u, ok := c.StreamEndpoint("win"); ok {
+				if ch, valid := makeSingleChannel("Win Sports HD", u, "1080p", "max", false); valid {
+					result = append(result, ch)
+				}
+			}
 		case strings.Contains(bl, "espn 7") || strings.Contains(bl, "espn7"):
-			result = append(result, makeDualProfile("ESPN 7 HD", StreamESPN7, len(result) == 0)...)
+			if u, ok := c.StreamEndpoint("espn7"); ok {
+				result = append(result, makeDualProfile("ESPN 7 HD", u, len(result) == 0)...)
+			}
 		case strings.Contains(bl, "espn 6") || strings.Contains(bl, "espn6"):
-			result = append(result, makeDualProfile("ESPN 6 HD", StreamESPN6, len(result) == 0)...)
+			if u, ok := c.StreamEndpoint("espn6"); ok {
+				result = append(result, makeDualProfile("ESPN 6 HD", u, len(result) == 0)...)
+			}
 		case strings.Contains(bl, "espn 5") || strings.Contains(bl, "espn5"):
-			result = append(result, makeDualProfile("ESPN 5 HD", StreamESPN5, len(result) == 0)...)
+			if u, ok := c.StreamEndpoint("espn5"); ok {
+				result = append(result, makeDualProfile("ESPN 5 HD", u, len(result) == 0)...)
+			}
 		case strings.Contains(bl, "espn 4") || strings.Contains(bl, "espn4"):
-			result = append(result, makeDualProfile("ESPN 4 HD", StreamESPN4, len(result) == 0)...)
+			if u, ok := c.StreamEndpoint("espn4"); ok {
+				result = append(result, makeDualProfile("ESPN 4 HD", u, len(result) == 0)...)
+			}
 		case strings.Contains(bl, "espn 3") || strings.Contains(bl, "espn3"):
-			result = append(result, makeDualProfile("ESPN 3 HD", StreamESPN3, len(result) == 0)...)
+			if u, ok := c.StreamEndpoint("espn3"); ok {
+				result = append(result, makeDualProfile("ESPN 3 HD", u, len(result) == 0)...)
+			}
 		case strings.Contains(bl, "espn 2") || strings.Contains(bl, "espn2") || strings.Contains(bl, "espn deportes"):
-			result = append(result, makeDualProfile("ESPN 2 HD", StreamESPN2, len(result) == 0)...)
+			if u, ok := c.StreamEndpoint("espn2"); ok {
+				result = append(result, makeDualProfile("ESPN 2 HD", u, len(result) == 0)...)
+			}
 		case strings.Contains(bl, "espn extra"):
-			result = append(result, makeDualProfile("ESPN Extra", StreamESPNExtra, len(result) == 0)...)
+			if u, ok := c.StreamEndpoint("espn_extra"); ok {
+				result = append(result, makeDualProfile("ESPN Extra", u, len(result) == 0)...)
+			}
 		case strings.Contains(bl, "espn"):
-			result = append(result, makeDualProfile("ESPN 1 HD", StreamESPN1, len(result) == 0)...)
+			if u, ok := c.StreamEndpoint("espn1"); ok {
+				result = append(result, makeDualProfile("ESPN 1 HD", u, len(result) == 0)...)
+			}
 		case strings.Contains(bl, "fox sports 3") || strings.Contains(bl, "fs3"):
-			result = append(result, makeDualProfile("Fox Sports 3", StreamFoxSports3, len(result) == 0)...)
+			if u, ok := c.StreamEndpoint("fox3"); ok {
+				result = append(result, makeDualProfile("Fox Sports 3", u, len(result) == 0)...)
+			}
 		case strings.Contains(bl, "fox sports 2") || strings.Contains(bl, "fs2"):
-			result = append(result, makeDualProfile("Fox Sports 2", StreamFoxSports2, len(result) == 0)...)
+			if u, ok := c.StreamEndpoint("fox2"); ok {
+				result = append(result, makeDualProfile("Fox Sports 2", u, len(result) == 0)...)
+			}
 		case strings.Contains(bl, "fox sports 1") || strings.Contains(bl, "fs1") || strings.Contains(bl, "fox deportes") || strings.Contains(bl, "fox sports") || strings.Contains(bl, "fox"):
-			result = append(result, makeSingleChannel("Fox Sports 1 HD", StreamFoxSports1, "1080p", "max", len(result) == 0))
+			if u, ok := c.StreamEndpoint("fox1"); ok {
+				if ch, valid := makeSingleChannel("Fox Sports 1 HD", u, "1080p", "max", len(result) == 0); valid {
+					result = append(result, ch)
+				}
+			}
 		case strings.Contains(bl, "tyc"):
-			result = append(result, makeSingleChannel("TyC Sports HD", StreamTyCSports, "1080p", "max", len(result) == 0))
+			if u, ok := c.StreamEndpoint("tyc"); ok {
+				if ch, valid := makeSingleChannel("TyC Sports HD", u, "1080p", "max", len(result) == 0); valid {
+					result = append(result, ch)
+				}
+			}
 		case strings.Contains(bl, "real madrid") || strings.Contains(bl, "rmtv"):
-			result = append(result, makeSingleChannel("Real Madrid TV", StreamRealMadrid, "1080p", "max", len(result) == 0))
+			u, ok := c.StreamEndpoint("realmadrid")
+			if !ok {
+				u = StreamRealMadrid
+			}
+			if ch, valid := makeSingleChannel("Real Madrid TV", u, "1080p", "max", len(result) == 0); valid {
+				result = append(result, ch)
+			}
 		case strings.Contains(bl, "teledeporte") || strings.Contains(bl, "rtve"):
-			result = append(result, makeSingleChannel("Teledeporte HD", StreamTeledeporte, "1080p", "max", len(result) == 0))
+			u, ok := c.StreamEndpoint("teledeporte")
+			if !ok {
+				u = StreamTeledeporte
+			}
+			if ch, valid := makeSingleChannel("Teledeporte HD", u, "1080p", "max", len(result) == 0); valid {
+				result = append(result, ch)
+			}
 		case strings.Contains(bl, "cbssn") || strings.Contains(bl, "cbs sports network") || strings.Contains(bl, "cbs sports"):
 			if StreamCBSSportsNetwork != "" {
-				result = append(result, makeSingleChannel("CBS Sports Network", StreamCBSSportsNetwork, "1080p", "max", len(result) == 0))
+				if ch, valid := makeSingleChannel("CBS Sports Network", StreamCBSSportsNetwork, "1080p", "max", len(result) == 0); valid {
+					result = append(result, ch)
+				}
 			}
 		case strings.Contains(bl, "paramount") || strings.Contains(bl, "golazo") || strings.Contains(bl, "cbs sports golazo"):
 			if StreamCBSGolazo != "" {
-				result = append(result, makeSingleChannel("CBS Sports Golazo Network", StreamCBSGolazo, "1080p", "max", len(result) == 0))
+				if ch, valid := makeSingleChannel("CBS Sports Golazo Network", StreamCBSGolazo, "1080p", "max", len(result) == 0); valid {
+					result = append(result, ch)
+				}
 			}
 		}
 	}
@@ -441,65 +521,121 @@ func hasUSBroadcast(broadcasts []string) bool {
 	return false
 }
 
-// espnBySlot picks a distinct ESPN channel (1..7) based on the simultaneous match slot index.
-// If slot exceeds the available ESPN channels (or is negative), it returns ok = false.
-func espnBySlot(slot int) (name, url string, ok bool) {
+func (c *Catalog) espnBySlot(slot int) (name, url string, ok bool) {
 	slots := []struct {
-		name string
-		url  string
+		name    string
+		streamK string
 	}{
-		{"ESPN 1 HD", StreamESPN1},
-		{"ESPN 2 HD", StreamESPN2},
-		{"ESPN 3 HD", StreamESPN3},
-		{"ESPN 4 HD", StreamESPN4},
-		{"ESPN 5 HD", StreamESPN5},
-		{"ESPN 6 HD", StreamESPN6},
-		{"ESPN 7 HD", StreamESPN7},
+		{"ESPN 1 HD", "espn1"},
+		{"ESPN 2 HD", "espn2"},
+		{"ESPN 3 HD", "espn3"},
+		{"ESPN 4 HD", "espn4"},
+		{"ESPN 5 HD", "espn5"},
+		{"ESPN 6 HD", "espn6"},
+		{"ESPN 7 HD", "espn7"},
 	}
 	if slot < 0 || slot >= len(slots) {
 		return "", "", false
 	}
-	return slots[slot].name, slots[slot].url, true
+	u, found := c.StreamEndpoint(slots[slot].streamK)
+	if !found || u == "" {
+		return "", "", false
+	}
+	return slots[slot].name, u, true
 }
 
 func (c *Catalog) buildChannelsForTarget(target tvguide.ChannelTarget) []model.Channel {
-	cleanURL, _ := SanitizeURL(target.StreamURL)
+	streamURL := target.StreamURL
+	if streamURL == "" {
+		switch target.Name {
+		case "ESPN 1 HD":
+			streamURL, _ = c.StreamEndpoint("espn1")
+		case "ESPN 2 HD":
+			streamURL, _ = c.StreamEndpoint("espn2")
+		case "ESPN 3 HD":
+			streamURL, _ = c.StreamEndpoint("espn3")
+		case "ESPN 4 HD":
+			streamURL, _ = c.StreamEndpoint("espn4")
+		case "ESPN 5 HD":
+			streamURL, _ = c.StreamEndpoint("espn5")
+		case "ESPN 6 HD":
+			streamURL, _ = c.StreamEndpoint("espn6")
+		case "ESPN 7 HD":
+			streamURL, _ = c.StreamEndpoint("espn7")
+		case "Win Sports HD":
+			streamURL, _ = c.StreamEndpoint("win")
+		case "Win+ Fútbol":
+			streamURL, _ = c.StreamEndpoint("win_plus")
+		case "Caracol TV HD":
+			streamURL, _ = c.StreamEndpoint("caracol")
+		case "Canal RCN HD":
+			streamURL, _ = c.StreamEndpoint("rcn")
+		}
+	}
+
+	cleanURL, _ := SanitizeURL(streamURL)
+	if cleanURL == "" {
+		return nil
+	}
+
 	switch {
 	case strings.HasPrefix(target.Name, "ESPN"):
 		return espnProfile(target.Name, cleanURL)
 	case strings.HasPrefix(target.Name, "Fox"):
 		return makeDualProfile(target.Name, cleanURL, true)
 	case target.Name == "Win+ Fútbol":
-		return []model.Channel{
-			makeSingleChannel("Win+ Fútbol", StreamWinPlus, "1080p", "max", true),
-			makeSingleChannel("Win Sports HD", StreamWinSports, "1080p", "max", false),
+		var list []model.Channel
+		if ch, ok := makeSingleChannel("Win+ Fútbol", cleanURL, "1080p", "max", true); ok {
+			list = append(list, ch)
 		}
+		if u, found := c.StreamEndpoint("win"); found {
+			if ch, ok := makeSingleChannel("Win Sports HD", u, "1080p", "max", false); ok {
+				list = append(list, ch)
+			}
+		}
+		return list
 	case target.Name == "Win Sports HD":
-		return []model.Channel{
-			makeSingleChannel("Win Sports HD", StreamWinSports, "1080p", "max", true),
-			makeSingleChannel("Win+ Fútbol", StreamWinPlus, "1080p", "max", false),
+		var list []model.Channel
+		if ch, ok := makeSingleChannel("Win Sports HD", cleanURL, "1080p", "max", true); ok {
+			list = append(list, ch)
 		}
+		if u, found := c.StreamEndpoint("win_plus"); found {
+			if ch, ok := makeSingleChannel("Win+ Fútbol", u, "1080p", "max", false); ok {
+				list = append(list, ch)
+			}
+		}
+		return list
 	case target.Name == "Caracol TV HD":
-		return []model.Channel{
-			makeSingleChannel("Caracol TV HD", StreamCaracolTV, "1080p", "max", true),
-			makeSingleChannel("Caracol HD2", StreamCaracolHD2, "1080p", "max", false),
+		var list []model.Channel
+		if ch, ok := makeSingleChannel("Caracol TV HD", cleanURL, "1080p", "max", true); ok {
+			list = append(list, ch)
 		}
+		if u, found := c.StreamEndpoint("caracol_hd2"); found {
+			if ch, ok := makeSingleChannel("Caracol HD2", u, "1080p", "max", false); ok {
+				list = append(list, ch)
+			}
+		}
+		return list
 	case target.Name == "Canal RCN HD":
-		return []model.Channel{
-			makeSingleChannel("Canal RCN HD", StreamCanalRCN, "1080p", "max", true),
-			makeSingleChannel("RCN HD2", StreamRCNHD2, "1080p", "max", false),
+		var list []model.Channel
+		if ch, ok := makeSingleChannel("Canal RCN HD", cleanURL, "1080p", "max", true); ok {
+			list = append(list, ch)
 		}
+		if u, found := c.StreamEndpoint("rcn_hd2"); found {
+			if ch, ok := makeSingleChannel("RCN HD2", u, "1080p", "max", false); ok {
+				list = append(list, ch)
+			}
+		}
+		return list
 	default:
-		return []model.Channel{
-			makeSingleChannel(target.Name, cleanURL, "1080p", "max", true),
+		if ch, ok := makeSingleChannel(target.Name, cleanURL, "1080p", "max", true); ok {
+			return []model.Channel{ch}
 		}
+		return nil
 	}
 }
 
-// GetChannels resolves match-specific broadcast channels.
-// Official broadcasts reported in match.Broadcasts are prioritized and verified without guesswork.
-// If no official broadcasts are reported, the autonomous TV Guide crawler is consulted.
-// If neither matched, simultaneous matches are routed to distinct collision-free channels.
+// GetChannels resolves match-specific broadcast channels based on user configuration.
 func (c *Catalog) GetChannels(match model.Match) []model.Channel {
 	if match.Status.Completed || strings.ToLower(match.Status.State) == "post" {
 		return nil
@@ -522,20 +658,19 @@ func (c *Catalog) GetChannels(match model.Match) []model.Channel {
 	}
 
 	// 2. Official broadcasters reported by ESPN metadata for this specific match (verified truth).
-	// If official broadcasts are present, DO NOT append fallback guesswork channels.
 	if len(match.Broadcasts) > 0 {
 		candidates := c.resolveFromOfficialBroadcasts(match.Broadcasts)
 		if len(candidates) > 0 {
 			return c.filterAndDeduplicate(candidates)
 		}
 		// If an event specifically has US metadata (cbssn/paramount/golazo) without a configured US stream,
-		// fall through gracefully to the verified ESPN Latin America channel rather than returning no channels.
+		// fall through gracefully to the verified ESPN channel if user has configured it.
 		if !hasUSBroadcast(match.Broadcasts) {
 			return nil
 		}
 	}
 
-	// 3. Autonomous Daily TV Guide Crawler resolution
+	// 3. TV Guide Crawler resolution
 	if c.tvGuide != nil {
 		if target, found := c.tvGuide.ResolveMatch(match); found {
 			candidates := c.buildChannelsForTarget(target)
@@ -545,27 +680,47 @@ func (c *Catalog) GetChannels(match model.Match) []model.Channel {
 		}
 	}
 
-	// 4. Fallback resolution when NO official broadcasts nor TV guide matched.
-	// Each simultaneous match slot must map to a DISTINCT, collision-free channel
-	// without blindly appending Fox Sports 1 or duplicate channels across matches.
+	// 4. Fallback resolution based on user configured channels
 	var candidates []model.Channel
 
 	switch leagueKey {
 	case "colombia":
-		candidates = append(candidates, makeSingleChannel("Win+ Fútbol", StreamWinPlus, "1080p", "max", len(candidates) == 0))
-		candidates = append(candidates, makeSingleChannel("Win Sports HD", StreamWinSports, "1080p", "max", false))
-		candidates = append(candidates, makeSingleChannel("Caracol TV HD", StreamCaracolTV, "1080p", "max", false))
-		candidates = append(candidates, makeSingleChannel("Canal RCN HD", StreamCanalRCN, "1080p", "max", false))
+		if u, ok := c.StreamEndpoint("win_plus"); ok {
+			if ch, valid := makeSingleChannel("Win+ Fútbol", u, "1080p", "max", len(candidates) == 0); valid {
+				candidates = append(candidates, ch)
+			}
+		}
+		if u, ok := c.StreamEndpoint("win"); ok {
+			if ch, valid := makeSingleChannel("Win Sports HD", u, "1080p", "max", false); valid {
+				candidates = append(candidates, ch)
+			}
+		}
+		if u, ok := c.StreamEndpoint("caracol"); ok {
+			if ch, valid := makeSingleChannel("Caracol TV HD", u, "1080p", "max", false); valid {
+				candidates = append(candidates, ch)
+			}
+		}
+		if u, ok := c.StreamEndpoint("rcn"); ok {
+			if ch, valid := makeSingleChannel("Canal RCN HD", u, "1080p", "max", false); valid {
+				candidates = append(candidates, ch)
+			}
+		}
 
 	case "argentina":
 		if match.SlotIndex == 0 {
-			candidates = append(candidates, makeSingleChannel("TyC Sports HD", StreamTyCSports, "1080p", "max", true))
-			slotName, slotURL, ok := espnBySlot(0)
+			if u, ok := c.StreamEndpoint("tyc"); ok {
+				if ch, valid := makeSingleChannel("TyC Sports HD", u, "1080p", "max", true); valid {
+					candidates = append(candidates, ch)
+				}
+			}
+			slotName, slotURL, ok := c.espnBySlot(0)
 			if ok {
-				candidates = append(candidates, makeSingleChannel(slotName, slotURL, "720p", "min", false))
+				if ch, valid := makeSingleChannel(slotName, slotURL, "720p", "min", false); valid {
+					candidates = append(candidates, ch)
+				}
 			}
 		} else {
-			slotName, slotURL, ok := espnBySlot(match.SlotIndex)
+			slotName, slotURL, ok := c.espnBySlot(match.SlotIndex)
 			if ok {
 				candidates = append(candidates, makeDualProfile(slotName, slotURL, true)...)
 			}
@@ -581,7 +736,7 @@ func (c *Catalog) GetChannels(match model.Match) []model.Channel {
 			}
 		}
 		if !matchedRule {
-			slotName, slotURL, ok := espnBySlot(match.SlotIndex)
+			slotName, slotURL, ok := c.espnBySlot(match.SlotIndex)
 			if ok {
 				candidates = append(candidates, makeDualProfile(slotName, slotURL, true)...)
 			}
@@ -589,7 +744,7 @@ func (c *Catalog) GetChannels(match model.Match) []model.Channel {
 
 	default:
 		// Premier League, La Liga, Serie A, Bundesliga, Ligue 1, Brasileirao, Libertadores, etc.
-		slotName, slotURL, ok := espnBySlot(match.SlotIndex)
+		slotName, slotURL, ok := c.espnBySlot(match.SlotIndex)
 		if ok {
 			candidates = append(candidates, makeDualProfile(slotName, slotURL, true)...)
 		}
@@ -603,7 +758,6 @@ func (c *Catalog) filterAndDeduplicate(candidates []model.Channel) []model.Chann
 		return nil
 	}
 
-	// Deduplicate by (URL + Resolution) while preserving order and prioritizing probed alive streams
 	seen := make(map[string]bool)
 	var aliveList, unprobedList []model.Channel
 
@@ -632,7 +786,6 @@ func (c *Catalog) filterAndDeduplicate(candidates []model.Channel) []model.Chann
 		final = final[:8]
 	}
 
-	// Ensure exactly the top signal is highlighted as Recommended
 	for i := range final {
 		final[i].Recommended = (i == 0)
 	}

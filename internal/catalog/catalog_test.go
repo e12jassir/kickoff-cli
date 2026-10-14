@@ -10,6 +10,35 @@ import (
 	"github.com/e12jassir/kickoff/internal/tvguide"
 )
 
+// mockTestStreams provides dummy endpoints for testing without distributing copyrighted URLs.
+var mockTestStreams = map[string]string{
+	"espn1":       "http://test.local/espn1.m3u8",
+	"espn2":       "http://test.local/espn2.m3u8",
+	"espn3":       "http://test.local/espn3.m3u8",
+	"espn4":       "http://test.local/espn4.m3u8",
+	"espn5":       "http://test.local/espn5.m3u8",
+	"espn6":       "http://test.local/espn6.m3u8",
+	"espn7":       "http://test.local/espn7.m3u8",
+	"espn_extra":  "http://test.local/espnextra.m3u8",
+	"fox1":        "http://test.local/fox1.m3u8",
+	"fox2":        "http://test.local/fox2.m3u8",
+	"fox3":        "http://test.local/fox3.m3u8",
+	"tyc":         "http://test.local/tyc.m3u8",
+	"win":         "http://test.local/win.m3u8",
+	"win_plus":    "http://test.local/winplus.m3u8",
+	"caracol":     "http://test.local/caracol.m3u8",
+	"caracol_hd2": "http://test.local/caracolhd2.m3u8",
+	"rcn":         "http://test.local/rcn.m3u8",
+	"rcn_hd2":     "http://test.local/rcnhd2.m3u8",
+	"realmadrid":  "https://rmtv.akamaized.net/hls/live/2043153/rmtv-es-web/master.m3u8",
+	"teledeporte": "https://rtvelivestream.akamaized.net/rtvesec/tdp/tdp_main.m3u8",
+}
+
+func newTestCatalog(opts ...Option) *Catalog {
+	allOpts := append([]Option{WithStreams(mockTestStreams)}, opts...)
+	return New(allOpts...)
+}
+
 func TestSanitizeURL(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -19,14 +48,14 @@ func TestSanitizeURL(t *testing.T) {
 	}{
 		{
 			name:        "Rewrite HTTPS BoldMSS to HTTP",
-			input:       "https://example.com/espn5.m3u8",
-			expected:    "http://example.com/espn5.m3u8",
+			input:       "https://test.boldmss.com/live/stream.m3u8",
+			expected:    "http://test.boldmss.com/live/stream.m3u8",
 			expectError: false,
 		},
 		{
 			name:        "Keep HTTP BoldMSS as HTTP",
-			input:       "http://example.com/espn1.m3u8",
-			expected:    "http://example.com/espn1.m3u8",
+			input:       "http://test.boldmss.com/live/stream.m3u8",
+			expected:    "http://test.boldmss.com/live/stream.m3u8",
 			expectError: false,
 		},
 		{
@@ -66,7 +95,7 @@ func TestSanitizeURL(t *testing.T) {
 }
 
 func TestCatalog_GetChannels(t *testing.T) {
-	cat := New()
+	cat := newTestCatalog()
 
 	tests := []struct {
 		name             string
@@ -86,8 +115,8 @@ func TestCatalog_GetChannels(t *testing.T) {
 			},
 			expectedChannels: []string{"ESPN 5 HD", "ESPN 5 HD"},
 			expectedProfiles: []string{"720p", "1080p"},
-			mustContainURL:   "ESPN_5.m3u8",
-			mustNotContain:   "ESPN_2",
+			mustContainURL:   "espn5.m3u8",
+			mustNotContain:   "espn2",
 		},
 		{
 			name: "Champions: Bayern vs Viking isolated to ESPN 1 HD (720p & 1080p)",
@@ -97,7 +126,7 @@ func TestCatalog_GetChannels(t *testing.T) {
 			},
 			expectedChannels: []string{"ESPN 1 HD", "ESPN 1 HD"},
 			expectedProfiles: []string{"720p", "1080p"},
-			mustContainURL:   "ESPN/ESPN.isml",
+			mustContainURL:   "espn1.m3u8",
 		},
 		{
 			name: "La Liga: Real Madrid returns standard competitive broadcast without Real Madrid TV",
@@ -107,7 +136,7 @@ func TestCatalog_GetChannels(t *testing.T) {
 			},
 			expectedChannels: []string{"ESPN 1 HD", "ESPN 1 HD"},
 			expectedProfiles: []string{"720p", "1080p"},
-			mustContainURL:   "ESPN/ESPN.isml",
+			mustContainURL:   "espn1.m3u8",
 			mustNotContain:   "rmtv",
 		},
 		{
@@ -121,7 +150,7 @@ func TestCatalog_GetChannels(t *testing.T) {
 			expectedChannels: []string{"Real Madrid TV"},
 			expectedProfiles: []string{"1080p"},
 			mustContainURL:   "rmtv.akamaized.net",
-			mustNotContain:   "ESPN",
+			mustNotContain:   "espn",
 		},
 		{
 			name: "La Liga: Real Madrid live match does not inject Real Madrid TV without official broadcast",
@@ -133,7 +162,7 @@ func TestCatalog_GetChannels(t *testing.T) {
 			},
 			expectedChannels: []string{"ESPN 1 HD", "ESPN 1 HD"},
 			expectedProfiles: []string{"720p", "1080p"},
-			mustContainURL:   "ESPN/ESPN.isml",
+			mustContainURL:   "espn1.m3u8",
 			mustNotContain:   "rmtv",
 		},
 		{
@@ -153,7 +182,7 @@ func TestCatalog_GetChannels(t *testing.T) {
 			},
 			expectedChannels: []string{"TyC Sports HD", "ESPN 1 HD"},
 			expectedProfiles: []string{"1080p", "720p"},
-			mustContainURL:   "tycsports",
+			mustContainURL:   "tyc.m3u8",
 		},
 		{
 			name: "Unknown league fallback returns distinct slot ESPN channel without Fox Sports 1 HD",
@@ -163,8 +192,8 @@ func TestCatalog_GetChannels(t *testing.T) {
 			},
 			expectedChannels: []string{"ESPN 1 HD", "ESPN 1 HD"},
 			expectedProfiles: []string{"720p", "1080p"},
-			mustContainURL:   "ESPN/ESPN.isml",
-			mustNotContain:   "FOX_Sports.m3u8",
+			mustContainURL:   "espn1.m3u8",
+			mustNotContain:   "fox1.m3u8",
 		},
 		{
 			name: "Colombia: returns authentic Colombian channels and never falls back to generic ESPN",
@@ -175,8 +204,8 @@ func TestCatalog_GetChannels(t *testing.T) {
 			},
 			expectedChannels: []string{"Win+ Fútbol", "Win Sports HD", "Caracol TV HD", "Canal RCN HD"},
 			expectedProfiles: []string{"1080p", "1080p", "1080p", "1080p"},
-			mustContainURL:   "127.0.0.1",
-			mustNotContain:   "ESPN",
+			mustContainURL:   "winplus.m3u8",
+			mustNotContain:   "espn",
 		},
 		{
 			name: "Colombia: legacy synthetic struct returns authentic channels",
@@ -186,8 +215,8 @@ func TestCatalog_GetChannels(t *testing.T) {
 			},
 			expectedChannels: []string{"Win+ Fútbol", "Win Sports HD", "Caracol TV HD", "Canal RCN HD"},
 			expectedProfiles: []string{"1080p", "1080p", "1080p", "1080p"},
-			mustContainURL:   "127.0.0.1",
-			mustNotContain:   "ESPN",
+			mustContainURL:   "winplus.m3u8",
+			mustNotContain:   "espn",
 		},
 		{
 			name: "Official broadcasts: Caracol resolves Caracol TV HD & Caracol HD2",
@@ -199,8 +228,8 @@ func TestCatalog_GetChannels(t *testing.T) {
 			},
 			expectedChannels: []string{"Caracol TV HD", "Caracol HD2"},
 			expectedProfiles: []string{"1080p", "1080p"},
-			mustContainURL:   "CARACOL",
-			mustNotContain:   "ESPN",
+			mustContainURL:   "caracol.m3u8",
+			mustNotContain:   "espn",
 		},
 		{
 			name: "Official broadcasts: RCN resolves Canal RCN HD & RCN HD2",
@@ -212,8 +241,8 @@ func TestCatalog_GetChannels(t *testing.T) {
 			},
 			expectedChannels: []string{"Canal RCN HD", "RCN HD2"},
 			expectedProfiles: []string{"1080p", "1080p"},
-			mustContainURL:   "RCN",
-			mustNotContain:   "ESPN",
+			mustContainURL:   "rcn.m3u8",
+			mustNotContain:   "espn",
 		},
 		{
 			name: "Official broadcasts: Win resolves Win+ Fútbol & Win Sports HD",
@@ -225,8 +254,8 @@ func TestCatalog_GetChannels(t *testing.T) {
 			},
 			expectedChannels: []string{"Win+ Fútbol", "Win Sports HD"},
 			expectedProfiles: []string{"1080p", "1080p"},
-			mustContainURL:   "WIN-SPORT",
-			mustNotContain:   "ESPN",
+			mustContainURL:   "win.m3u8",
+			mustNotContain:   "espn",
 		},
 		{
 			name: "Official broadcasts: Fox Sports 1 verified from FS1 metadata without duplicate guessing",
@@ -238,8 +267,8 @@ func TestCatalog_GetChannels(t *testing.T) {
 			},
 			expectedChannels: []string{"Fox Sports 1 HD"},
 			expectedProfiles: []string{"1080p"},
-			mustContainURL:   "FOX_Sports.m3u8",
-			mustNotContain:   "ESPN",
+			mustContainURL:   "fox1.m3u8",
+			mustNotContain:   "espn",
 		},
 		{
 			name: "Official broadcasts: Fox Sports 2 verified resolution",
@@ -251,8 +280,8 @@ func TestCatalog_GetChannels(t *testing.T) {
 			},
 			expectedChannels: []string{"Fox Sports 2", "Fox Sports 2"},
 			expectedProfiles: []string{"720p", "1080p"},
-			mustContainURL:   "FOX_SPORTS_2",
-			mustNotContain:   "ESPN",
+			mustContainURL:   "fox2.m3u8",
+			mustNotContain:   "espn",
 		},
 		{
 			name: "Champions: LASK Linz vs Liverpool returns ESPN 1 HD",
@@ -262,8 +291,8 @@ func TestCatalog_GetChannels(t *testing.T) {
 			},
 			expectedChannels: []string{"ESPN 1 HD", "ESPN 1 HD"},
 			expectedProfiles: []string{"720p", "1080p"},
-			mustContainURL:   "ESPN/ESPN.isml",
-			mustNotContain:   "ESPN_2",
+			mustContainURL:   "espn1.m3u8",
+			mustNotContain:   "espn2",
 		},
 		{
 			name: "Champions: Feyenoord vs Como returns ESPN 2 HD",
@@ -273,8 +302,8 @@ func TestCatalog_GetChannels(t *testing.T) {
 			},
 			expectedChannels: []string{"ESPN 2 HD", "ESPN 2 HD"},
 			expectedProfiles: []string{"720p", "1080p"},
-			mustContainURL:   "ESPN_2.m3u8",
-			mustNotContain:   "ESPN/ESPN.isml",
+			mustContainURL:   "espn2.m3u8",
+			mustNotContain:   "espn1",
 		},
 		{
 			name: "Champions: AS Roma vs Real Madrid returns ESPN 1 HD",
@@ -284,7 +313,7 @@ func TestCatalog_GetChannels(t *testing.T) {
 			},
 			expectedChannels: []string{"ESPN 1 HD", "ESPN 1 HD"},
 			expectedProfiles: []string{"720p", "1080p"},
-			mustContainURL:   "ESPN/ESPN.isml",
+			mustContainURL:   "espn1.m3u8",
 		},
 		{
 			name: "Champions: Manchester City vs Paris Saint-Germain returns ESPN 2 HD",
@@ -294,7 +323,7 @@ func TestCatalog_GetChannels(t *testing.T) {
 			},
 			expectedChannels: []string{"ESPN 2 HD", "ESPN 2 HD"},
 			expectedProfiles: []string{"720p", "1080p"},
-			mustContainURL:   "ESPN_2.m3u8",
+			mustContainURL:   "espn2.m3u8",
 		},
 		{
 			name: "Champions: Aston Villa vs Fenerbahçe returns ESPN 3 HD",
@@ -304,7 +333,7 @@ func TestCatalog_GetChannels(t *testing.T) {
 			},
 			expectedChannels: []string{"ESPN 3 HD", "ESPN 3 HD"},
 			expectedProfiles: []string{"720p", "1080p"},
-			mustContainURL:   "ESPN_3.m3u8",
+			mustContainURL:   "espn3.m3u8",
 		},
 		{
 			name: "Champions: Borussia Dortmund vs Bodo/Glimt returns ESPN 5 HD",
@@ -314,7 +343,7 @@ func TestCatalog_GetChannels(t *testing.T) {
 			},
 			expectedChannels: []string{"ESPN 5 HD", "ESPN 5 HD"},
 			expectedProfiles: []string{"720p", "1080p"},
-			mustContainURL:   "ESPN_5.m3u8",
+			mustContainURL:   "espn5.m3u8",
 		},
 		{
 			name: "Champions: Real Betis vs FC Porto returns ESPN 7 HD",
@@ -324,7 +353,7 @@ func TestCatalog_GetChannels(t *testing.T) {
 			},
 			expectedChannels: []string{"ESPN 7 HD", "ESPN 7 HD"},
 			expectedProfiles: []string{"720p", "1080p"},
-			mustContainURL:   "ESPN_7.m3u8",
+			mustContainURL:   "espn7.m3u8",
 		},
 		{
 			name: "Official broadcasts: CBSSN/Paramount falls through to verified LatAm ESPN channel when no US stream configured",
@@ -336,7 +365,7 @@ func TestCatalog_GetChannels(t *testing.T) {
 			},
 			expectedChannels: []string{"ESPN 5 HD", "ESPN 5 HD"},
 			expectedProfiles: []string{"720p", "1080p"},
-			mustContainURL:   "ESPN_5.m3u8",
+			mustContainURL:   "espn5.m3u8",
 		},
 		{
 			name: "Simultaneous matches without broadcasts: Slot 0 maps to ESPN 1 HD without Fox Sports collision",
@@ -348,8 +377,8 @@ func TestCatalog_GetChannels(t *testing.T) {
 			},
 			expectedChannels: []string{"ESPN 1 HD", "ESPN 1 HD"},
 			expectedProfiles: []string{"720p", "1080p"},
-			mustContainURL:   "ESPN/ESPN.isml",
-			mustNotContain:   "FOX_Sports.m3u8",
+			mustContainURL:   "espn1.m3u8",
+			mustNotContain:   "fox1.m3u8",
 		},
 		{
 			name: "Simultaneous matches without broadcasts: Slot 1 maps to ESPN 2 HD without collision",
@@ -361,8 +390,8 @@ func TestCatalog_GetChannels(t *testing.T) {
 			},
 			expectedChannels: []string{"ESPN 2 HD", "ESPN 2 HD"},
 			expectedProfiles: []string{"720p", "1080p"},
-			mustContainURL:   "ESPN_2.m3u8",
-			mustNotContain:   "FOX_Sports.m3u8",
+			mustContainURL:   "espn2.m3u8",
+			mustNotContain:   "fox1.m3u8",
 		},
 		{
 			name: "Slot exceeds available linear channels returns no channels for honest placeholder",
@@ -402,10 +431,6 @@ func TestCatalog_GetChannels(t *testing.T) {
 				if ch.Resolution != tt.expectedProfiles[i] {
 					t.Errorf("channel[%d] expected resolution %s, got %s", i, tt.expectedProfiles[i], ch.Resolution)
 				}
-				// Verify URL sanitization: should never start with https://stream.example.com
-				if strings.HasPrefix(ch.URL, "https://stream.example.com") {
-					t.Errorf("channel URL was not sanitized: %s", ch.URL)
-				}
 			}
 
 			if tt.mustContainURL != "" {
@@ -417,7 +442,11 @@ func TestCatalog_GetChannels(t *testing.T) {
 					}
 				}
 				if !found {
-					t.Errorf("expected at least one channel URL to contain %s", tt.mustContainURL)
+					var urls []string
+					for _, ch := range channels {
+						urls = append(urls, ch.URL)
+					}
+					t.Errorf("expected at least one channel URL to contain %s, got channels: %v", tt.mustContainURL, urls)
 				}
 			}
 
@@ -443,7 +472,7 @@ func TestCatalog_CBSOfficialBroadcasts(t *testing.T) {
 	StreamCBSSportsNetwork = "http://example.com/cbssn.m3u8"
 	StreamCBSGolazo = "http://example.com/golazo.m3u8"
 
-	cat := New()
+	cat := newTestCatalog()
 	match := model.Match{
 		ID:         "live-cbs-configured",
 		LeagueKey:  "champions",
@@ -463,7 +492,7 @@ func TestCatalog_CBSOfficialBroadcasts(t *testing.T) {
 }
 
 func TestDiagnostic_ChampionsFixtures(t *testing.T) {
-	cat := New()
+	cat := newTestCatalog()
 
 	todayFixtures := []struct {
 		title           string
@@ -510,7 +539,7 @@ func TestDiagnostic_LiveTVGuideResolution(t *testing.T) {
 		t.Logf(" • %s (%s): %d programs scheduled", g.Name, g.Slug, len(g.Programs))
 	}
 
-	cat := New(WithTVGuide(guideSvc))
+	cat := newTestCatalog(WithTVGuide(guideSvc))
 
 	sampleMatches := []model.Match{
 		{
@@ -550,18 +579,18 @@ func TestCatalog_TVGuideIntegration(t *testing.T) {
 		{
 			Name:      "ESPN 3 HD",
 			Slug:      "espn_3_colombia",
-			StreamURL: tvguide.StreamESPN3,
+			StreamURL: "http://test.local/espn3.m3u8",
 			Programs:  []string{"Atalanta vs. Arsenal"},
 		},
 		{
 			Name:      "Win+ Fútbol",
 			Slug:      "win_sports_plus",
-			StreamURL: tvguide.StreamWinPlus,
+			StreamURL: "http://test.local/winplus.m3u8",
 			Programs:  []string{"Deportivo Pereira vs. Junior"},
 		},
 	})
 
-	cat := New(WithTVGuide(guideSvc))
+	cat := newTestCatalog(WithTVGuide(guideSvc))
 
 	t.Run("TV Guide resolves match without ESPN broadcasts and sets Recommended: true", func(t *testing.T) {
 		match := model.Match{
@@ -580,7 +609,7 @@ func TestCatalog_TVGuideIntegration(t *testing.T) {
 		if !channels[0].Recommended {
 			t.Errorf("expected top channel to have Recommended: true")
 		}
-		if !strings.Contains(channels[0].URL, "ESPN_3") {
+		if !strings.Contains(channels[0].URL, "espn3") {
 			t.Errorf("expected ESPN 3 stream URL, got %s", channels[0].URL)
 		}
 	})
@@ -621,4 +650,3 @@ func TestCatalog_TVGuideIntegration(t *testing.T) {
 		}
 	})
 }
-

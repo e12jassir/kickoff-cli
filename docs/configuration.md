@@ -1,6 +1,6 @@
-# Configuration Guide
+Kickoff is an open-source terminal scoreboard and media client. In accordance with legal safe harbor and open source best practices, **Kickoff does not host, curate, or distribute copyrighted video feeds**.
 
-Kickoff works out of the box with built-in channels and dynamic TV guide crawlers. You can customize broadcast channels, define match-specific routing rules, or add private streams using a configuration file or environment variables.
+Instead, Kickoff provides a **Bring Your Own Streams (BYOS)** architecture (similar to Stremio or Kodi). You can map your lawful IPTV streams, cable logins, or personal feeds to canonical broadcast channels using `channels.json`.
 
 ---
 
@@ -11,10 +11,9 @@ Kickoff reads configuration from:
 * **Linux & macOS**: `~/.config/kickoff/channels.json`
 * **Windows**: `%APPDATA%\kickoff\channels.json` (or `$XDG_CONFIG_HOME/kickoff/channels.json`)
 
-To check your configuration paths and status at any time, run:
-
+You can copy the example file to start:
 ```bash
-kickoff setup
+cp channels.json.example ~/.config/kickoff/channels.json
 ```
 
 ---
@@ -23,6 +22,12 @@ kickoff setup
 
 ```json
 {
+  "streams": {
+    "espn1": "http://your-iptv-provider.example/live/espn1.m3u8",
+    "espn2": "http://your-iptv-provider.example/live/espn2.m3u8",
+    "win_plus": "http://your-iptv-provider.example/live/winplus.m3u8",
+    "caracol": "http://your-iptv-provider.example/live/caracol.m3u8"
+  },
   "league_channels": {
     "eng.1": [
       {

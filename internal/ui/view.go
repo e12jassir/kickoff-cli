@@ -313,7 +313,7 @@ func renderChannelModal(match model.Match, channels []model.Channel, selectedIdx
 			finishedBadge := lipgloss.NewStyle().Width(modalContentWidth).Align(lipgloss.Center).Foreground(ColorMuted).Render("[ ⏹ Transmisión finalizada • No hay señales activas ]")
 			modal.WriteString(finishedBadge + "\n")
 		} else if len(channels) == 0 {
-			emptyNotice := lipgloss.NewStyle().Width(modalContentWidth).Align(lipgloss.Center).Foreground(ColorMuted).Render("[ ⏳ Señales disponibles cerca de la hora del partido ]")
+			emptyNotice := lipgloss.NewStyle().Width(modalContentWidth).Align(lipgloss.Center).Foreground(ColorMuted).Render("[ ⚙️ Sin señales activas • Configura tus canales en ~/.config/kickoff/channels.json ]")
 			modal.WriteString(emptyNotice + "\n")
 		} else {
 			modal.WriteString(ModalSectionHeader.Render("SEÑALES DE TRANSMISIÓN") + "\n\n")
