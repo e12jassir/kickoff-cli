@@ -61,48 +61,36 @@ When it's match time, launch verified high-definition broadcast streams in hardw
 
 ## 🚀 Installation
 
-### Arch Linux
+### 🐧 Linux (Universal)
+
+Install with a single command (works on Arch, Ubuntu, Debian, Fedora, Mint, openSUSE):
 ```bash
-# Direct local package installation:
-git clone https://github.com/e12jassir/kickoff-cli.git
-cd kickoff-cli/aur && makepkg -si
-
-# Direct AUR helper (pending AUR unfreeze):
-# yay -S kickoff-cli
+curl -fsSL https://raw.githubusercontent.com/e12jassir/kickoff-cli/main/install.sh | bash
 ```
+*(Or build from source with `git clone https://github.com/e12jassir/kickoff-cli.git && cd kickoff-cli && make install`)*
 
-### Go Install
-```bash
-go install github.com/e12jassir/kickoff/cmd/kickoff@latest
-```
+---
 
-### Prebuilt Binaries (Linux / Windows / macOS)
-Download the latest precompiled release for your architecture from the [Releases](https://github.com/e12jassir/kickoff-cli/releases) page:
+### 🪟 Windows (10 / 11)
 
-**Linux / macOS:**
-```bash
-tar -xzf kickoff_*_linux_amd64.tar.gz
-sudo mv kickoff /usr/local/bin/
-```
-
-**Windows:**
-Download `kickoff.exe` (or extract `kickoff_windows_amd64.zip`) and run from PowerShell or Windows Terminal:
+Download **`kickoff.exe`** (or extract **`kickoff_0.1.0_windows_amd64.zip`**) directly from the [Releases](https://github.com/e12jassir/kickoff-cli/releases) page, then run from PowerShell or Windows Terminal:
 ```powershell
 .\kickoff.exe
 ```
 
-### Build from Source
+---
+
+### 🍏 macOS
+
 ```bash
-git clone https://github.com/e12jassir/kickoff-cli.git
-cd kickoff-cli
-make install
+curl -fsSL https://raw.githubusercontent.com/e12jassir/kickoff-cli/main/install.sh | bash
 ```
+
+---
 
 > [!IMPORTANT]
 > **Runtime Dependency:** [`mpv`](https://mpv.io/installation/) must be installed on your system to play live broadcasts:
-> - **Arch Linux / Manjaro:** `sudo pacman -S mpv` *(handled automatically if installing via AUR)*
-> - **Debian / Ubuntu:** `sudo apt install mpv`
-> - **Fedora:** `sudo dnf install mpv`
+> - **Linux:** `sudo pacman -S mpv` (Arch) / `sudo apt install mpv` (Debian/Ubuntu) / `sudo dnf install mpv` (Fedora)
 > - **Windows:** `winget install mpv.net` *(or `choco install mpv`)*
 > - **macOS:** `brew install mpv`
 

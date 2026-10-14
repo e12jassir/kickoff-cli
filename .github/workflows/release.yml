@@ -1,0 +1,70 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: Build All Cross-Platform Binaries
+        run: |
+          mkdir -p dist
+          VERSION="${GITHUB_REF_NAME:-v0.1.0}"
+          CLEAN_VER="${VERSION#v}"
+
+          echo "Building version $VERSION..."
+
+          # 1. Linux x86_64
+          GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o kickoff ./cmd/kickoff
+          tar -czf "dist/kickoff_${CLEAN_VER}_linux_amd64.tar.gz" kickoff LICENSE README.md
+          rm kickoff
+
+          # 2. Linux ARM64
+          GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o kickoff ./cmd/kickoff
+          tar -czf "dist/kickoff_${CLEAN_VER}_linux_arm64.tar.gz" kickoff LICENSE README.md
+          rm kickoff
+
+          # 3. Windows x86_64 (Standalone .exe AND .zip bundle)
+          GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o dist/kickoff.exe ./cmd/kickoff
+          zip -j "dist/kickoff_${CLEAN_VER}_windows_amd64.zip" dist/kickoff.exe LICENSE README.md
+
+          # 4. macOS Apple Silicon (ARM64)
+          GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o kickoff ./cmd/kickoff
+          tar -czf "dist/kickoff_${CLEAN_VER}_darwin_arm64.tar.gz" kickoff LICENSE README.md
+          rm kickoff
+
+          # 5. macOS Intel (x86_64)
+          GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -o kickoff ./cmd/kickoff
+          tar -czf "dist/kickoff_${CLEAN_VER}_darwin_amd64.tar.gz" kickoff LICENSE README.md
+          rm kickoff
+
+          # 6. Checksums
+          cd dist
+          sha256sum * > checksums.txt
+          cd ..
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          tag_name: ${{ github.ref_name }}
+          name: "kickoff ${{ github.ref_name }}"
+          generate_release_notes: true
+          draft: false
+          prerelease: false
