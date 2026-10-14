@@ -18,9 +18,11 @@ type matchesLoadedMsg struct {
 }
 
 type matchStatsLoadedMsg struct {
-	matchID string
-	stats   *model.MatchStats
-	lineups *model.MatchLineups
+	matchID    string
+	stats      *model.MatchStats
+	lineups    *model.MatchLineups
+	referee    string
+	attendance int
 }
 
 type playbackStartedMsg struct {
@@ -57,8 +59,17 @@ func fetchMatchesCmd(client model.Client, leagueKey string) tea.Cmd {
 
 func fetchMatchStatsCmd(client model.Client, leagueKey, eventID string) tea.Cmd {
 	return func() tea.Msg {
-		stats, lineups, _ := client.FetchMatchDetails(context.Background(), leagueKey, eventID)
-		return matchStatsLoadedMsg{matchID: eventID, stats: stats, lineups: lineups}
+		details, _ := client.FetchMatchDetails(context.Background(), leagueKey, eventID)
+		if details != nil {
+			return matchStatsLoadedMsg{
+				matchID:    eventID,
+				stats:      details.Stats,
+				lineups:    details.Lineups,
+				referee:    details.Referee,
+				attendance: details.Attendance,
+			}
+		}
+		return matchStatsLoadedMsg{matchID: eventID}
 	}
 }
 
@@ -143,6 +154,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.matches[i].ID == msg.matchID {
 				m.matches[i].Stats = msg.stats
 				m.matches[i].Lineups = msg.lineups
+				if msg.referee != "" {
+					m.matches[i].Referee = msg.referee
+				}
+				if msg.attendance > 0 {
+					m.matches[i].Attendance = msg.attendance
+				}
 				break
 			}
 		}

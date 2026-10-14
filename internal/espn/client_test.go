@@ -585,16 +585,18 @@ func TestClient_FetchMatchDetails(t *testing.T) {
 		WithNow(func() time.Time { return fixedNow }),
 	)
 
-	stats, lineups, err := client.FetchMatchDetails(context.Background(), "laliga", "999888")
+	details, err := client.FetchMatchDetails(context.Background(), "laliga", "999888")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if stats == nil {
+	if details == nil || details.Stats == nil {
 		t.Fatalf("expected non-nil stats")
 	}
-	if lineups == nil {
+	if details.Lineups == nil {
 		t.Fatalf("expected non-nil lineups")
 	}
+	stats := details.Stats
+	lineups := details.Lineups
 
 	// Verify extended stats
 	if stats.HomePossession != "65%" || stats.AwayPossession != "35%" {
@@ -645,14 +647,14 @@ func TestClient_FetchMatchDetails(t *testing.T) {
 	}
 
 	// Verify cached fetch returns both stats and lineups
-	cachedStats, cachedLineups, err := client.FetchMatchDetails(context.Background(), "laliga", "999888")
+	cachedDetails, err := client.FetchMatchDetails(context.Background(), "laliga", "999888")
 	if err != nil {
 		t.Fatalf("unexpected error on cached fetch: %v", err)
 	}
-	if cachedStats == nil || cachedStats.HomePasses != "612" {
+	if cachedDetails == nil || cachedDetails.Stats == nil || cachedDetails.Stats.HomePasses != "612" {
 		t.Errorf("cached stats mismatch")
 	}
-	if cachedLineups == nil || len(cachedLineups.Home.Starters) != 11 {
+	if cachedDetails.Lineups == nil || len(cachedDetails.Lineups.Home.Starters) != 11 {
 		t.Errorf("cached lineups mismatch")
 	}
 
@@ -669,11 +671,11 @@ func TestClient_FetchMatchDetails(t *testing.T) {
 		WithCacheDir(tempDir),
 		WithNow(func() time.Time { return fixedNow }),
 	)
-	sDef, lDef, errDef := noRosterClient.FetchMatchDetails(context.Background(), "laliga", "empty-event")
+	defDetails, errDef := noRosterClient.FetchMatchDetails(context.Background(), "laliga", "empty-event")
 	if errDef != nil {
 		t.Errorf("unexpected error on empty rosters: %v", errDef)
 	}
-	if sDef != nil || lDef != nil {
+	if defDetails != nil && (defDetails.Stats != nil || defDetails.Lineups != nil) {
 		t.Errorf("expected nil stats and nil lineups for empty payload")
 	}
 }

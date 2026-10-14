@@ -25,8 +25,14 @@ func (m *mockClient) FetchMatchStats(ctx context.Context, leagueKey, eventID str
 	return m.stats, m.err
 }
 
-func (m *mockClient) FetchMatchDetails(ctx context.Context, leagueKey, eventID string) (*model.MatchStats, *model.MatchLineups, error) {
-	return m.stats, m.lineups, m.err
+func (m *mockClient) FetchMatchDetails(ctx context.Context, leagueKey, eventID string) (*model.MatchDetails, error) {
+	if m.stats == nil && m.lineups == nil {
+		return nil, m.err
+	}
+	return &model.MatchDetails{
+		Stats:   m.stats,
+		Lineups: m.lineups,
+	}, m.err
 }
 
 type mockCatalog struct {
@@ -556,6 +562,8 @@ func TestModel_Match_Events_And_Stats_Modal(t *testing.T) {
 				IsRedCard:  true,
 			},
 		},
+		Referee:    "Clement Turpin",
+		Attendance: 85000,
 	}
 
 	newM, _ = m.Update(matchesLoadedMsg{
@@ -615,6 +623,19 @@ func TestModel_Match_Events_And_Stats_Modal(t *testing.T) {
 	}
 	if !strings.Contains(viewTab0, "Rüdiger") || !strings.Contains(viewTab0, "🟥") {
 		t.Errorf("expected view to contain red card for Rüdiger")
+	}
+
+	// Verify vertical timeline formatting and halftime divider in Tab 0
+	if !strings.Contains(viewTab0, "──┤ 38'│") || !strings.Contains(viewTab0, "│ 55'├──") {
+		t.Errorf("expected timeline axis nodes for 38' and 55', got:\n%s", viewTab0)
+	}
+	if !strings.Contains(viewTab0, "──┤ E.T. ├──") {
+		t.Errorf("expected halftime separator in timeline")
+	}
+
+	// Verify referee and attendance in Tab 0
+	if !strings.Contains(viewTab0, "Clement Turpin") || !strings.Contains(viewTab0, "85.000") {
+		t.Errorf("expected referee and attendance in Tab 0")
 	}
 
 	// Verify channel list in Tab 0

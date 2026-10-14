@@ -38,6 +38,8 @@ type rawCompetition struct {
 	Venue       *rawVenue       `json:"venue"`
 	Competitors []rawCompetitor `json:"competitors"`
 	Details     []rawDetail     `json:"details"`
+	Attendance  int             `json:"attendance"`
+	Officials   []rawOfficial   `json:"officials"`
 }
 
 type rawDetail struct {
@@ -76,6 +78,16 @@ type rawAthlete struct {
 type rawSummaryResponse struct {
 	Boxscore *rawBoxscore `json:"boxscore"`
 	Rosters  []rawRoster  `json:"rosters"`
+	GameInfo *rawGameInfo `json:"gameInfo"`
+}
+
+type rawGameInfo struct {
+	Attendance int           `json:"attendance"`
+	Officials  []rawOfficial `json:"officials"`
+}
+
+type rawOfficial struct {
+	DisplayName string `json:"displayName"`
 }
 
 type rawRoster struct {
@@ -111,9 +123,11 @@ type rawStatisticItem struct {
 }
 
 type cachedSummary struct {
-	CachedAt time.Time           `json:"cached_at"`
-	Stats    *model.MatchStats   `json:"stats"`
-	Lineups  *model.MatchLineups `json:"lineups"`
+	CachedAt   time.Time           `json:"cached_at"`
+	Stats      *model.MatchStats   `json:"stats"`
+	Lineups    *model.MatchLineups `json:"lineups"`
+	Referee    string              `json:"referee"`
+	Attendance int                 `json:"attendance"`
 }
 
 type rawVenue struct {
@@ -323,28 +337,28 @@ func (c *Client) summaryCachePath(eventID string) string {
 	return filepath.Join(c.cacheDir, fmt.Sprintf("summary-%s.json", eventID))
 }
 
-func (c *Client) getCachedSummary(eventID string) (*model.MatchStats, *model.MatchLineups, bool) {
+func (c *Client) getCachedSummary(eventID string) (*model.MatchStats, *model.MatchLineups, string, int, bool) {
 	cachePath := c.summaryCachePath(eventID)
 	data, err := os.ReadFile(cachePath)
 	if err != nil {
-		return nil, nil, false
+		return nil, nil, "", 0, false
 	}
 
 	var cached cachedSummary
 	if err := json.Unmarshal(data, &cached); err != nil {
 		_ = os.Remove(cachePath)
-		return nil, nil, false
+		return nil, nil, "", 0, false
 	}
 
 	if c.now().Sub(cached.CachedAt) > c.cacheTTL {
-		return nil, nil, false
+		return nil, nil, "", 0, false
 	}
 
-	return cached.Stats, cached.Lineups, true
+	return cached.Stats, cached.Lineups, cached.Referee, cached.Attendance, true
 }
 
-func (c *Client) setCachedSummary(eventID string, stats *model.MatchStats, lineups *model.MatchLineups) {
-	if stats == nil && lineups == nil {
+func (c *Client) setCachedSummary(eventID string, stats *model.MatchStats, lineups *model.MatchLineups, referee string, attendance int) {
+	if stats == nil && lineups == nil && referee == "" && attendance == 0 {
 		return
 	}
 	if err := os.MkdirAll(c.cacheDir, 0o755); err != nil {
@@ -352,9 +366,11 @@ func (c *Client) setCachedSummary(eventID string, stats *model.MatchStats, lineu
 	}
 	cachePath := c.summaryCachePath(eventID)
 	cached := cachedSummary{
-		CachedAt: c.now(),
-		Stats:    stats,
-		Lineups:  lineups,
+		CachedAt:   c.now(),
+		Stats:      stats,
+		Lineups:    lineups,
+		Referee:    referee,
+		Attendance: attendance,
 	}
 	data, err := json.Marshal(cached)
 	if err != nil {
@@ -499,8 +515,10 @@ func (c *Client) FetchMatches(ctx context.Context, leagueKey string) ([]model.Ma
 			}
 
 			var clockVal string
+			var clockSec float64
 			if d.Clock != nil {
 				clockVal = d.Clock.DisplayValue
+				clockSec = d.Clock.Value
 			}
 
 			var teamID string
@@ -528,6 +546,7 @@ func (c *Client) FetchMatches(ctx context.Context, leagueKey string) ([]model.Ma
 				Type:        evType,
 				Description: desc,
 				Clock:       clockVal,
+				ClockValue:  clockSec,
 				TeamID:      teamID,
 				PlayerName:  pName,
 				IsScoring:   d.ScoringPlay,
@@ -538,17 +557,24 @@ func (c *Client) FetchMatches(ctx context.Context, leagueKey string) ([]model.Ma
 			})
 		}
 
+		ref := ""
+		if len(comp.Officials) > 0 {
+			ref = comp.Officials[0].DisplayName
+		}
+
 		match := model.Match{
-			ID:        ev.ID,
-			Title:     fmt.Sprintf("%s vs %s", homeComp.DisplayName, awayComp.DisplayName),
-			HomeTeam:  homeComp,
-			AwayTeam:  awayComp,
-			StartTime: localMatchTime,
-			TimeStr:   localMatchTime.Format("15:04"),
-			Venue:     venueName,
-			Status:    status,
-			LeagueKey: leagueKey,
-			Events:    events,
+			ID:         ev.ID,
+			Title:      fmt.Sprintf("%s vs %s", homeComp.DisplayName, awayComp.DisplayName),
+			HomeTeam:   homeComp,
+			AwayTeam:   awayComp,
+			StartTime:  localMatchTime,
+			TimeStr:    localMatchTime.Format("15:04"),
+			Venue:      venueName,
+			Status:     status,
+			LeagueKey:  leagueKey,
+			Events:     events,
+			Referee:    ref,
+			Attendance: comp.Attendance,
 		}
 
 		matches = append(matches, match)
@@ -581,15 +607,20 @@ func parseESPNTime(s string) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("unrecognized time format: %s", s)
 }
 
-// FetchMatchDetails queries ESPN summary API for team boxscore statistics and tactical lineups.
-func (c *Client) FetchMatchDetails(ctx context.Context, leagueKey, eventID string) (*model.MatchStats, *model.MatchLineups, error) {
+// FetchMatchDetails queries ESPN summary API for team boxscore statistics, tactical lineups, and game info.
+func (c *Client) FetchMatchDetails(ctx context.Context, leagueKey, eventID string) (*model.MatchDetails, error) {
 	if eventID == "" {
-		return nil, nil, nil
+		return nil, nil
 	}
 
 	// Check TTL cache first
-	if stats, lineups, found := c.getCachedSummary(eventID); found {
-		return stats, lineups, nil
+	if stats, lineups, ref, att, found := c.getCachedSummary(eventID); found {
+		return &model.MatchDetails{
+			Stats:      stats,
+			Lineups:    lineups,
+			Referee:    ref,
+			Attendance: att,
+		}, nil
 	}
 
 	leagueCode := LeagueCode(leagueKey)
@@ -597,23 +628,23 @@ func (c *Client) FetchMatchDetails(ctx context.Context, leagueKey, eventID strin
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return nil, nil, nil
+		return nil, nil
 	}
 	req.Header.Set("User-Agent", userAgent)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, nil, nil
+		return nil, nil
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, nil, nil
+		return nil, nil
 	}
 
 	var raw rawSummaryResponse
 	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
-		return nil, nil, nil
+		return nil, nil
 	}
 
 	var stats *model.MatchStats
@@ -813,13 +844,29 @@ func (c *Client) FetchMatchDetails(ctx context.Context, leagueKey, eventID strin
 			Away: parseLineup(awayRoster),
 		}
 	}
+	referee := ""
+	attendance := 0
+	if raw.GameInfo != nil {
+		attendance = raw.GameInfo.Attendance
+		if len(raw.GameInfo.Officials) > 0 {
+			referee = raw.GameInfo.Officials[0].DisplayName
+		}
+	}
 
-	c.setCachedSummary(eventID, stats, lineups)
-	return stats, lineups, nil
+	c.setCachedSummary(eventID, stats, lineups, referee, attendance)
+	return &model.MatchDetails{
+		Stats:      stats,
+		Lineups:    lineups,
+		Referee:    referee,
+		Attendance: attendance,
+	}, nil
 }
 
 // FetchMatchStats queries ESPN summary API for team boxscore statistics.
 func (c *Client) FetchMatchStats(ctx context.Context, leagueKey, eventID string) (*model.MatchStats, error) {
-	stats, _, err := c.FetchMatchDetails(ctx, leagueKey, eventID)
-	return stats, err
+	details, err := c.FetchMatchDetails(ctx, leagueKey, eventID)
+	if err != nil || details == nil {
+		return nil, err
+	}
+	return details.Stats, nil
 }

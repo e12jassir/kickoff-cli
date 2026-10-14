@@ -3,6 +3,8 @@ package ui
 import (
 	"fmt"
 	"math"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -286,41 +288,8 @@ func renderChannelModal(match model.Match, channels []model.Channel, selectedIdx
 	case 0:
 		// Tab 0: Resumen
 		if len(match.Events) > 0 {
-			var homeEvents, awayEvents []model.MatchEvent
-			for _, ev := range match.Events {
-				if ev.TeamID == match.HomeTeam.ID {
-					homeEvents = append(homeEvents, ev)
-				} else {
-					awayEvents = append(awayEvents, ev)
-				}
-			}
-
-			var homeLines, awayLines []string
-			for _, ev := range homeEvents {
-				homeLines = append(homeLines, formatModalEvent(ev))
-			}
-			for _, ev := range awayEvents {
-				awayLines = append(awayLines, formatModalEvent(ev))
-			}
-
-			maxLines := len(homeLines)
-			if len(awayLines) > maxLines {
-				maxLines = len(awayLines)
-			}
-
-			colLeft := lipgloss.NewStyle().Width(28).Align(lipgloss.Left)
-			colRight := lipgloss.NewStyle().Width(28).Align(lipgloss.Left)
-			for i := 0; i < maxLines; i++ {
-				hText := ""
-				if i < len(homeLines) {
-					hText = homeLines[i]
-				}
-				aText := ""
-				if i < len(awayLines) {
-					aText = awayLines[i]
-				}
-				modal.WriteString(fmt.Sprintf("%s    %s\n", colLeft.Render(truncateModalText(hText, 28)), colRight.Render(truncateModalText(aText, 28))))
-			}
+			tlStr := renderTimeline(match.Events, match.HomeTeam.ID, modalContentWidth)
+			modal.WriteString(tlStr)
 			modal.WriteString("\n")
 		}
 
@@ -361,6 +330,17 @@ func renderChannelModal(match model.Match, channels []model.Channel, selectedIdx
 					modal.WriteString(ChannelItemNormal.Render(itemLine) + "\n")
 				}
 			}
+		}
+
+		var infoParts []string
+		if match.Referee != "" {
+			infoParts = append(infoParts, fmt.Sprintf("👤 Árbitro: %s", match.Referee))
+		}
+		if match.Attendance > 0 {
+			infoParts = append(infoParts, fmt.Sprintf("👥 Asistencia: %s espectadores", formatNumber(match.Attendance)))
+		}
+		if len(infoParts) > 0 {
+			modal.WriteString("\n" + lipgloss.NewStyle().Width(modalContentWidth).Align(lipgloss.Center).Foreground(ColorMuted).Render(strings.Join(infoParts, "   •   ")) + "\n")
 		}
 
 	case 1:
@@ -552,4 +532,110 @@ func renderStatRow(leftVal, label, rightVal string) string {
 	rightStyle := lipgloss.NewStyle().Width(18).Align(lipgloss.Left).Foreground(ColorHighlight).Bold(true)
 
 	return fmt.Sprintf("%s%s%s", leftStyle.Render(leftVal), labelStyle.Render(label), rightStyle.Render(rightVal))
+}
+
+func renderTimeline(events []model.MatchEvent, homeTeamID string, modalContentWidth int) string {
+	if len(events) == 0 {
+		return ""
+	}
+
+	sortedEvents := make([]model.MatchEvent, len(events))
+	copy(sortedEvents, events)
+
+	parseClockMinute := func(s string) int {
+		s = strings.TrimSuffix(strings.TrimSpace(s), "'")
+		var m int
+		if idx := strings.Index(s, "+"); idx != -1 {
+			_, _ = fmt.Sscanf(s[:idx], "%d", &m)
+			var extra int
+			_, _ = fmt.Sscanf(s[idx+1:], "%d", &extra)
+			return m*60 + extra
+		}
+		_, _ = fmt.Sscanf(s, "%d", &m)
+		return m * 60
+	}
+
+	sort.SliceStable(sortedEvents, func(i, j int) bool {
+		ci := sortedEvents[i].ClockValue
+		if ci <= 0 {
+			ci = float64(parseClockMinute(sortedEvents[i].Clock))
+		}
+		cj := sortedEvents[j].ClockValue
+		if cj <= 0 {
+			cj = float64(parseClockMinute(sortedEvents[j].Clock))
+		}
+		return ci < cj
+	})
+
+	var b strings.Builder
+	htShown := false
+	for _, ev := range sortedEvents {
+		sec := ev.ClockValue
+		if sec <= 0 {
+			sec = float64(parseClockMinute(ev.Clock))
+		}
+		if !htShown && sec > 45*60 {
+			htLine := StatusPostStyle.Render("──┤ E.T. ├──")
+			b.WriteString(lipgloss.NewStyle().Width(modalContentWidth).Align(lipgloss.Center).Render(htLine) + "\n")
+			htShown = true
+		}
+
+		clockBadge := strings.TrimSpace(ev.Clock)
+		if clockBadge == "" {
+			clockBadge = "--'"
+		}
+		clkFmt := fmt.Sprintf("%-3s", clockBadge)
+
+		icon := "⚽"
+		if ev.IsRedCard {
+			icon = "🟥"
+		} else if ev.IsYellow {
+			icon = "🟨"
+		}
+
+		pName := strings.TrimSpace(ev.PlayerName)
+		if pName == "" || strings.EqualFold(pName, "jugador") {
+			if ev.IsYellow || ev.IsRedCard {
+				pName = "Cuerpo técnico"
+			} else if ev.IsOwnGoal {
+				pName = "Autogol"
+			} else {
+				pName = "Gol"
+			}
+		}
+		if ev.IsPenalty {
+			pName += " (pen.)"
+		} else if ev.IsOwnGoal {
+			pName += " (AG)"
+		}
+
+		isHome := ev.TeamID == homeTeamID
+		if isHome {
+			eventText := fmt.Sprintf("%s %s", truncateModalText(pName, 20), icon)
+			leftStyled := lipgloss.NewStyle().Width(24).Align(lipgloss.Right).Foreground(ColorText).Render(eventText)
+			axisStyled := lipgloss.NewStyle().Foreground(ColorBorderSelected).Render(fmt.Sprintf(" ──┤ %s│  ", clkFmt))
+			rightBlank := strings.Repeat(" ", 24)
+			b.WriteString(fmt.Sprintf(" %s%s%s \n", leftStyled, axisStyled, rightBlank))
+		} else {
+			leftBlank := strings.Repeat(" ", 24)
+			axisStyled := lipgloss.NewStyle().Foreground(ColorBorderSelected).Render(fmt.Sprintf("  │ %s├── ", clkFmt))
+			eventText := fmt.Sprintf("%s %s", icon, truncateModalText(pName, 20))
+			rightStyled := lipgloss.NewStyle().Width(24).Align(lipgloss.Left).Foreground(ColorText).Render(eventText)
+			b.WriteString(fmt.Sprintf(" %s%s%s \n", leftBlank, axisStyled, rightStyled))
+		}
+	}
+	return b.String()
+}
+
+func formatNumber(n int) string {
+	in := strconv.Itoa(n)
+	out := make([]byte, len(in)+(len(in)-1)/3)
+	for i, j, k := len(in)-1, len(out)-1, 0; i >= 0; i, j, k = i-1, j-1, k+1 {
+		if k > 0 && k%3 == 0 {
+			out[j] = '.'
+			j--
+		}
+		out[j] = in[i]
+	}
+	return string(out)
 }

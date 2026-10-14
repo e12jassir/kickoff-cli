@@ -49,8 +49,9 @@ type MatchStatus struct {
 type MatchEvent struct {
 	Type        string `json:"type"`        // "goal", "penalty", "owngoal", "card_yellow", "card_red"
 	Description string `json:"description"` // e.g. "Goal - Header", "Penalty - Scored"
-	Clock       string `json:"clock"`       // e.g. "38'"
-	TeamID      string `json:"teamId"`
+	Clock       string  `json:"clock"`       // e.g. "38'"
+	ClockValue  float64 `json:"clockValue"`
+	TeamID      string  `json:"teamId"`
 	PlayerName  string `json:"playerName"`  // e.g. "Robert Lewandowski"
 	IsScoring   bool   `json:"isScoring"`
 	IsPenalty   bool   `json:"isPenalty"`
@@ -113,9 +114,11 @@ type Match struct {
 	Venue     string        `json:"venue"`
 	Status    MatchStatus   `json:"status"`
 	LeagueKey string        `json:"leagueKey"`
-	Events    []MatchEvent  `json:"events"`
-	Stats     *MatchStats   `json:"stats"`
-	Lineups   *MatchLineups `json:"lineups"`
+	Events     []MatchEvent  `json:"events"`
+	Stats      *MatchStats   `json:"stats"`
+	Lineups    *MatchLineups `json:"lineups"`
+	Referee    string        `json:"referee"`
+	Attendance int           `json:"attendance"`
 }
 
 // Channel represents an HLS stream signal for a match.
@@ -149,11 +152,19 @@ var DefaultLeagues = []League{
 	{Key: "brasil", Name: "Brasileirão", Code: "bra.1", Emoji: "🇧🇷", Category: "Ligas Sudamericanas"},
 }
 
+// MatchDetails aggregates on-demand statistics, lineups, and match metadata.
+type MatchDetails struct {
+	Stats      *MatchStats   `json:"stats"`
+	Lineups    *MatchLineups `json:"lineups"`
+	Referee    string        `json:"referee"`
+	Attendance int           `json:"attendance"`
+}
+
 // Client defines the contract for fetching fixtures and match details from ESPN.
 type Client interface {
 	FetchMatches(ctx context.Context, leagueKey string) ([]Match, error)
 	FetchMatchStats(ctx context.Context, leagueKey, eventID string) (*MatchStats, error)
-	FetchMatchDetails(ctx context.Context, leagueKey, eventID string) (*MatchStats, *MatchLineups, error)
+	FetchMatchDetails(ctx context.Context, leagueKey, eventID string) (*MatchDetails, error)
 }
 
 // Resolver defines the contract for resolving match channels.
