@@ -626,16 +626,16 @@ func TestModel_Match_Events_And_Stats_Modal(t *testing.T) {
 	}
 
 	// Verify vertical timeline formatting and halftime divider in Tab 0
-	if !strings.Contains(viewTab0, "──┤ 38'│") || !strings.Contains(viewTab0, "│ 55'├──") {
+	if !strings.Contains(viewTab0, "──┤ 38'") || !strings.Contains(viewTab0, "──┤ 55'") {
 		t.Errorf("expected timeline axis nodes for 38' and 55', got:\n%s", viewTab0)
 	}
 	if !strings.Contains(viewTab0, "──┤ E.T. ├──") {
 		t.Errorf("expected halftime separator in timeline")
 	}
 
-	// Verify referee and attendance in Tab 0
-	if !strings.Contains(viewTab0, "Clement Turpin") || !strings.Contains(viewTab0, "85.000") {
-		t.Errorf("expected referee and attendance in Tab 0")
+	// Verify referee in Tab 0
+	if !strings.Contains(viewTab0, "Clement Turpin") {
+		t.Errorf("expected referee in Tab 0")
 	}
 
 	// Verify channel list in Tab 0

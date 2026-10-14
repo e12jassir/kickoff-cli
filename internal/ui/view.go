@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -332,15 +331,8 @@ func renderChannelModal(match model.Match, channels []model.Channel, selectedIdx
 			}
 		}
 
-		var infoParts []string
 		if match.Referee != "" {
-			infoParts = append(infoParts, fmt.Sprintf("👤 Árbitro: %s", match.Referee))
-		}
-		if match.Attendance > 0 {
-			infoParts = append(infoParts, fmt.Sprintf("👥 Asistencia: %s espectadores", formatNumber(match.Attendance)))
-		}
-		if len(infoParts) > 0 {
-			modal.WriteString("\n" + lipgloss.NewStyle().Width(modalContentWidth).Align(lipgloss.Center).Foreground(ColorMuted).Render(strings.Join(infoParts, "   •   ")) + "\n")
+			modal.WriteString("\n" + lipgloss.NewStyle().Width(modalContentWidth).Align(lipgloss.Center).Foreground(ColorMuted).Render(fmt.Sprintf("👤 Árbitro: %s", match.Referee)) + "\n")
 		}
 
 	case 1:
@@ -575,8 +567,8 @@ func renderTimeline(events []model.MatchEvent, homeTeamID string, modalContentWi
 			sec = float64(parseClockMinute(ev.Clock))
 		}
 		if !htShown && sec > 45*60 {
-			htLine := StatusPostStyle.Render("──┤ E.T. ├──")
-			b.WriteString(lipgloss.NewStyle().Width(modalContentWidth).Align(lipgloss.Center).Render(htLine) + "\n")
+			etCapsule := lipgloss.NewStyle().Foreground(ColorBorderSelected).Render("──┤") + " " + StatusPostStyle.Render("E.T.") + " " + lipgloss.NewStyle().Foreground(ColorBorderSelected).Render("├──")
+			b.WriteString(fmt.Sprintf("%24s%s%-24s\n", "", etCapsule, ""))
 			htShown = true
 		}
 
@@ -584,7 +576,8 @@ func renderTimeline(events []model.MatchEvent, homeTeamID string, modalContentWi
 		if clockBadge == "" {
 			clockBadge = "--'"
 		}
-		clkFmt := fmt.Sprintf("%-3s", clockBadge)
+		clkFmt := fmt.Sprintf("%-4s", clockBadge)
+		capsule := lipgloss.NewStyle().Foreground(ColorBorderSelected).Render(fmt.Sprintf("──┤ %s ├──", clkFmt))
 
 		icon := "⚽"
 		if ev.IsRedCard {
@@ -611,31 +604,16 @@ func renderTimeline(events []model.MatchEvent, homeTeamID string, modalContentWi
 
 		isHome := ev.TeamID == homeTeamID
 		if isHome {
-			eventText := fmt.Sprintf("%s %s", truncateModalText(pName, 20), icon)
+			eventText := fmt.Sprintf("%s %s ", truncateModalText(pName, 19), icon)
 			leftStyled := lipgloss.NewStyle().Width(24).Align(lipgloss.Right).Foreground(ColorText).Render(eventText)
-			axisStyled := lipgloss.NewStyle().Foreground(ColorBorderSelected).Render(fmt.Sprintf(" ──┤ %s│  ", clkFmt))
 			rightBlank := strings.Repeat(" ", 24)
-			b.WriteString(fmt.Sprintf(" %s%s%s \n", leftStyled, axisStyled, rightBlank))
+			b.WriteString(fmt.Sprintf("%s%s%s\n", leftStyled, capsule, rightBlank))
 		} else {
 			leftBlank := strings.Repeat(" ", 24)
-			axisStyled := lipgloss.NewStyle().Foreground(ColorBorderSelected).Render(fmt.Sprintf("  │ %s├── ", clkFmt))
-			eventText := fmt.Sprintf("%s %s", icon, truncateModalText(pName, 20))
+			eventText := fmt.Sprintf(" %s %s", icon, truncateModalText(pName, 19))
 			rightStyled := lipgloss.NewStyle().Width(24).Align(lipgloss.Left).Foreground(ColorText).Render(eventText)
-			b.WriteString(fmt.Sprintf(" %s%s%s \n", leftBlank, axisStyled, rightStyled))
+			b.WriteString(fmt.Sprintf("%s%s%s\n", leftBlank, capsule, rightStyled))
 		}
 	}
 	return b.String()
-}
-
-func formatNumber(n int) string {
-	in := strconv.Itoa(n)
-	out := make([]byte, len(in)+(len(in)-1)/3)
-	for i, j, k := len(in)-1, len(out)-1, 0; i >= 0; i, j, k = i-1, j-1, k+1 {
-		if k > 0 && k%3 == 0 {
-			out[j] = '.'
-			j--
-		}
-		out[j] = in[i]
-	}
-	return string(out)
 }
