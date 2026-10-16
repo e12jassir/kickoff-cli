@@ -33,6 +33,30 @@ func main() {
 				os.Exit(1)
 			}
 			os.Exit(0)
+		case "config":
+			if len(os.Args) > 2 && os.Args[2] == "import" {
+				if len(os.Args) < 4 {
+					fmt.Fprintln(os.Stderr, "Uso: kickoff config import <url|path>")
+					os.Exit(1)
+				}
+				if err := RunConfigImport(os.Args[3]); err != nil {
+					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+					os.Exit(1)
+				}
+				os.Exit(0)
+			}
+			fmt.Fprintln(os.Stderr, "Comando desconocido. Usa 'kickoff config import <url|path>'")
+			os.Exit(1)
+		case "import":
+			if len(os.Args) < 3 {
+				fmt.Fprintln(os.Stderr, "Uso: kickoff import <url|path>")
+				os.Exit(1)
+			}
+			if err := RunConfigImport(os.Args[2]); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			os.Exit(0)
 		case "update":
 			if err := updater.SelfUpdate(context.Background(), "", version); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -50,11 +74,13 @@ func main() {
 		case "help", "-h", "--help":
 			fmt.Printf("kickoff v%s — Terminal live football streaming & score tracker\n\n", version)
 			fmt.Println("Comandos:")
-			fmt.Println("  kickoff          Abre el explorador interactivo de partidos en la terminal")
-			fmt.Println("  kickoff init     Inicializa el archivo channels.json con una plantilla de ejemplo")
-			fmt.Println("  kickoff update   Actualiza kickoff automáticamente a la última versión")
-			fmt.Println("  kickoff setup    Diagnostica y verifica dependencias del sistema (mpv, fuentes)")
-			fmt.Println("  kickoff version  Muestra la versión actual")
+			fmt.Println("  kickoff                     Abre el explorador interactivo de partidos en la terminal")
+			fmt.Println("  kickoff init                Inicializa el archivo channels.json con una plantilla de ejemplo")
+			fmt.Println("  kickoff config import <src> Importa canales desde archivo local o URL (JSON o lista M3U)")
+			fmt.Println("  kickoff import <src>        Atajo para 'kickoff config import'")
+			fmt.Println("  kickoff update              Actualiza kickoff automáticamente a la última versión")
+			fmt.Println("  kickoff setup               Diagnostica y verifica dependencias del sistema (mpv, fuentes)")
+			fmt.Println("  kickoff version             Muestra la versión actual")
 			os.Exit(0)
 		}
 	}

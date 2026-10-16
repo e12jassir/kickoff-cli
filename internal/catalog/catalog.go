@@ -31,6 +31,8 @@ var (
 )
 
 type ExternalConfig struct {
+	PlaylistURL    string                     `json:"playlist_url"`
+	PlaylistPath   string                     `json:"playlist_path"`
 	Streams        map[string]string          `json:"streams"`
 	LeagueChannels map[string][]model.Channel `json:"league_channels"`
 	CustomRules    []struct {
@@ -93,6 +95,13 @@ func WithStreams(streams map[string]string) Option {
 	}
 }
 
+// WithM3UChannels sets in-memory M3U channels (ideal for testing or dynamic injection).
+func WithM3UChannels(channels []M3UChannel) Option {
+	return func(c *Catalog) {
+		c.m3uChannels = append(c.m3uChannels, channels...)
+	}
+}
+
 // Catalog implements model.Resolver with dynamic broadcast matching, TV guide crawling,
 // and user-configured stream mapping.
 type Catalog struct {
@@ -101,6 +110,7 @@ type Catalog struct {
 	customRules     []customMatchRule
 	leagueOverrides map[string][]model.Channel
 	userStreams     map[string]string
+	m3uChannels     []M3UChannel
 	configPath      string
 	tvGuide         *tvguide.Service
 }
@@ -291,6 +301,36 @@ func (c *Catalog) loadExternalConfig() {
 				channels: sanitized,
 			})
 		}
+	}
+
+	if ext.PlaylistPath != "" {
+		p := ext.PlaylistPath
+		if strings.HasPrefix(p, "~/") || p == "~" {
+			if home, err := os.UserHomeDir(); err == nil {
+				p = filepath.Join(home, p[2:])
+			}
+		}
+		if m3uList, err := ParseM3UFile(p); err == nil && len(m3uList) > 0 {
+			c.m3uChannels = append(c.m3uChannels, m3uList...)
+		}
+	}
+}
+
+func m3uToChannel(m3u M3UChannel, recommended bool) model.Channel {
+	res := "1080p"
+	nameLower := strings.ToLower(m3u.Name)
+	if strings.Contains(nameLower, "720p") {
+		res = "720p"
+	} else if strings.Contains(nameLower, "4k") || strings.Contains(nameLower, "uhd") {
+		res = "4K"
+	}
+	return model.Channel{
+		DisplayName: m3u.Name,
+		Name:        m3u.Name,
+		URL:         m3u.URL,
+		Resolution:  res,
+		BitrateMode: "max",
+		Recommended: recommended,
 	}
 }
 
@@ -511,6 +551,14 @@ func (c *Catalog) espnBySlot(slot int) (name, url string, ok bool) {
 	}
 	u, found := c.StreamEndpoint(slots[slot].streamK)
 	if !found || u == "" {
+		c.mu.RLock()
+		m3uList := c.m3uChannels
+		c.mu.RUnlock()
+		if len(m3uList) > 0 {
+			if m3u, ok := MatchM3UChannel(slots[slot].name, m3uList); ok {
+				return slots[slot].name, m3u.URL, true
+			}
+		}
 		return "", "", false
 	}
 	return slots[slot].name, u, true
@@ -542,6 +590,17 @@ func (c *Catalog) buildChannelsForTarget(target tvguide.ChannelTarget) []model.C
 			streamURL, _ = c.StreamEndpoint("caracol")
 		case "Canal RCN HD":
 			streamURL, _ = c.StreamEndpoint("rcn")
+		}
+	}
+
+	if streamURL == "" {
+		c.mu.RLock()
+		m3uList := c.m3uChannels
+		c.mu.RUnlock()
+		if len(m3uList) > 0 {
+			if m3u, ok := MatchM3UChannel(target.Name, m3uList); ok {
+				streamURL = m3u.URL
+			}
 		}
 	}
 
@@ -632,6 +691,16 @@ func (c *Catalog) GetChannels(match model.Match) []model.Channel {
 	// 2. Official broadcasters reported by ESPN metadata for this specific match (verified truth).
 	if len(match.Broadcasts) > 0 {
 		candidates := c.resolveFromOfficialBroadcasts(match.Broadcasts)
+		c.mu.RLock()
+		m3uList := c.m3uChannels
+		c.mu.RUnlock()
+		if len(m3uList) > 0 {
+			for _, b := range match.Broadcasts {
+				if m3u, found := MatchM3UChannel(b, m3uList); found {
+					candidates = append(candidates, m3uToChannel(m3u, len(candidates) == 0))
+				}
+			}
+		}
 		if len(candidates) > 0 {
 			return c.filterAndDeduplicate(candidates)
 		}
@@ -657,31 +726,84 @@ func (c *Catalog) GetChannels(match model.Match) []model.Channel {
 
 	switch leagueKey {
 	case "colombia":
-		if u, ok := c.StreamEndpoint("win_plus"); ok {
-			if ch, valid := makeSingleChannel("Win+ Fútbol", u, "1080p", "max", len(candidates) == 0); valid {
+		winPlusURL, hasWinPlus := c.StreamEndpoint("win_plus")
+		if !hasWinPlus {
+			c.mu.RLock()
+			m3uList := c.m3uChannels
+			c.mu.RUnlock()
+			if m3u, ok := MatchM3UChannel("Win+ Fútbol", m3uList); ok {
+				winPlusURL = m3u.URL
+				hasWinPlus = true
+			}
+		}
+		if hasWinPlus {
+			if ch, valid := makeSingleChannel("Win+ Fútbol", winPlusURL, "1080p", "max", len(candidates) == 0); valid {
 				candidates = append(candidates, ch)
 			}
 		}
-		if u, ok := c.StreamEndpoint("win"); ok {
-			if ch, valid := makeSingleChannel("Win Sports HD", u, "1080p", "max", false); valid {
+
+		winURL, hasWin := c.StreamEndpoint("win")
+		if !hasWin {
+			c.mu.RLock()
+			m3uList := c.m3uChannels
+			c.mu.RUnlock()
+			if m3u, ok := MatchM3UChannel("Win Sports", m3uList); ok {
+				winURL = m3u.URL
+				hasWin = true
+			}
+		}
+		if hasWin {
+			if ch, valid := makeSingleChannel("Win Sports HD", winURL, "1080p", "max", false); valid {
 				candidates = append(candidates, ch)
 			}
 		}
-		if u, ok := c.StreamEndpoint("caracol"); ok {
-			if ch, valid := makeSingleChannel("Caracol TV HD", u, "1080p", "max", false); valid {
+
+		caracolURL, hasCaracol := c.StreamEndpoint("caracol")
+		if !hasCaracol {
+			c.mu.RLock()
+			m3uList := c.m3uChannels
+			c.mu.RUnlock()
+			if m3u, ok := MatchM3UChannel("Caracol TV", m3uList); ok {
+				caracolURL = m3u.URL
+				hasCaracol = true
+			}
+		}
+		if hasCaracol {
+			if ch, valid := makeSingleChannel("Caracol TV HD", caracolURL, "1080p", "max", false); valid {
 				candidates = append(candidates, ch)
 			}
 		}
-		if u, ok := c.StreamEndpoint("rcn"); ok {
-			if ch, valid := makeSingleChannel("Canal RCN HD", u, "1080p", "max", false); valid {
+
+		rcnURL, hasRCN := c.StreamEndpoint("rcn")
+		if !hasRCN {
+			c.mu.RLock()
+			m3uList := c.m3uChannels
+			c.mu.RUnlock()
+			if m3u, ok := MatchM3UChannel("Canal RCN", m3uList); ok {
+				rcnURL = m3u.URL
+				hasRCN = true
+			}
+		}
+		if hasRCN {
+			if ch, valid := makeSingleChannel("Canal RCN HD", rcnURL, "1080p", "max", false); valid {
 				candidates = append(candidates, ch)
 			}
 		}
 
 	case "argentina":
+		tycURL, hasTyC := c.StreamEndpoint("tyc")
+		if !hasTyC {
+			c.mu.RLock()
+			m3uList := c.m3uChannels
+			c.mu.RUnlock()
+			if m3u, ok := MatchM3UChannel("TyC Sports", m3uList); ok {
+				tycURL = m3u.URL
+				hasTyC = true
+			}
+		}
 		if match.SlotIndex == 0 {
-			if u, ok := c.StreamEndpoint("tyc"); ok {
-				if ch, valid := makeSingleChannel("TyC Sports HD", u, "1080p", "max", true); valid {
+			if hasTyC {
+				if ch, valid := makeSingleChannel("TyC Sports HD", tycURL, "1080p", "max", true); valid {
 					candidates = append(candidates, ch)
 				}
 			}

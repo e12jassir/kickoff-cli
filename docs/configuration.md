@@ -4,6 +4,28 @@ Instead, Kickoff provides a **Bring Your Own Streams (BYOS)** architecture (simi
 
 ---
 
+## Quick Setup & Remote Import
+
+Kickoff provides a built-in importer for both JSON configurations and M3U/M3U8 playlists:
+
+```bash
+# Import from a remote URL (JSON configuration or M3U playlist)
+kickoff config import https://example.com/playlist.m3u
+
+# Import from a local file
+kickoff config import ~/my-streams/channels.json
+
+# Direct shortcut
+kickoff import https://example.com/channels.json
+```
+
+When importing:
+- Existing configurations are automatically backed up to `channels.json.bak`.
+- When an M3U playlist is imported, Kickoff saves it to `~/.config/kickoff/playlist.m3u` and automatically registers `playlist_path` in `channels.json`.
+- A legal disclaimer is displayed reminding users of lawful usage.
+
+---
+
 ## Configuration File
 
 Kickoff reads configuration from:
@@ -11,7 +33,11 @@ Kickoff reads configuration from:
 * **Linux & macOS**: `~/.config/kickoff/channels.json`
 * **Windows**: `%APPDATA%\kickoff\channels.json` (or `$XDG_CONFIG_HOME/kickoff/channels.json`)
 
-You can copy the example file to start:
+You can initialize a starter template:
+```bash
+kickoff init
+```
+Or copy the example file:
 ```bash
 cp channels.json.example ~/.config/kickoff/channels.json
 ```
@@ -22,6 +48,7 @@ cp channels.json.example ~/.config/kickoff/channels.json
 
 ```json
 {
+  "playlist_path": "/home/user/.config/kickoff/playlist.m3u",
   "streams": {
     "espn1": "http://your-iptv-provider.example/live/espn1.m3u8",
     "espn2": "http://your-iptv-provider.example/live/espn2.m3u8",
@@ -63,6 +90,9 @@ cp channels.json.example ~/.config/kickoff/channels.json
 
 | Field | Type | Description |
 | :--- | :--- | :--- |
+| `playlist_path` | `string` *(optional)* | Local filesystem path to an M3U/M3U8 playlist file (supports `~` expansion). |
+| `playlist_url` | `string` *(optional)* | Remote URL to an M3U/M3U8 playlist. |
+| `streams` | `map[string]string` | Direct channel alias mappings (e.g. `espn1`, `espn2`, `win_plus`, `caracol`). |
 | `league_channels` | `map[string][]Channel` | Overrides default channel listings for a specific league slug (e.g. `eng.1`, `esp.1`, `uefa.champions`, `col.1`). |
 | `custom_rules` | `[]Rule` | Matches a regular expression against the match title. If matched, these channels are prioritized first. |
 | `name` | `string` | Display label shown in the stream launcher selector. |

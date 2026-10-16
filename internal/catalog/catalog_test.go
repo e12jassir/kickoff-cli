@@ -37,7 +37,7 @@ var mockTestStreams = map[string]string{
 }
 
 func newTestCatalog(opts ...Option) *Catalog {
-	allOpts := append([]Option{WithStreams(mockTestStreams)}, opts...)
+	allOpts := append([]Option{WithConfigFile(filepath.Join(os.TempDir(), "nonexistent_kickoff_channels.json")), WithStreams(mockTestStreams)}, opts...)
 	return New(allOpts...)
 }
 

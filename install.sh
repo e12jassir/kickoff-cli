@@ -261,5 +261,11 @@ ensure_dependencies() {
 
 ensure_dependencies
 
+if [ -n "$KICKOFF_SIGNALS_URL" ]; then
+  echo ""
+  echo "📡 Importando pack de señales configurado..."
+  "$INSTALL_DIR/kickoff" config import "$KICKOFF_SIGNALS_URL" || true
+fi
+
 echo ""
 echo "⚽ ¡Listo! Ejecuta 'kickoff' para iniciar."
