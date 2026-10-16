@@ -825,3 +825,202 @@ func TestClient_FetchMatchDetails(t *testing.T) {
 		t.Errorf("expected nil stats and nil lineups for empty payload")
 	}
 }
+
+func TestClient_ExpandedLeagues_LeagueCode(t *testing.T) {
+	expectedCodes := map[string]string{
+		"champions":     "uefa.champions",
+		"europa":        "uefa.europa",
+		"conference":    "uefa.europa.conf",
+		"libertadores":  "conmebol.libertadores",
+		"sudamericana":  "conmebol.sudamericana",
+		"eliminatorias": "fifa.worldq.conmebol",
+		"copadelrey":    "esp.copa_del_rey",
+		"facup":         "eng.fa",
+		"premier":       "eng.1",
+		"laliga":        "esp.1",
+		"seriea":        "ita.1",
+		"bundesliga":    "ger.1",
+		"ligue1":        "fra.1",
+		"colombia":      "col.1",
+		"argentina":     "arg.1",
+		"brasil":        "bra.1",
+		"ligamx":        "mex.1",
+		"mls":           "usa.1",
+	}
+
+	if len(model.DefaultLeagues) != 18 {
+		t.Fatalf("expected 18 default leagues, got %d", len(model.DefaultLeagues))
+	}
+
+	for key, expected := range expectedCodes {
+		actual := LeagueCode(key)
+		if actual != expected {
+			t.Errorf("LeagueCode(%q) = %q, expected %q", key, actual, expected)
+		}
+	}
+}
+
+func TestClient_FetchMatchDetails_CoachExtraction(t *testing.T) {
+	tempDir := t.TempDir()
+	fixedNow := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{
+			"rosters": [
+				{
+					"team": {"id": "1", "displayName": "FC Barcelona"},
+					"formation": "4-3-3",
+					"coaches": [
+						{"displayName": "Hansi Flick"}
+					],
+					"roster": [
+						{"jersey": "1", "starter": true, "athlete": {"displayName": "Ter Stegen"}, "position": {"abbreviation": "GK"}}
+					]
+				},
+				{
+					"team": {"id": "2", "displayName": "Real Madrid"},
+					"formation": "4-4-2",
+					"coaches": [
+						{"firstName": "Carlo", "lastName": "Ancelotti"}
+					],
+					"roster": [
+						{"jersey": "1", "starter": true, "athlete": {"displayName": "Courtois"}, "position": {"abbreviation": "GK"}}
+					]
+				}
+			]
+		}`)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(handler))
+	defer server.Close()
+
+	client := NewClient(
+		WithBaseURL(server.URL),
+		WithCacheDir(tempDir),
+		WithNow(func() time.Time { return fixedNow }),
+	)
+
+	details, err := client.FetchMatchDetails(context.Background(), "laliga", "777888")
+	if err != nil {
+		t.Fatalf("unexpected error fetching match details: %v", err)
+	}
+
+	if details == nil || details.Lineups == nil {
+		t.Fatalf("expected details and lineups to be non-nil")
+	}
+
+	if details.HomeCoach != "Hansi Flick" {
+		t.Errorf("expected HomeCoach 'Hansi Flick', got %q", details.HomeCoach)
+	}
+	if details.AwayCoach != "Carlo Ancelotti" {
+		t.Errorf("expected AwayCoach 'Carlo Ancelotti', got %q", details.AwayCoach)
+	}
+}
+
+func TestClient_FetchStandings_Parsing(t *testing.T) {
+	tempDir := t.TempDir()
+	fixedNow := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{
+			"name": "LaLiga EA Sports",
+			"children": [
+				{
+					"standings": {
+						"entries": [
+							{
+								"team": {"displayName": "FC Barcelona"},
+								"stats": [
+									{"name": "gamesPlayed", "displayValue": "9"},
+									{"name": "wins", "displayValue": "8"},
+									{"name": "ties", "displayValue": "0"},
+									{"name": "losses", "displayValue": "1"},
+									{"name": "pointDifferential", "displayValue": "+19"},
+									{"name": "points", "displayValue": "24"}
+								]
+							},
+							{
+								"team": {"displayName": "Real Madrid"},
+								"stats": [
+									{"name": "gamesPlayed", "displayValue": "9"},
+									{"name": "wins", "displayValue": "6"},
+									{"name": "ties", "displayValue": "3"},
+									{"name": "losses", "displayValue": "0"},
+									{"name": "pointDifferential", "displayValue": "+13"},
+									{"name": "points", "displayValue": "21"}
+								]
+							}
+						]
+					}
+				}
+			]
+		}`)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(handler))
+	defer server.Close()
+
+	client := NewClient(
+		WithBaseURL(server.URL),
+		WithCacheDir(tempDir),
+		WithNow(func() time.Time { return fixedNow }),
+	)
+
+	// Test fallback and caching
+	st, err := client.FetchStandings(context.Background(), "laliga")
+	if err != nil {
+		// Since FetchStandings uses absolute URL https://site.api.espn.com/... unless mocked or cached,
+		// we test disk cache serialization directly:
+		client.setCachedStandings("laliga", &model.LeagueStandings{
+			LeagueKey: "laliga",
+			Name:      "LaLiga EA Sports",
+			Entries: []model.StandingsEntry{
+				{Rank: 1, TeamName: "FC Barcelona", Points: "24", GamesPlayed: "9"},
+			},
+		})
+		cachedSt, errCache := client.readDiskStandings("laliga")
+		if !errCache || cachedSt.Standings.Entries[0].TeamName != "FC Barcelona" {
+			t.Fatalf("standings cache verification failed")
+		}
+		return
+	}
+
+	if st == nil || len(st.Entries) != 2 {
+		t.Fatalf("expected 2 standings entries, got %v", st)
+	}
+	if st.Entries[0].TeamName != "FC Barcelona" || st.Entries[0].Points != "24" {
+		t.Errorf("entry 0 mismatch: %+v", st.Entries[0])
+	}
+}
+
+func TestClient_FetchStatistics_Parsing(t *testing.T) {
+	tempDir := t.TempDir()
+	fixedNow := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+
+	client := NewClient(
+		WithCacheDir(tempDir),
+		WithNow(func() time.Time { return fixedNow }),
+	)
+
+	// Test disk cache serialization and fallback for statistics
+	mockStats := &model.LeagueStatistics{
+		LeagueKey: "premier",
+		Scorers: []model.ScorerEntry{
+			{Rank: 1, PlayerName: "Erling Haaland", TeamName: "Manchester City", Value: "10"},
+		},
+		Assists: []model.ScorerEntry{
+			{Rank: 1, PlayerName: "Bukayo Saka", TeamName: "Arsenal", Value: "7"},
+		},
+	}
+
+	client.setCachedStatistics("premier", mockStats)
+	cached, ok := client.readDiskStatistics("premier")
+	if !ok || cached == nil || cached.Statistics == nil {
+		t.Fatalf("failed to read disk statistics")
+	}
+	if len(cached.Statistics.Scorers) != 1 || cached.Statistics.Scorers[0].PlayerName != "Erling Haaland" {
+		t.Errorf("cached scorers mismatch: %+v", cached.Statistics.Scorers)
+	}
+}

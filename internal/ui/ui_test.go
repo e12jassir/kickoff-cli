@@ -12,10 +12,12 @@ import (
 )
 
 type mockClient struct {
-	matches []model.Match
-	err     error
-	stats   *model.MatchStats
-	lineups *model.MatchLineups
+	matches    []model.Match
+	err        error
+	stats      *model.MatchStats
+	lineups    *model.MatchLineups
+	standings  *model.LeagueStandings
+	statistics *model.LeagueStatistics
 }
 
 func (m *mockClient) FetchMatches(ctx context.Context, leagueKey string) ([]model.Match, error) {
@@ -33,6 +35,35 @@ func (m *mockClient) FetchMatchDetails(ctx context.Context, leagueKey, eventID s
 	return &model.MatchDetails{
 		Stats:   m.stats,
 		Lineups: m.lineups,
+	}, m.err
+}
+
+func (m *mockClient) FetchStandings(ctx context.Context, leagueKey string) (*model.LeagueStandings, error) {
+	if m.standings != nil {
+		return m.standings, m.err
+	}
+	return &model.LeagueStandings{
+		LeagueKey: leagueKey,
+		Name:      "Standings",
+		Entries: []model.StandingsEntry{
+			{Rank: 1, TeamName: "Real Madrid", GamesPlayed: "10", Wins: "8", Ties: "1", Losses: "1", PointDiff: "+15", Points: "25"},
+			{Rank: 2, TeamName: "Barcelona", GamesPlayed: "10", Wins: "7", Ties: "2", Losses: "1", PointDiff: "+12", Points: "23"},
+		},
+	}, m.err
+}
+
+func (m *mockClient) FetchStatistics(ctx context.Context, leagueKey string) (*model.LeagueStatistics, error) {
+	if m.statistics != nil {
+		return m.statistics, m.err
+	}
+	return &model.LeagueStatistics{
+		LeagueKey: leagueKey,
+		Scorers: []model.ScorerEntry{
+			{Rank: 1, PlayerName: "R. Lewandowski", TeamName: "Barcelona", Value: "10", DisplayValue: "10 Goles"},
+		},
+		Assists: []model.ScorerEntry{
+			{Rank: 1, PlayerName: "Lamine Yamal", TeamName: "Barcelona", Value: "6", DisplayValue: "6 Asistencias"},
+		},
 	}, m.err
 }
 
@@ -1105,6 +1136,208 @@ func TestModel_AutoSyncTickMsg_LiveMatchModal(t *testing.T) {
 	_, cmd := m.Update(autoSyncTickMsg(time.Now()))
 	if cmd == nil {
 		t.Fatalf("expected batch commands on autoSyncTickMsg, got nil")
+	}
+}
+
+func TestModel_LeagueTabs_NavigationAndRendering(t *testing.T) {
+	client := &mockClient{
+		matches: []model.Match{
+			{
+				ID:        "m1",
+				Title:     "Real Madrid vs Barcelona",
+				HomeTeam:  model.Competitor{DisplayName: "Real Madrid", Score: "2"},
+				AwayTeam:  model.Competitor{DisplayName: "Barcelona", Score: "1"},
+				TimeStr:   "16:00",
+				Status:    model.MatchStatus{State: "post", Completed: true},
+				LeagueKey: "laliga",
+			},
+			{
+				ID:        "m2",
+				Title:     "Atlético Madrid vs Sevilla",
+				HomeTeam:  model.Competitor{DisplayName: "Atlético Madrid"},
+				AwayTeam:  model.Competitor{DisplayName: "Sevilla"},
+				TimeStr:   "18:30",
+				Status:    model.MatchStatus{State: "pre"},
+				LeagueKey: "laliga",
+			},
+		},
+		standings: &model.LeagueStandings{
+			LeagueKey: "laliga",
+			Name:      "LaLiga",
+			Entries: []model.StandingsEntry{
+				{Rank: 1, TeamName: "Real Madrid", GamesPlayed: "10", Wins: "8", Ties: "1", Losses: "1", PointDiff: "+15", Points: "25"},
+			},
+		},
+		statistics: &model.LeagueStatistics{
+			LeagueKey: "laliga",
+			Scorers: []model.ScorerEntry{
+				{Rank: 1, PlayerName: "Kylian Mbappé", TeamName: "Real Madrid", Value: "8"},
+			},
+			Assists: []model.ScorerEntry{
+				{Rank: 1, PlayerName: "Vinícius Jr", TeamName: "Real Madrid", Value: "5"},
+			},
+		},
+	}
+	cat := &mockCatalog{}
+	p := &mockPlayer{}
+	m := NewModel(client, cat, p)
+	m.state = StateBrowsing
+	m.matches = client.matches
+	m.standings = client.standings
+	m.statistics = client.statistics
+
+	// Verify Tab 2 (Partidos) is default when browsing
+	m.leagueTab = TabPartidos
+	viewPartidos := m.View()
+	if !strings.Contains(viewPartidos, "PARTIDOS DE HOY") {
+		t.Errorf("expected 'PARTIDOS DE HOY' in TabPartidos view")
+	}
+
+	// Press '1' -> Tab 1 (Resumen)
+	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m = newM.(Model)
+	if m.leagueTab != TabResumen {
+		t.Errorf("expected TabResumen after key '1', got %d", m.leagueTab)
+	}
+	viewResumen := m.View()
+	if !strings.Contains(viewResumen, "Líder de Liga") {
+		t.Errorf("expected 'Líder de Liga' highlight in TabResumen view, got:\n%s", viewResumen)
+	}
+	if !strings.Contains(viewResumen, "RESULTADOS RECIENTES") {
+		t.Errorf("expected 'RESULTADOS RECIENTES' in TabResumen view")
+	}
+	if !strings.Contains(viewResumen, "PRÓXIMOS ENCUENTROS") {
+		t.Errorf("expected 'PRÓXIMOS ENCUENTROS' in TabResumen view")
+	}
+
+	// Press '3' -> Tab 3 (Posiciones)
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m = newM.(Model)
+	if m.leagueTab != TabPosiciones {
+		t.Errorf("expected TabPosiciones after key '3', got %d", m.leagueTab)
+	}
+	viewPosiciones := m.View()
+	if !strings.Contains(viewPosiciones, "TABLA DE POSICIONES") {
+		t.Errorf("expected 'TABLA DE POSICIONES' in TabPosiciones view, got:\n%s", viewPosiciones)
+	}
+	if !strings.Contains(viewPosiciones, "Real Madrid") {
+		t.Errorf("expected team in standings view")
+	}
+
+	// Press '4' -> Tab 4 (Goleadores)
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m = newM.(Model)
+	if m.leagueTab != TabGoleadores {
+		t.Errorf("expected TabGoleadores after key '4', got %d", m.leagueTab)
+	}
+	viewGoleadores := m.View()
+	if !strings.Contains(viewGoleadores, "MÁXIMOS GOLEADORES") {
+		t.Errorf("expected 'MÁXIMOS GOLEADORES' in TabGoleadores view, got:\n%s", viewGoleadores)
+	}
+	if !strings.Contains(viewGoleadores, "Kylian Mbappé") {
+		t.Errorf("expected scorer in goleadores view")
+	}
+	if !strings.Contains(viewGoleadores, "MÁXIMOS ASISTENTES") {
+		t.Errorf("expected 'MÁXIMOS ASISTENTES' in goleadores view")
+	}
+
+	// Cycle forward with Tab key: TabGoleadores -> TabResumen
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = newM.(Model)
+	if m.leagueTab != TabResumen {
+		t.Errorf("expected TabResumen after Tab key cycle, got %d", m.leagueTab)
+	}
+}
+
+func TestModel_StartupWarmup_Animation(t *testing.T) {
+	client := &mockClient{}
+	cat := &mockCatalog{}
+	p := &mockPlayer{}
+	m := NewModel(client, cat, p).WithInitialState(StateStartup)
+
+	if m.state != StateStartup {
+		t.Fatalf("expected initial state StateStartup, got %d", m.state)
+	}
+
+	// Verify renderStartup contains ANSI logo and initializing message
+	startupView := m.View()
+	if !strings.Contains(startupView, "Initializing Engine") {
+		t.Errorf("expected 'Initializing Engine' in startup view, got:\n%s", startupView)
+	}
+
+	// Advance progress through ticks
+	for i := 0; i < 9; i++ {
+		newM, cmd := m.Update(startupTickMsg(time.Now()))
+		m = newM.(Model)
+		if m.state != StateStartup {
+			t.Fatalf("expected state StateStartup at step %d, got %d", i, m.state)
+		}
+		if cmd == nil {
+			t.Fatalf("expected startup tick command at step %d", i)
+		}
+	}
+
+	// 10th tick reaches 100% and transitions to StateMainMenu
+	newM, _ := m.Update(startupTickMsg(time.Now()))
+	m = newM.(Model)
+	if m.state != StateMainMenu {
+		t.Errorf("expected transition to StateMainMenu after 100%% warmup, got %d", m.state)
+	}
+}
+
+func TestModel_ConnectingStream_PulseAnimation(t *testing.T) {
+	client := &mockClient{}
+	cat := &mockCatalog{}
+	p := &mockPlayer{}
+	m := NewModel(client, cat, p)
+	m.state = StatePlaying
+	m.connecting = true
+	m.streamFeed = "ESPN 1 HD"
+	m.bitrate = "auto • 1080p"
+
+	view := m.View()
+	if !strings.Contains(view, "Conectando con ESPN 1 HD") {
+		t.Errorf("expected connecting message in view, got:\n%s", view)
+	}
+	if !strings.Contains(view, "📡") {
+		t.Errorf("expected radar antenna emoji in connecting view")
+	}
+	if !strings.Contains(view, "1080p") {
+		t.Errorf("expected bitrate/resolution indicator in connecting view")
+	}
+
+	// Pulse tick advances waves
+	newM, cmd := m.Update(connectingPulseTickMsg(time.Now()))
+	m = newM.(Model)
+	if m.pulseStep != 1 {
+		t.Errorf("expected pulseStep 1, got %d", m.pulseStep)
+	}
+	if cmd == nil {
+		t.Errorf("expected connectingPulseTickCmd returned")
+	}
+}
+
+func TestModel_SmoothBar_Fractions(t *testing.T) {
+	// Test renderSmoothBar block characters
+	bar0 := renderSmoothBar(0.0, 10)
+	if strings.Contains(bar0, "█") {
+		t.Errorf("expected empty bar for 0.0 fraction")
+	}
+
+	barHalf := renderSmoothBar(0.5, 10)
+	if !strings.HasPrefix(barHalf, "█████") {
+		t.Errorf("expected 5 full blocks for 0.5 fraction in 10 slots, got %q", barHalf)
+	}
+
+	barFull := renderSmoothBar(1.0, 10)
+	if barFull != "██████████" {
+		t.Errorf("expected 10 full blocks for 1.0 fraction, got %q", barFull)
+	}
+
+	// Test renderPossessionBar contains styled brackets and numbers
+	posView := renderPossessionBar("65%", "35%", 60)
+	if !strings.Contains(posView, "65%") || !strings.Contains(posView, "35%") {
+		t.Errorf("expected possession numbers in posView, got:\n%s", posView)
 	}
 }
 

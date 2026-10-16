@@ -147,7 +147,7 @@ func main() {
 	cat := catalog.NewResolver()
 	play := player.NewController()
 
-	initialModel := ui.NewModel(client, cat, play).WithVersion(version).WithNoEmoji(noEmoji)
+	initialModel := ui.NewModel(client, cat, play).WithVersion(version).WithNoEmoji(noEmoji).WithInitialState(ui.StateStartup)
 	program := tea.NewProgram(initialModel, tea.WithAltScreen())
 
 	if _, err := program.Run(); err != nil {

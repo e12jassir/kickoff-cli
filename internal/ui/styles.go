@@ -208,4 +208,20 @@ var (
 
 	LiveBadgeStyle = lipgloss.NewStyle().
 			Foreground(ColorCategory)
+
+	// League Top View Tabs (Resumen, Partidos, Posiciones, Goleadores)
+	LeagueTabActive = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(ColorHighlight).
+			Background(ColorBorder).
+			Padding(0, 1)
+
+	LeagueTabInactive = lipgloss.NewStyle().
+			Foreground(ColorMuted).
+			Padding(0, 1)
+
+	// Connecting stream animation style
+	ConnectingPulseStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#38BDF8")).
+			Bold(true)
 )

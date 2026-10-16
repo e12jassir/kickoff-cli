@@ -16,10 +16,61 @@ func (m Model) View() string {
 	if m.width < 60 || m.height < 15 {
 		return "Terminal window is too small (min 60x15). Please resize."
 	}
+	if m.state == StateStartup {
+		return renderStartup(m)
+	}
 	if m.state == StateMainMenu {
 		return renderMainMenu(m)
 	}
 	return renderBrowsing(m)
+}
+
+func renderStartup(m Model) string {
+	logo := AsciiLogoStyle.Render(AsciiLogo)
+	subtitle := SubtitleStyle.Render("Terminal Live Football • Initializing Engine")
+
+	// Bouncing ball progress bar: 30 chars wide
+	const barWidth = 30
+	ballPos := (m.startupProgress * (barWidth - 1)) / 100
+	if ballPos >= barWidth {
+		ballPos = barWidth - 1
+	}
+
+	var track strings.Builder
+	for i := 0; i < barWidth; i++ {
+		if i == ballPos {
+			if m.noEmoji {
+				track.WriteString("O")
+			} else {
+				track.WriteString("⚽")
+			}
+		} else {
+			track.WriteString("─")
+		}
+	}
+
+	progressText := fmt.Sprintf("[%s] %d%%", track.String(), m.startupProgress)
+	progressStyled := lipgloss.NewStyle().Foreground(ColorHighlight).Bold(true).Render(progressText)
+	hint := FooterHelpStyle.Render("Press any key to skip warmup...")
+
+	content := lipgloss.JoinVertical(lipgloss.Center,
+		logo,
+		subtitle,
+		"",
+		progressStyled,
+		"",
+		hint,
+	)
+
+	w := m.width
+	h := m.height
+	if w <= 0 {
+		w = 80
+	}
+	if h <= 0 {
+		h = 24
+	}
+	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, content)
 }
 
 func renderMainMenu(m Model) string {
@@ -136,55 +187,78 @@ func renderBrowsing(m Model) string {
 	}
 	header := AppTitleStyle.Render(headerText)
 
-	var body string
-	footer := FooterHelpStyle.Render("↑/k  ↓/j: navegar  •  enter: abrir partido  •  esc: ligas  •  r: recargar  •  q: salir")
-
-	switch m.state {
-	case StateLoading:
-		body = fmt.Sprintf("  %s %s", m.spinner.View(), m.loadingMsg)
-		footer = FooterHelpStyle.Render("esc: volver  •  q: salir")
-
-	case StateError:
-		body = StatusBarError.Render(fmt.Sprintf("  ✖ Error: %s", m.errorMsg))
-		footer = FooterHelpStyle.Render("r: recargar  •  esc: volver  •  q: salir")
-
-	case StateChannelSelect:
-		var selMatch model.Match
-		if len(m.matches) > 0 && m.matchCursor < len(m.matches) {
-			selMatch = m.matches[m.matchCursor]
-		}
-		modalContent := renderChannelModal(selMatch, m.channels, m.channelCursor, m.modalTab, m.livePulse, m.spinner.View(), m.noEmoji)
-		body = ModalBoxStyle.Render(modalContent)
-		footer = FooterHelpStyle.Render("←/→/tab: pestaña  •  ↑/↓: canal  •  enter: reproducir  •  esc: volver")
-
-	default: // StateBrowsing, StatePlaying
-		if len(m.matches) == 0 {
-			emptyPrefix := "⚽ "
-			if m.noEmoji {
-				emptyPrefix = ""
-			}
-			emptyMsg := fmt.Sprintf("%sNo hay partidos programados hoy para %s.", emptyPrefix, curr.Name)
-			body = MatchBoxStyle.Render(EmptyStateStyle.Render(emptyMsg))
+	// Top View Tabs: [1 Resumen] [2 Partidos] [3 Posiciones] [4 Goleadores]
+	tabLabels := []string{"1 Resumen", "2 Partidos", "3 Posiciones", "4 Goleadores"}
+	renderedTabs := make([]string, 4)
+	for i, lbl := range tabLabels {
+		if LeagueTab(i) == m.leagueTab {
+			renderedTabs[i] = LeagueTabActive.Render(fmt.Sprintf("[● %s]", lbl))
 		} else {
-			var lines []string
-			lines = append(lines, CategoryHeaderStyle.Render(fmt.Sprintf("PARTIDOS DE HOY (%d)", len(m.matches))))
-			lines = append(lines, "")
+			renderedTabs[i] = LeagueTabInactive.Render(fmt.Sprintf("○ %s", lbl))
+		}
+	}
+	tabsRow := lipgloss.JoinHorizontal(lipgloss.Center, renderedTabs[0], "   ", renderedTabs[1], "   ", renderedTabs[2], "   ", renderedTabs[3])
 
-			for i, match := range m.matches {
-				isSelected := i == m.matchCursor
-				itemLines := renderMatchItem(match, isSelected, m.livePulse)
-				lines = append(lines, itemLines...)
-				if i < len(m.matches)-1 {
-					lines = append(lines, "")
-				}
+	var body string
+	footer := FooterHelpStyle.Render("1-4/tab: cambiar vista  •  ↑/↓: navegar  •  enter: ver partido  •  esc: ligas  •  r: recargar  •  q: salir")
+
+	// Connecting stream pulse overlay check
+	if m.state == StatePlaying && m.connecting {
+		pulseWaves := []string{"📡 ∿", "📡 ∿ ∿", "📡 ∿ ∿ ∿", "📡 ∿ ∿ ∿ ∿"}
+		wave := pulseWaves[m.pulseStep%len(pulseWaves)]
+		feedName := m.streamFeed
+		if feedName == "" {
+			feedName = "Canal"
+		}
+		bitrateInfo := m.bitrate
+		if bitrateInfo == "" {
+			bitrateInfo = "HLS Stream"
+		}
+		pulseText := fmt.Sprintf("%s Conectando con %s... %s\nBitrate: %s", m.spinner.View(), feedName, wave, bitrateInfo)
+		connectingBox := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("#38BDF8")).
+			Padding(1, 3).
+			Width(62).
+			Align(lipgloss.Center).
+			Render(ConnectingPulseStyle.Render(pulseText))
+		body = connectingBox
+		footer = FooterHelpStyle.Render("Conectando stream de video...  •  esc: volver  •  q: salir")
+	} else {
+		switch m.state {
+		case StateLoading:
+			body = fmt.Sprintf("  %s %s", m.spinner.View(), m.loadingMsg)
+			footer = FooterHelpStyle.Render("esc: volver  •  q: salir")
+
+		case StateError:
+			body = StatusBarError.Render(fmt.Sprintf("  ✖ Error: %s", m.errorMsg))
+			footer = FooterHelpStyle.Render("r: recargar  •  esc: volver  •  q: salir")
+
+		case StateChannelSelect:
+			var selMatch model.Match
+			if len(m.matches) > 0 && m.matchCursor < len(m.matches) {
+				selMatch = m.matches[m.matchCursor]
 			}
+			modalContent := renderChannelModal(selMatch, m.channels, m.channelCursor, m.modalTab, m.livePulse, m.spinner.View(), m.noEmoji)
+			body = ModalBoxStyle.Render(modalContent)
+			footer = FooterHelpStyle.Render("←/→/tab: pestaña  •  ↑/↓: canal  •  enter: reproducir  •  esc: volver")
 
-			body = MatchBoxStyle.Render(strings.Join(lines, "\n"))
+		default: // StateBrowsing, StatePlaying
+			switch m.leagueTab {
+			case TabResumen:
+				body = renderTabResumen(m, curr)
+			case TabPosiciones:
+				body = renderTabPosiciones(m, curr)
+			case TabGoleadores:
+				body = renderTabGoleadores(m, curr)
+			default: // TabPartidos
+				body = renderTabPartidos(m, curr)
+			}
 		}
 	}
 
 	var elements []string
-	elements = append(elements, header, "")
+	elements = append(elements, header, tabsRow, "")
 	if m.statusMsg != "" {
 		elements = append(elements, StatusBarSuccess.Render(m.statusMsg), "")
 	}
@@ -203,6 +277,181 @@ func renderBrowsing(m Model) string {
 		h = 24
 	}
 	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, content)
+}
+
+func renderTabPartidos(m Model, curr model.League) string {
+	if len(m.matches) == 0 {
+		emptyPrefix := "⚽ "
+		if m.noEmoji {
+			emptyPrefix = ""
+		}
+		emptyMsg := fmt.Sprintf("%sNo hay partidos programados hoy para %s.", emptyPrefix, curr.Name)
+		return MatchBoxStyle.Render(EmptyStateStyle.Render(emptyMsg))
+	}
+
+	var lines []string
+	lines = append(lines, CategoryHeaderStyle.Render(fmt.Sprintf("PARTIDOS DE HOY (%d)", len(m.matches))))
+	lines = append(lines, "")
+
+	for i, match := range m.matches {
+		isSelected := i == m.matchCursor
+		itemLines := renderMatchItem(match, isSelected, m.livePulse)
+		lines = append(lines, itemLines...)
+		if i < len(m.matches)-1 {
+			lines = append(lines, "")
+		}
+	}
+
+	return MatchBoxStyle.Render(strings.Join(lines, "\n"))
+}
+
+func renderTabResumen(m Model, curr model.League) string {
+	var lines []string
+
+	// 1. League Leader Highlight from Standings if available
+	if m.standings != nil && len(m.standings.Entries) > 0 {
+		leader := m.standings.Entries[0]
+		icon := "🏆"
+		if m.noEmoji {
+			icon = "[1]"
+		}
+		leaderText := fmt.Sprintf("%s Líder de Liga: %s (%s pts • %s PJ • DG %s)", icon, leader.TeamName, leader.Points, leader.GamesPlayed, leader.PointDiff)
+		lines = append(lines, lipgloss.NewStyle().Foreground(ColorHighlight).Bold(true).Render(leaderText))
+		lines = append(lines, "")
+	}
+
+	// 2. Past Match Results (FT)
+	var pastMatches []model.Match
+	var upcomingMatches []model.Match
+	for _, mt := range m.matches {
+		if mt.Status.Completed || strings.ToLower(mt.Status.State) == "post" {
+			pastMatches = append(pastMatches, mt)
+		} else if strings.ToLower(mt.Status.State) == "pre" {
+			upcomingMatches = append(upcomingMatches, mt)
+		}
+	}
+
+	lines = append(lines, CategoryHeaderStyle.Render(fmt.Sprintf("RESULTADOS RECIENTES (%d)", len(pastMatches))))
+	if len(pastMatches) == 0 {
+		lines = append(lines, EmptyStateStyle.Render("No hay partidos finalizados hoy."))
+	} else {
+		for _, pm := range pastMatches {
+			score := fmt.Sprintf("%s %s - %s %s", pm.HomeTeam.DisplayName, pm.HomeTeam.Score, pm.AwayTeam.Score, pm.AwayTeam.DisplayName)
+			lines = append(lines, fmt.Sprintf("  • %s  (%s)", ScoreboardTeams.Render(score), StatusPostStyle.Render("FINAL")))
+		}
+	}
+	lines = append(lines, "")
+
+	// 3. Next Upcoming Fixtures
+	lines = append(lines, CategoryHeaderStyle.Render(fmt.Sprintf("PRÓXIMOS ENCUENTROS (%d)", len(upcomingMatches))))
+	if len(upcomingMatches) == 0 {
+		lines = append(lines, EmptyStateStyle.Render("No hay partidos pendientes hoy."))
+	} else {
+		for _, um := range upcomingMatches {
+			fixture := fmt.Sprintf("%s vs %s", um.HomeTeam.DisplayName, um.AwayTeam.DisplayName)
+			lines = append(lines, fmt.Sprintf("  • %s  %s  (%s)", MatchTimeStyle.Render(um.TimeStr), TeamNameStyle.Render(fixture), VenueStyle.Render(um.Venue)))
+		}
+	}
+
+	return MatchBoxStyle.Render(strings.Join(lines, "\n"))
+}
+
+func renderTabPosiciones(m Model, curr model.League) string {
+	if m.standings == nil {
+		if m.standingsErr != nil {
+			return MatchBoxStyle.Render(StatusBarError.Render("No se pudieron cargar las posiciones de la liga."))
+		}
+		return MatchBoxStyle.Render(fmt.Sprintf("  %s Cargando tabla de posiciones...", m.spinner.View()))
+	}
+
+	if len(m.standings.Entries) == 0 {
+		return MatchBoxStyle.Render(EmptyStateStyle.Render("Tabla de posiciones no disponible para esta competición."))
+	}
+
+	var lines []string
+	lines = append(lines, CategoryHeaderStyle.Render("TABLA DE POSICIONES · "+curr.Name))
+	lines = append(lines, "")
+
+	// Table header: #  Equipo               PJ  G   E   P   DG  PTS
+	hdr := fmt.Sprintf(" %-2s  %-22s  %3s %3s %3s %3s %4s  %3s", "#", "Equipo", "PJ", "G", "E", "P", "DG", "PTS")
+	lines = append(lines, lipgloss.NewStyle().Foreground(ColorCategory).Bold(true).Render(hdr))
+	lines = append(lines, lipgloss.NewStyle().Foreground(ColorBorder).Render("────────────────────────────────────────────────────────────"))
+
+	for _, e := range m.standings.Entries {
+		rankStr := fmt.Sprintf("%d", e.Rank)
+		teamCol := truncateModalText(e.TeamName, 22)
+		row := fmt.Sprintf(" %-2s  %-22s  %3s %3s %3s %3s %4s  %3s", rankStr, teamCol, e.GamesPlayed, e.Wins, e.Ties, e.Losses, e.PointDiff, e.Points)
+		if e.Rank <= 4 {
+			lines = append(lines, lipgloss.NewStyle().Foreground(ColorHighlight).Bold(true).Render(row))
+		} else {
+			lines = append(lines, lipgloss.NewStyle().Foreground(ColorTextMuted).Render(row))
+		}
+	}
+
+	return MatchBoxStyle.Render(strings.Join(lines, "\n"))
+}
+
+func renderTabGoleadores(m Model, curr model.League) string {
+	if m.statistics == nil {
+		if m.statisticsErr != nil {
+			return MatchBoxStyle.Render(StatusBarError.Render("No se pudieron cargar las estadísticas de goleadores."))
+		}
+		return MatchBoxStyle.Render(fmt.Sprintf("  %s Cargando máximos goleadores y asistentes...", m.spinner.View()))
+	}
+
+	var lines []string
+	lines = append(lines, CategoryHeaderStyle.Render("MÁXIMOS GOLEADORES"))
+	lines = append(lines, "")
+
+	if len(m.statistics.Scorers) == 0 {
+		lines = append(lines, EmptyStateStyle.Render("Estadísticas de goles no disponibles aún."))
+	} else {
+		hdr := fmt.Sprintf(" %-2s  %-24s  %-18s  %4s", "#", "Jugador", "Equipo", "Goles")
+		lines = append(lines, lipgloss.NewStyle().Foreground(ColorCategory).Bold(true).Render(hdr))
+		lines = append(lines, lipgloss.NewStyle().Foreground(ColorBorder).Render("────────────────────────────────────────────────────────────"))
+
+		limit := 10
+		if len(m.statistics.Scorers) < limit {
+			limit = len(m.statistics.Scorers)
+		}
+		for i := 0; i < limit; i++ {
+			s := m.statistics.Scorers[i]
+			row := fmt.Sprintf(" %-2d  %-24s  %-18s  %4s", s.Rank, truncateModalText(s.PlayerName, 24), truncateModalText(s.TeamName, 18), s.Value)
+			if i < 3 {
+				lines = append(lines, lipgloss.NewStyle().Foreground(ColorHighlight).Bold(true).Render(row))
+			} else {
+				lines = append(lines, lipgloss.NewStyle().Foreground(ColorTextMuted).Render(row))
+			}
+		}
+	}
+
+	lines = append(lines, "")
+	lines = append(lines, CategoryHeaderStyle.Render("MÁXIMOS ASISTENTES"))
+	lines = append(lines, "")
+
+	if len(m.statistics.Assists) == 0 {
+		lines = append(lines, EmptyStateStyle.Render("Estadísticas de asistencias no disponibles aún."))
+	} else {
+		hdr := fmt.Sprintf(" %-2s  %-24s  %-18s  %4s", "#", "Jugador", "Equipo", "Asist.")
+		lines = append(lines, lipgloss.NewStyle().Foreground(ColorCategory).Bold(true).Render(hdr))
+		lines = append(lines, lipgloss.NewStyle().Foreground(ColorBorder).Render("────────────────────────────────────────────────────────────"))
+
+		limit := 10
+		if len(m.statistics.Assists) < limit {
+			limit = len(m.statistics.Assists)
+		}
+		for i := 0; i < limit; i++ {
+			a := m.statistics.Assists[i]
+			row := fmt.Sprintf(" %-2d  %-24s  %-18s  %4s", a.Rank, truncateModalText(a.PlayerName, 24), truncateModalText(a.TeamName, 18), a.Value)
+			if i < 3 {
+				lines = append(lines, lipgloss.NewStyle().Foreground(ColorHighlight).Bold(true).Render(row))
+			} else {
+				lines = append(lines, lipgloss.NewStyle().Foreground(ColorTextMuted).Render(row))
+			}
+		}
+	}
+
+	return MatchBoxStyle.Render(strings.Join(lines, "\n"))
 }
 
 func renderMatchItem(match model.Match, isSelected bool, livePulse bool) []string {
@@ -513,10 +762,75 @@ func renderChannelModal(match model.Match, channels []model.Channel, selectedIdx
 				}
 				modal.WriteString(fmt.Sprintf("%s    %s\n", colLeft.Render(truncateModalText(hText, 28)), colRight.Render(truncateModalText(aText, 28))))
 			}
+
+			// Coach / DT display
+			homeCoach := match.HomeTeamCoach()
+			awayCoach := match.AwayTeamCoach()
+			if homeCoach == "" && match.Lineups != nil {
+				homeCoach = match.Lineups.HomeCoach
+				if homeCoach == "" {
+					homeCoach = match.Lineups.Home.Coach
+				}
+			}
+			if awayCoach == "" && match.Lineups != nil {
+				awayCoach = match.Lineups.AwayCoach
+				if awayCoach == "" {
+					awayCoach = match.Lineups.Away.Coach
+				}
+			}
+			if homeCoach != "" || awayCoach != "" {
+				modal.WriteString("\n")
+				hCoachText := ""
+				if homeCoach != "" {
+					hCoachText = "👔 DT: " + homeCoach
+					if noEmoji {
+						hCoachText = "DT: " + homeCoach
+					}
+				}
+				aCoachText := ""
+				if awayCoach != "" {
+					aCoachText = "👔 DT: " + awayCoach
+					if noEmoji {
+						aCoachText = "DT: " + awayCoach
+					}
+				}
+				coachStyle := lipgloss.NewStyle().Width(28).Align(lipgloss.Left).Foreground(ColorCategory).Italic(true)
+				modal.WriteString(fmt.Sprintf("%s    %s\n", coachStyle.Render(truncateModalText(hCoachText, 28)), coachStyle.Render(truncateModalText(aCoachText, 28))))
+			}
 		}
 	}
 
 	return modal.String()
+}
+
+// renderSmoothBar creates a fractional bar fill using 1/8th blocks (▏▎▍▌▋▊▉█).
+func renderSmoothBar(fraction float64, totalSlots int) string {
+	if fraction <= 0 {
+		return strings.Repeat(" ", totalSlots)
+	}
+	if fraction >= 1 {
+		return strings.Repeat("█", totalSlots)
+	}
+	totalUnits := fraction * float64(totalSlots*8)
+	fullBlocks := int(totalUnits) / 8
+	rem := int(totalUnits) % 8
+
+	var b strings.Builder
+	if fullBlocks > totalSlots {
+		fullBlocks = totalSlots
+	}
+	b.WriteString(strings.Repeat("█", fullBlocks))
+
+	if fullBlocks < totalSlots && rem > 0 {
+		fractions := []string{"", "▏", "▎", "▍", "▌", "▋", "▊", "▉"}
+		b.WriteString(fractions[rem])
+		fullBlocks++
+	}
+	remaining := totalSlots - fullBlocks
+	if remaining > 0 {
+		b.WriteString(strings.Repeat(" ", remaining))
+	}
+	return b.String()
 }
 
 func renderPossessionBar(homeStr, awayStr string, totalWidth int) string {
@@ -539,22 +853,40 @@ func renderPossessionBar(homeStr, awayStr string, totalWidth int) string {
 	}
 
 	const barSlots = 20
-	hSlots := int(math.Round((hVal / total) * float64(barSlots)))
-	if hSlots < 1 && hVal > 0 {
-		hSlots = 1
-	} else if hSlots > barSlots-1 && aVal > 0 {
-		hSlots = barSlots - 1
+	// Calculate smooth fractional fill for home and away
+	hFraction := hVal / total
+	if hFraction < 0.05 && hVal > 0 {
+		hFraction = 0.05
+	} else if hFraction > 0.95 && aVal > 0 {
+		hFraction = 0.95
 	}
-	aSlots := barSlots - hSlots
+	
+	totalUnits := int(math.Round(hFraction * float64(barSlots*8)))
+	fullBlocks := totalUnits / 8
+	rem := totalUnits % 8
+	if fullBlocks > barSlots {
+		fullBlocks = barSlots
+	}
 
-	hBlocks := strings.Repeat("█", hSlots)
+	hBlocks := strings.Repeat("█", fullBlocks)
+	partial := ""
+	usedSlots := fullBlocks
+	fractions := []string{"", "▏", "▎", "▍", "▌", "▋", "▊", "▉"}
+	if usedSlots < barSlots && rem > 0 {
+		partial = fractions[rem]
+		usedSlots++
+	}
+	aSlots := barSlots - usedSlots
+	if aSlots < 0 {
+		aSlots = 0
+	}
 	aBlocks := strings.Repeat("░", aSlots)
 
 	leftNum := lipgloss.NewStyle().Width(5).Align(lipgloss.Right).Foreground(ColorHighlight).Bold(true).Render(homeStr)
 	rightNum := lipgloss.NewStyle().Width(5).Align(lipgloss.Left).Foreground(ColorHighlight).Bold(true).Render(awayStr)
 	bracketOpen := lipgloss.NewStyle().Foreground(ColorBorder).Render("[")
 	bracketClose := lipgloss.NewStyle().Foreground(ColorBorder).Render("]")
-	hStyled := lipgloss.NewStyle().Foreground(ColorHighlight).Render(hBlocks)
+	hStyled := lipgloss.NewStyle().Foreground(ColorHighlight).Render(hBlocks + partial)
 	aStyled := lipgloss.NewStyle().Foreground(ColorMuted).Render(aBlocks)
 
 	barRow := fmt.Sprintf("%s  %s%s%s%s  %s", leftNum, bracketOpen, hStyled, aStyled, bracketClose, rightNum)

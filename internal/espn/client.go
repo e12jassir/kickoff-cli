@@ -99,6 +99,14 @@ type rawSummaryResponse struct {
 type rawGameInfo struct {
 	Attendance int           `json:"attendance"`
 	Officials  []rawOfficial `json:"officials"`
+	Coaches    []rawCoach    `json:"coaches"`
+}
+
+type rawCoach struct {
+	FirstName   string      `json:"firstName"`
+	LastName    string      `json:"lastName"`
+	DisplayName string      `json:"displayName"`
+	Athlete     *rawAthlete `json:"athlete"`
 }
 
 type rawOfficial struct {
@@ -109,6 +117,7 @@ type rawRoster struct {
 	Team      *rawTeam        `json:"team"`
 	Formation string          `json:"formation"`
 	Roster    []rawRosterItem `json:"roster"`
+	Coaches   []rawCoach      `json:"coaches"`
 }
 
 type rawRosterItem struct {
@@ -116,10 +125,13 @@ type rawRosterItem struct {
 	Jersey   string      `json:"jersey"`
 	Position *rawPos     `json:"position"`
 	Athlete  *rawAthlete `json:"athlete"`
+	Role     string      `json:"role"`
 }
 
 type rawPos struct {
 	Abbreviation string `json:"abbreviation"`
+	Name         string `json:"name"`
+	DisplayName  string `json:"displayName"`
 }
 
 type rawBoxscore struct {
@@ -143,6 +155,18 @@ type cachedSummary struct {
 	Lineups    *model.MatchLineups `json:"lineups"`
 	Referee    string              `json:"referee"`
 	Attendance int                 `json:"attendance"`
+	HomeCoach  string              `json:"home_coach,omitempty"`
+	AwayCoach  string              `json:"away_coach,omitempty"`
+}
+
+type cachedStandings struct {
+	CachedAt  time.Time              `json:"cached_at"`
+	Standings *model.LeagueStandings `json:"standings"`
+}
+
+type cachedStatistics struct {
+	CachedAt   time.Time               `json:"cached_at"`
+	Statistics *model.LeagueStatistics `json:"statistics"`
 }
 
 type rawVenue struct {
@@ -337,14 +361,30 @@ func LeagueCode(leagueKey string) string {
 		return "fra.1"
 	case "champions":
 		return "uefa.champions"
+	case "europa":
+		return "uefa.europa"
+	case "conference":
+		return "uefa.europa.conf"
 	case "libertadores":
 		return "conmebol.libertadores"
+	case "sudamericana":
+		return "conmebol.sudamericana"
+	case "eliminatorias":
+		return "fifa.worldq.conmebol"
+	case "copadelrey":
+		return "esp.copa_del_rey"
+	case "facup":
+		return "eng.fa"
 	case "argentina":
 		return "arg.1"
 	case "colombia":
 		return "col.1"
 	case "brasil":
 		return "bra.1"
+	case "ligamx":
+		return "mex.1"
+	case "mls":
+		return "usa.1"
 	default:
 		for _, l := range model.DefaultLeagues {
 			if strings.EqualFold(l.Key, leagueKey) || strings.EqualFold(l.Code, leagueKey) {
@@ -479,6 +519,8 @@ func (c *Client) fallbackSummary(eventID string, origErr error) (*model.MatchDet
 			Lineups:    cached.Lineups,
 			Referee:    cached.Referee,
 			Attendance: cached.Attendance,
+			HomeCoach:  cached.HomeCoach,
+			AwayCoach:  cached.AwayCoach,
 			IsOffline:  true,
 			CachedAt:   cachedAt,
 		}, nil
@@ -486,8 +528,8 @@ func (c *Client) fallbackSummary(eventID string, origErr error) (*model.MatchDet
 	return nil, origErr
 }
 
-func (c *Client) setCachedSummary(eventID string, stats *model.MatchStats, lineups *model.MatchLineups, referee string, attendance int) {
-	if stats == nil && lineups == nil && referee == "" && attendance == 0 {
+func (c *Client) setCachedSummary(eventID string, stats *model.MatchStats, lineups *model.MatchLineups, referee string, attendance int, homeCoach, awayCoach string) {
+	if stats == nil && lineups == nil && referee == "" && attendance == 0 && homeCoach == "" && awayCoach == "" {
 		return
 	}
 	if err := os.MkdirAll(c.cacheDir, 0o755); err != nil {
@@ -500,6 +542,8 @@ func (c *Client) setCachedSummary(eventID string, stats *model.MatchStats, lineu
 		Lineups:    lineups,
 		Referee:    referee,
 		Attendance: attendance,
+		HomeCoach:  homeCoach,
+		AwayCoach:  awayCoach,
 	}
 	data, err := json.Marshal(cached)
 	if err != nil {
@@ -1002,18 +1046,61 @@ func (c *Client) FetchMatchDetails(ctx context.Context, leagueKey, eventID strin
 				}
 			}
 
+			coachName := ""
+			if len(r.Coaches) > 0 {
+				if r.Coaches[0].DisplayName != "" {
+					coachName = r.Coaches[0].DisplayName
+				} else if r.Coaches[0].Athlete != nil && r.Coaches[0].Athlete.DisplayName != "" {
+					coachName = r.Coaches[0].Athlete.DisplayName
+				} else if r.Coaches[0].FirstName != "" || r.Coaches[0].LastName != "" {
+					coachName = strings.TrimSpace(r.Coaches[0].FirstName + " " + r.Coaches[0].LastName)
+				}
+			}
+			if coachName == "" {
+				for _, item := range r.Roster {
+					isCoach := strings.EqualFold(item.Role, "coach") || strings.EqualFold(item.Role, "manager")
+					if !isCoach && item.Position != nil {
+						posStr := strings.ToLower(item.Position.Abbreviation + " " + item.Position.Name + " " + item.Position.DisplayName)
+						if strings.Contains(posStr, "coach") || strings.Contains(posStr, "manager") || strings.Contains(posStr, "dt") {
+							isCoach = true
+						}
+					}
+					if isCoach && item.Athlete != nil {
+						coachName = item.Athlete.DisplayName
+						if coachName == "" {
+							coachName = item.Athlete.ShortName
+						}
+						break
+					}
+				}
+			}
+
 			return model.TeamLineup{
 				Formation: r.Formation,
 				Starters:  starters,
 				Bench:     bench,
+				Coach:     coachName,
 			}
 		}
 
+		homeLineup := parseLineup(homeRoster)
+		awayLineup := parseLineup(awayRoster)
+
 		lineups = &model.MatchLineups{
-			Home: parseLineup(homeRoster),
-			Away: parseLineup(awayRoster),
+			Home:      homeLineup,
+			Away:      awayLineup,
+			HomeCoach: homeLineup.Coach,
+			AwayCoach: awayLineup.Coach,
 		}
 	}
+
+	homeCoach := ""
+	awayCoach := ""
+	if lineups != nil {
+		homeCoach = lineups.HomeCoach
+		awayCoach = lineups.AwayCoach
+	}
+
 	referee := ""
 	attendance := 0
 	if raw.GameInfo != nil {
@@ -1021,9 +1108,15 @@ func (c *Client) FetchMatchDetails(ctx context.Context, leagueKey, eventID strin
 		if len(raw.GameInfo.Officials) > 0 {
 			referee = raw.GameInfo.Officials[0].DisplayName
 		}
+		if homeCoach == "" && len(raw.GameInfo.Coaches) > 0 {
+			homeCoach = raw.GameInfo.Coaches[0].DisplayName
+		}
+		if awayCoach == "" && len(raw.GameInfo.Coaches) > 1 {
+			awayCoach = raw.GameInfo.Coaches[1].DisplayName
+		}
 	}
 
-	c.setCachedSummary(eventID, stats, lineups, referee, attendance)
+	c.setCachedSummary(eventID, stats, lineups, referee, attendance, homeCoach, awayCoach)
 	now := c.now()
 	if c.loc != nil {
 		now = now.In(c.loc)
@@ -1033,6 +1126,8 @@ func (c *Client) FetchMatchDetails(ctx context.Context, leagueKey, eventID strin
 		Lineups:    lineups,
 		Referee:    referee,
 		Attendance: attendance,
+		HomeCoach:  homeCoach,
+		AwayCoach:  awayCoach,
 		IsOffline:  false,
 		CachedAt:   now,
 	}, nil
@@ -1044,4 +1139,327 @@ func (c *Client) FetchMatchStats(ctx context.Context, leagueKey, eventID string)
 		return nil, err
 	}
 	return details.Stats, nil
+}
+
+// Standings JSON parsing structures
+type rawStandingsResponse struct {
+	Name     string               `json:"name"`
+	Children []rawStandingsChild  `json:"children"`
+	Standings *rawStandingsWrapper `json:"standings"`
+}
+
+type rawStandingsChild struct {
+	Name      string               `json:"name"`
+	Standings *rawStandingsWrapper `json:"standings"`
+}
+
+type rawStandingsWrapper struct {
+	Entries []rawStandingsEntry `json:"entries"`
+}
+
+type rawStandingsEntry struct {
+	Team  *rawTeam              `json:"team"`
+	Stats []rawStatisticItem    `json:"stats"`
+}
+
+func (c *Client) standingsCachePath(leagueKey string) string {
+	cleanKey := strings.ReplaceAll(leagueKey, "/", "_")
+	return filepath.Join(c.cacheDir, fmt.Sprintf("standings_%s.json", cleanKey))
+}
+
+func (c *Client) readDiskStandings(leagueKey string) (*cachedStandings, bool) {
+	data, err := os.ReadFile(c.standingsCachePath(leagueKey))
+	if err != nil {
+		return nil, false
+	}
+	var cached cachedStandings
+	if err := json.Unmarshal(data, &cached); err != nil {
+		return nil, false
+	}
+	return &cached, true
+}
+
+func (c *Client) setCachedStandings(leagueKey string, standings *model.LeagueStandings) {
+	if standings == nil {
+		return
+	}
+	_ = os.MkdirAll(c.cacheDir, 0o755)
+	cached := cachedStandings{
+		CachedAt:  c.now(),
+		Standings: standings,
+	}
+	data, err := json.Marshal(cached)
+	if err == nil {
+		_ = os.WriteFile(c.standingsCachePath(leagueKey), data, 0o644)
+	}
+}
+
+// FetchStandings retrieves the league standings table from ESPN v2 API.
+func (c *Client) FetchStandings(ctx context.Context, leagueKey string) (*model.LeagueStandings, error) {
+	if !model.IsForceRefresh(ctx) {
+		if cached, ok := c.readDiskStandings(leagueKey); ok {
+			if c.now().Sub(cached.CachedAt) <= c.cacheTTL {
+				return cached.Standings, nil
+			}
+		}
+	}
+
+	leagueCode := LeagueCode(leagueKey)
+	endpoint := fmt.Sprintf("%s/%s/standings", c.baseURL, leagueCode)
+	if strings.Contains(c.baseURL, "apis/site/v2/sports/soccer") {
+		// Replace site/v2 with v2 for official ESPN API structure
+		endpoint = strings.Replace(endpoint, "apis/site/v2/sports/soccer", "apis/v2/sports/soccer", 1)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return c.fallbackStandings(leagueKey, fmt.Errorf("failed to create standings request: %w", err))
+	}
+	req.Header.Set("User-Agent", userAgent)
+
+	resp, err := c.doWithRetry(req)
+	if err != nil {
+		return c.fallbackStandings(leagueKey, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.fallbackStandings(leagueKey, fmt.Errorf("upstream espn standings returned status code %d", resp.StatusCode))
+	}
+
+	var raw rawStandingsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return c.fallbackStandings(leagueKey, fmt.Errorf("%w: %v", model.ErrCorruptedPayload, err))
+	}
+
+	var rawEntries []rawStandingsEntry
+	if len(raw.Children) > 0 && raw.Children[0].Standings != nil {
+		rawEntries = raw.Children[0].Standings.Entries
+	} else if raw.Standings != nil {
+		rawEntries = raw.Standings.Entries
+	}
+
+	var entries []model.StandingsEntry
+	for i, re := range rawEntries {
+		teamName := "Equipo"
+		if re.Team != nil {
+			if re.Team.DisplayName != "" {
+				teamName = re.Team.DisplayName
+			} else if re.Team.Name != "" {
+				teamName = re.Team.Name
+			}
+		}
+
+		getStat := func(names ...string) string {
+			for _, name := range names {
+				for _, s := range re.Stats {
+					if strings.EqualFold(s.Name, name) {
+						return s.DisplayValue
+					}
+				}
+			}
+			return "-"
+		}
+
+		entries = append(entries, model.StandingsEntry{
+			Rank:        i + 1,
+			TeamName:    teamName,
+			GamesPlayed: getStat("gamesPlayed"),
+			Wins:        getStat("wins"),
+			Ties:        getStat("ties"),
+			Losses:      getStat("losses"),
+			PointDiff:   getStat("pointDifferential"),
+			Points:      getStat("points"),
+		})
+	}
+
+	now := c.now()
+	if c.loc != nil {
+		now = now.In(c.loc)
+	}
+
+	res := &model.LeagueStandings{
+		LeagueKey: leagueKey,
+		Name:      raw.Name,
+		Entries:   entries,
+		IsOffline: false,
+		CachedAt:  now,
+	}
+
+	c.setCachedStandings(leagueKey, res)
+	return res, nil
+}
+
+func (c *Client) fallbackStandings(leagueKey string, origErr error) (*model.LeagueStandings, error) {
+	if cached, ok := c.readDiskStandings(leagueKey); ok && cached.Standings != nil {
+		st := *cached.Standings
+		st.IsOffline = true
+		if c.loc != nil {
+			st.CachedAt = cached.CachedAt.In(c.loc)
+		} else {
+			st.CachedAt = cached.CachedAt
+		}
+		return &st, nil
+	}
+	return nil, origErr
+}
+
+// Statistics JSON parsing structures
+type rawStatisticsResponse struct {
+	Stats []rawStatsCategory `json:"stats"`
+}
+
+type rawStatsCategory struct {
+	Name        string            `json:"name"`
+	DisplayName string            `json:"displayName"`
+	Leaders     []rawStatsLeader  `json:"leaders"`
+}
+
+type rawStatsLeader struct {
+	DisplayValue string             `json:"displayValue"`
+	Value        float64            `json:"value"`
+	Athlete      *rawAthlete        `json:"athlete"`
+	Team         *rawTeam           `json:"team"`
+	Statistics   []rawStatisticItem `json:"statistics"`
+}
+
+func (c *Client) statisticsCachePath(leagueKey string) string {
+	cleanKey := strings.ReplaceAll(leagueKey, "/", "_")
+	return filepath.Join(c.cacheDir, fmt.Sprintf("statistics_%s.json", cleanKey))
+}
+
+func (c *Client) readDiskStatistics(leagueKey string) (*cachedStatistics, bool) {
+	data, err := os.ReadFile(c.statisticsCachePath(leagueKey))
+	if err != nil {
+		return nil, false
+	}
+	var cached cachedStatistics
+	if err := json.Unmarshal(data, &cached); err != nil {
+		return nil, false
+	}
+	return &cached, true
+}
+
+func (c *Client) setCachedStatistics(leagueKey string, statistics *model.LeagueStatistics) {
+	if statistics == nil {
+		return
+	}
+	_ = os.MkdirAll(c.cacheDir, 0o755)
+	cached := cachedStatistics{
+		CachedAt:   c.now(),
+		Statistics: statistics,
+	}
+	data, err := json.Marshal(cached)
+	if err == nil {
+		_ = os.WriteFile(c.statisticsCachePath(leagueKey), data, 0o644)
+	}
+}
+
+// FetchStatistics retrieves top scorers and assists from ESPN site statistics API.
+func (c *Client) FetchStatistics(ctx context.Context, leagueKey string) (*model.LeagueStatistics, error) {
+	if !model.IsForceRefresh(ctx) {
+		if cached, ok := c.readDiskStatistics(leagueKey); ok {
+			if c.now().Sub(cached.CachedAt) <= c.cacheTTL {
+				return cached.Statistics, nil
+			}
+		}
+	}
+
+	leagueCode := LeagueCode(leagueKey)
+	endpoint := fmt.Sprintf("%s/%s/statistics", c.baseURL, leagueCode)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return c.fallbackStatistics(leagueKey, fmt.Errorf("failed to create statistics request: %w", err))
+	}
+	req.Header.Set("User-Agent", userAgent)
+
+	resp, err := c.doWithRetry(req)
+	if err != nil {
+		return c.fallbackStatistics(leagueKey, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.fallbackStatistics(leagueKey, fmt.Errorf("upstream espn statistics returned status code %d", resp.StatusCode))
+	}
+
+	var raw rawStatisticsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return c.fallbackStatistics(leagueKey, fmt.Errorf("%w: %v", model.ErrCorruptedPayload, err))
+	}
+
+	parseLeaders := func(leaders []rawStatsLeader) []model.ScorerEntry {
+		var res []model.ScorerEntry
+		for i, l := range leaders {
+			pName := "Jugador"
+			if l.Athlete != nil && l.Athlete.DisplayName != "" {
+				pName = l.Athlete.DisplayName
+			}
+			tName := ""
+			if l.Team != nil && l.Team.DisplayName != "" {
+				tName = l.Team.DisplayName
+			}
+
+			valStr := l.DisplayValue
+			for _, st := range l.Statistics {
+				if strings.EqualFold(st.Name, "totalGoals") || strings.EqualFold(st.Name, "goalAssists") {
+					valStr = st.DisplayValue
+					break
+				}
+			}
+			if valStr == "" {
+				valStr = fmt.Sprintf("%.0f", l.Value)
+			}
+
+			res = append(res, model.ScorerEntry{
+				Rank:         i + 1,
+				PlayerName:   pName,
+				TeamName:     tName,
+				Value:        valStr,
+				DisplayValue: l.DisplayValue,
+			})
+		}
+		return res
+	}
+
+	var scorers, assists []model.ScorerEntry
+	for _, cat := range raw.Stats {
+		catName := strings.ToLower(cat.Name)
+		if strings.Contains(catName, "goal") || strings.Contains(catName, "scorer") {
+			scorers = parseLeaders(cat.Leaders)
+		} else if strings.Contains(catName, "assist") {
+			assists = parseLeaders(cat.Leaders)
+		}
+	}
+
+	now := c.now()
+	if c.loc != nil {
+		now = now.In(c.loc)
+	}
+
+	res := &model.LeagueStatistics{
+		LeagueKey: leagueKey,
+		Scorers:   scorers,
+		Assists:   assists,
+		IsOffline: false,
+		CachedAt:  now,
+	}
+
+	c.setCachedStatistics(leagueKey, res)
+	return res, nil
+}
+
+func (c *Client) fallbackStatistics(leagueKey string, origErr error) (*model.LeagueStatistics, error) {
+	if cached, ok := c.readDiskStatistics(leagueKey); ok && cached.Statistics != nil {
+		st := *cached.Statistics
+		st.IsOffline = true
+		if c.loc != nil {
+			st.CachedAt = cached.CachedAt.In(c.loc)
+		} else {
+			st.CachedAt = cached.CachedAt
+		}
+		return &st, nil
+	}
+	return nil, origErr
 }

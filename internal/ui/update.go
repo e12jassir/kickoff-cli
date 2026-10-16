@@ -63,11 +63,39 @@ type playbackFinishedMsg struct {
 
 type pulseTickMsg time.Time
 
+type startupTickMsg time.Time
+
+type connectingPulseTickMsg time.Time
+
 type autoSyncTickMsg time.Time
 
+type standingsLoadedMsg struct {
+	leagueKey string
+	standings *model.LeagueStandings
+	err       error
+}
+
+type statisticsLoadedMsg struct {
+	leagueKey  string
+	statistics *model.LeagueStatistics
+	err        error
+}
+
 func pulseTickCmd() tea.Cmd {
-	return tea.Tick(600*time.Millisecond, func(t time.Time) tea.Msg {
+	return tea.Tick(800*time.Millisecond, func(t time.Time) tea.Msg {
 		return pulseTickMsg(t)
+	})
+}
+
+func startupTickCmd() tea.Cmd {
+	return tea.Tick(30*time.Millisecond, func(t time.Time) tea.Msg {
+		return startupTickMsg(t)
+	})
+}
+
+func connectingPulseTickCmd() tea.Cmd {
+	return tea.Tick(120*time.Millisecond, func(t time.Time) tea.Msg {
+		return connectingPulseTickMsg(t)
 	})
 }
 
@@ -168,6 +196,28 @@ func forceFetchMatchStatsCmd(client model.Client, leagueKey, eventID string) tea
 	}
 }
 
+func fetchStandingsCmd(client model.Client, leagueKey string) tea.Cmd {
+	return func() tea.Msg {
+		st, err := client.FetchStandings(context.Background(), leagueKey)
+		return standingsLoadedMsg{
+			leagueKey: leagueKey,
+			standings: st,
+			err:       err,
+		}
+	}
+}
+
+func fetchStatisticsCmd(client model.Client, leagueKey string) tea.Cmd {
+	return func() tea.Msg {
+		stat, err := client.FetchStatistics(context.Background(), leagueKey)
+		return statisticsLoadedMsg{
+			leagueKey:  leagueKey,
+			statistics: stat,
+			err:        err,
+		}
+	}
+}
+
 func waitForPlaybackCmd(player model.Controller, playbackID int64) tea.Cmd {
 	return func() tea.Msg {
 		if player != nil {
@@ -200,9 +250,50 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.spinner, cmd = m.spinner.Update(msg)
 		return m, cmd
 
+	case startupTickMsg:
+		if m.state == StateStartup {
+			m.startupProgress += 10
+			if m.startupProgress >= 100 {
+				m.state = StateMainMenu
+				return m, nil
+			}
+			return m, startupTickCmd()
+		}
+		return m, nil
+
+	case connectingPulseTickMsg:
+		if m.connecting && m.state == StatePlaying {
+			m.pulseStep = (m.pulseStep + 1) % 4
+			return m, connectingPulseTickCmd()
+		}
+		return m, nil
+
 	case pulseTickMsg:
 		m.livePulse = !m.livePulse
+		m.pulseStep = (m.pulseStep + 1) % 4
 		return m, pulseTickCmd()
+
+	case standingsLoadedMsg:
+		curr := m.CurrentLeague()
+		if msg.leagueKey == curr.Key {
+			m.standings = msg.standings
+			m.standingsErr = msg.err
+			if m.leagueTab == TabPosiciones && m.state == StateLoading {
+				m.state = StateBrowsing
+			}
+		}
+		return m, nil
+
+	case statisticsLoadedMsg:
+		curr := m.CurrentLeague()
+		if msg.leagueKey == curr.Key {
+			m.statistics = msg.statistics
+			m.statisticsErr = msg.err
+			if m.leagueTab == TabGoleadores && m.state == StateLoading {
+				m.state = StateBrowsing
+			}
+		}
+		return m, nil
 
 	case autoSyncTickMsg:
 		cmds := []tea.Cmd{autoSyncTickCmd(m.nextSyncInterval())}
@@ -305,6 +396,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case playbackStartedMsg:
 		if msg.playbackID == m.playbackID {
+			m.connecting = false
 			m.statusMsg = "✓ Reproduciendo: " + msg.channel.Name
 			m.errorMsg = ""
 			return m, waitForPlaybackCmd(m.player, msg.playbackID)
@@ -313,11 +405,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case playbackFinishedMsg:
 		if msg.playbackID == m.playbackID {
+			m.connecting = false
 			m.statusMsg = ""
 		}
 		return m, nil
 
 	case playbackErrMsg:
+		m.connecting = false
 		m.errorMsg = "Error de reproducción: " + msg.err.Error()
 		m.statusMsg = ""
 		return m, nil
@@ -346,6 +440,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		switch m.state {
+		case StateStartup:
+			// Any key dismisses startup animation directly to MainMenu
+			m.state = StateMainMenu
+			return m, nil
+
 		case StateMainMenu:
 			switch key {
 			case "u":
@@ -372,31 +471,77 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "enter":
 				if len(m.leagues) > 0 {
 					m.activeTab = m.leagueCursor
+					m.leagueTab = TabPartidos
 					m.state = StateLoading
 					m.matches = nil
 					m.matchCursor = 0
+					m.standings = nil
+					m.statistics = nil
 					m.channels = nil
 					m.channelCursor = 0
 					m.modalTab = 0
 					m.errorMsg = ""
 					league := m.CurrentLeague()
 					m.loadingMsg = "Consultando partidos de hoy (" + league.Name + ")..."
-					return m, tea.Batch(m.spinner.Tick, fetchMatchesCmd(m.client, league.Key))
+					return m, tea.Batch(
+						m.spinner.Tick,
+						fetchMatchesCmd(m.client, league.Key),
+						fetchStandingsCmd(m.client, league.Key),
+						fetchStatisticsCmd(m.client, league.Key),
+					)
 				}
 			}
 
 		case StateBrowsing, StatePlaying:
 			switch key {
+			case "1":
+				m.leagueTab = TabResumen
+				return m, nil
+			case "2":
+				m.leagueTab = TabPartidos
+				return m, nil
+			case "3":
+				m.leagueTab = TabPosiciones
+				if m.standings == nil && m.standingsErr == nil {
+					return m, fetchStandingsCmd(m.client, m.CurrentLeague().Key)
+				}
+				return m, nil
+			case "4":
+				m.leagueTab = TabGoleadores
+				if m.statistics == nil && m.statisticsErr == nil {
+					return m, fetchStatisticsCmd(m.client, m.CurrentLeague().Key)
+				}
+				return m, nil
+			case "tab":
+				m.leagueTab = (m.leagueTab + 1) % 4
+				league := m.CurrentLeague()
+				if m.leagueTab == TabPosiciones && m.standings == nil && m.standingsErr == nil {
+					return m, fetchStandingsCmd(m.client, league.Key)
+				}
+				if m.leagueTab == TabGoleadores && m.statistics == nil && m.statisticsErr == nil {
+					return m, fetchStatisticsCmd(m.client, league.Key)
+				}
+				return m, nil
+			case "shift+tab":
+				m.leagueTab = (m.leagueTab - 1 + 4) % 4
+				league := m.CurrentLeague()
+				if m.leagueTab == TabPosiciones && m.standings == nil && m.standingsErr == nil {
+					return m, fetchStandingsCmd(m.client, league.Key)
+				}
+				if m.leagueTab == TabGoleadores && m.statistics == nil && m.statisticsErr == nil {
+					return m, fetchStatisticsCmd(m.client, league.Key)
+				}
+				return m, nil
 			case "up", "k":
-				if m.matchCursor > 0 {
+				if m.leagueTab == TabPartidos && m.matchCursor > 0 {
 					m.matchCursor--
 				}
 			case "down", "j":
-				if m.matchCursor < len(m.matches)-1 {
+				if m.leagueTab == TabPartidos && m.matchCursor < len(m.matches)-1 {
 					m.matchCursor++
 				}
 			case "enter":
-				if len(m.matches) > 0 && m.matchCursor < len(m.matches) {
+				if m.leagueTab == TabPartidos && len(m.matches) > 0 && m.matchCursor < len(m.matches) {
 					selectedMatch := m.matches[m.matchCursor]
 					m.channels = m.catalog.GetChannels(selectedMatch)
 					m.channelCursor = 0
@@ -410,6 +555,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.state = StateMainMenu
 				m.matches = nil
 				m.matchCursor = 0
+				m.standings = nil
+				m.statistics = nil
 				m.channels = nil
 				m.channelCursor = 0
 				m.modalTab = 0
@@ -419,9 +566,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "r":
 				m.state = StateLoading
 				league := m.CurrentLeague()
-				m.loadingMsg = "Recargando partidos (" + league.Name + ")..."
+				m.loadingMsg = "Recargando datos (" + league.Name + ")..."
 				m.errorMsg = ""
-				return m, tea.Batch(m.spinner.Tick, forceRefreshMatchesCmd(m.client, league.Key, false))
+				return m, tea.Batch(
+					m.spinner.Tick,
+					forceRefreshMatchesCmd(m.client, league.Key, false),
+					fetchStandingsCmd(m.client, league.Key),
+					fetchStatisticsCmd(m.client, league.Key),
+				)
 			}
 
 		case StateChannelSelect:
@@ -451,6 +603,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					selectedChannel := m.channels[m.channelCursor]
 					selectedMatch := m.matches[m.matchCursor]
 					m.state = StatePlaying
+					m.connecting = true
+					m.pulseStep = 0
+					m.streamFeed = selectedChannel.Name
+					bitrateStr := selectedChannel.BitrateMode
+					if bitrateStr == "" {
+						bitrateStr = "auto"
+					}
+					if selectedChannel.Resolution != "" {
+						bitrateStr += " • " + selectedChannel.Resolution
+					}
+					m.bitrate = bitrateStr
 					m.statusMsg = "Conectando con " + selectedChannel.Name + "..."
 					m.errorMsg = ""
 					m.playbackID++
@@ -459,7 +622,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						Match:       selectedMatch,
 						BitrateMode: selectedChannel.BitrateMode,
 					}
-					return m, tea.Batch(m.spinner.Tick, playStreamCmd(m.player, req, m.playbackID))
+					return m, tea.Batch(
+						m.spinner.Tick,
+						connectingPulseTickCmd(),
+						playStreamCmd(m.player, req, m.playbackID),
+					)
 				}
 			case "esc", "backspace":
 				m.state = StateBrowsing
@@ -475,6 +642,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.state = StateMainMenu
 				m.matches = nil
 				m.matchCursor = 0
+				m.standings = nil
+				m.statistics = nil
 				m.channels = nil
 				m.channelCursor = 0
 				m.modalTab = 0
@@ -484,9 +653,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "r":
 				m.state = StateLoading
 				league := m.CurrentLeague()
-				m.loadingMsg = "Recargando partidos (" + league.Name + ")..."
+				m.loadingMsg = "Recargando datos (" + league.Name + ")..."
 				m.errorMsg = ""
-				return m, tea.Batch(m.spinner.Tick, forceRefreshMatchesCmd(m.client, league.Key, false))
+				return m, tea.Batch(
+					m.spinner.Tick,
+					forceRefreshMatchesCmd(m.client, league.Key, false),
+					fetchStandingsCmd(m.client, league.Key),
+					fetchStatisticsCmd(m.client, league.Key),
+				)
 			}
 		}
 	}

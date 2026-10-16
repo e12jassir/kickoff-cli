@@ -157,6 +157,7 @@ func (d *DemoClient) FetchMatchDetails(ctx context.Context, leagueKey, eventID s
 					{Jersey: "9", DisplayName: "R. Lewandowski", Position: "FW", IsStarter: true},
 					{Jersey: "11", DisplayName: "Raphinha", Position: "FW", IsStarter: true},
 				},
+				Coach: "Hansi Flick",
 			},
 			Away: model.TeamLineup{
 				Formation: "4-2-3-1",
@@ -173,8 +174,13 @@ func (d *DemoClient) FetchMatchDetails(ctx context.Context, leagueKey, eventID s
 					{Jersey: "7", DisplayName: "Vinícius Jr", Position: "FW", IsStarter: true},
 					{Jersey: "9", DisplayName: "K. Mbappé", Position: "FW", IsStarter: true},
 				},
+				Coach: "Carlo Ancelotti",
 			},
+			HomeCoach: "Hansi Flick",
+			AwayCoach: "Carlo Ancelotti",
 		},
+		HomeCoach: "Hansi Flick",
+		AwayCoach: "Carlo Ancelotti",
 	}, nil
 }
 
@@ -184,4 +190,40 @@ func (d *DemoClient) FetchMatchStats(ctx context.Context, leagueKey, eventID str
 		return nil, err
 	}
 	return details.Stats, nil
+}
+
+func (d *DemoClient) FetchStandings(ctx context.Context, leagueKey string) (*model.LeagueStandings, error) {
+	return &model.LeagueStandings{
+		LeagueKey: leagueKey,
+		Name:      "LaLiga 2024-25",
+		Entries: []model.StandingsEntry{
+			{Rank: 1, TeamName: "FC Barcelona", GamesPlayed: "9", Wins: "8", Ties: "0", Losses: "1", PointDiff: "+19", Points: "24"},
+			{Rank: 2, TeamName: "Real Madrid", GamesPlayed: "9", Wins: "6", Ties: "3", Losses: "0", PointDiff: "+13", Points: "21"},
+			{Rank: 3, TeamName: "Atlético Madrid", GamesPlayed: "9", Wins: "4", Ties: "5", Losses: "0", PointDiff: "+8", Points: "17"},
+			{Rank: 4, TeamName: "Villarreal", GamesPlayed: "9", Wins: "5", Ties: "2", Losses: "2", PointDiff: "+1", Points: "17"},
+			{Rank: 5, TeamName: "Osasuna", GamesPlayed: "9", Wins: "4", Ties: "3", Losses: "2", PointDiff: "-1", Points: "15"},
+		},
+		CachedAt: time.Now(),
+	}, nil
+}
+
+func (d *DemoClient) FetchStatistics(ctx context.Context, leagueKey string) (*model.LeagueStatistics, error) {
+	return &model.LeagueStatistics{
+		LeagueKey: leagueKey,
+		Scorers: []model.ScorerEntry{
+			{Rank: 1, PlayerName: "R. Lewandowski", TeamName: "FC Barcelona", Value: "10", DisplayValue: "Partidos: 9, Goles: 10"},
+			{Rank: 2, PlayerName: "Ayoze Pérez", TeamName: "Villarreal", Value: "6", DisplayValue: "Partidos: 7, Goles: 6"},
+			{Rank: 3, PlayerName: "K. Mbappé", TeamName: "Real Madrid", Value: "5", DisplayValue: "Partidos: 8, Goles: 5"},
+			{Rank: 4, PlayerName: "Raphinha", TeamName: "FC Barcelona", Value: "5", DisplayValue: "Partidos: 9, Goles: 5"},
+			{Rank: 5, PlayerName: "Vinícius Jr", TeamName: "Real Madrid", Value: "4", DisplayValue: "Partidos: 9, Goles: 4"},
+		},
+		Assists: []model.ScorerEntry{
+			{Rank: 1, PlayerName: "Lamine Yamal", TeamName: "FC Barcelona", Value: "5", DisplayValue: "Partidos: 9, Asistencias: 5"},
+			{Rank: 2, PlayerName: "Raphinha", TeamName: "FC Barcelona", Value: "4", DisplayValue: "Partidos: 9, Asistencias: 4"},
+			{Rank: 3, PlayerName: "Vinícius Jr", TeamName: "Real Madrid", Value: "4", DisplayValue: "Partidos: 9, Asistencias: 4"},
+			{Rank: 4, PlayerName: "Alex Baena", TeamName: "Villarreal", Value: "3", DisplayValue: "Partidos: 8, Asistencias: 3"},
+			{Rank: 5, PlayerName: "Antoine Griezmann", TeamName: "Atlético Madrid", Value: "3", DisplayValue: "Partidos: 9, Asistencias: 3"},
+		},
+		CachedAt: time.Now(),
+	}, nil
 }

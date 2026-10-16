@@ -12,12 +12,23 @@ import (
 type UIState int
 
 const (
-	StateMainMenu UIState = iota
+	StateStartup UIState = iota
+	StateMainMenu
 	StateLoading
 	StateBrowsing
 	StateChannelSelect
 	StatePlaying
 	StateError
+)
+
+// LeagueTab represents the 4 views per league.
+type LeagueTab int
+
+const (
+	TabResumen LeagueTab = iota
+	TabPartidos
+	TabPosiciones
+	TabGoleadores
 )
 
 // Model is the main Bubble Tea model for kickoff.
@@ -30,16 +41,30 @@ type Model struct {
 	leagues      []model.League
 	leagueCursor int
 	activeTab    int
+	leagueTab    LeagueTab // 0: Resumen, 1: Partidos, 2: Posiciones, 3: Goleadores
 
 	matches     []model.Match
 	matchCursor int
+
+	standings    *model.LeagueStandings
+	standingsErr error
+
+	statistics    *model.LeagueStatistics
+	statisticsErr error
 
 	channels      []model.Channel
 	channelCursor int
 	modalTab      int
 
 	livePulse  bool
+	pulseStep  int
 	playbackID int64
+	connecting bool
+	streamFeed string
+	bitrate    string
+
+	// Startup animation progress (0-100)
+	startupProgress int
 
 	spinner    spinner.Model
 	loadingMsg string
@@ -65,26 +90,29 @@ func NewModel(client model.Client, catalog model.Resolver, player model.Controll
 	sp.Style = AppTitleStyle
 
 	return Model{
-		client:        client,
-		catalog:       catalog,
-		player:        player,
-		state:         StateMainMenu,
-		leagues:       leagues,
-		leagueCursor:  0,
-		activeTab:     0,
-		matches:       nil,
-		matchCursor:   0,
-		channels:      nil,
-		channelCursor: 0,
-		modalTab:      0,
-		livePulse:     true,
-		spinner:       sp,
-		loadingMsg:    "",
-		statusMsg:     "",
-		errorMsg:      "",
-		width:         80,
-		height:        24,
-		noEmoji:       false,
+		client:          client,
+		catalog:         catalog,
+		player:          player,
+		state:           StateMainMenu,
+		leagues:         leagues,
+		leagueCursor:    0,
+		activeTab:       0,
+		leagueTab:       TabPartidos,
+		matches:         nil,
+		matchCursor:     0,
+		channels:        nil,
+		channelCursor:   0,
+		modalTab:        0,
+		livePulse:       true,
+		pulseStep:       0,
+		startupProgress: 0,
+		spinner:         sp,
+		loadingMsg:      "",
+		statusMsg:       "",
+		errorMsg:        "",
+		width:           80,
+		height:          24,
+		noEmoji:         false,
 	}
 }
 
@@ -100,6 +128,12 @@ func (m Model) WithNoEmoji(disabled bool) Model {
 	return m
 }
 
+// WithInitialState overrides the default initial state (e.g. StateMainMenu for testing).
+func (m Model) WithInitialState(st UIState) Model {
+	m.state = st
+	return m
+}
+
 // CurrentLeague returns the currently selected league.
 func (m Model) CurrentLeague() model.League {
 	if len(m.leagues) == 0 {
@@ -111,11 +145,12 @@ func (m Model) CurrentLeague() model.League {
 	return m.leagues[m.activeTab]
 }
 
-// Init begins spinner tick, pulse ticker, and automatic smart live-sync ticker.
+// Init begins spinner tick, pulse ticker, startup animation, and automatic smart live-sync ticker.
 func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{
 		m.spinner.Tick,
 		pulseTickCmd(),
+		startupTickCmd(),
 		autoSyncTickCmd(15 * time.Second),
 	}
 	if m.version != "" {
