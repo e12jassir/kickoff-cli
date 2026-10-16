@@ -19,11 +19,12 @@ import (
 )
 
 const (
-	defaultBaseURL  = "https://site.api.espn.com/apis/site/v2/sports/soccer"
-	defaultCacheTTL = 30 * time.Second
-	liveCacheTTL    = 5 * time.Second
-	defaultTimeout  = 10 * time.Second
-	userAgent       = "kickoff-cli/1.0 (+https://github.com/e12jassir/kickoff-cli)"
+	defaultBaseURL      = "https://site.api.espn.com/apis/site/v2/sports/soccer"
+	defaultCacheTTL     = 30 * time.Second
+	liveCacheTTL        = 5 * time.Second
+	defaultPastCacheTTL = 6 * time.Hour
+	defaultTimeout      = 10 * time.Second
+	userAgent           = "kickoff-cli/1.0 (+https://github.com/e12jassir/kickoff-cli)"
 )
 
 type rawResponse struct {
@@ -192,12 +193,18 @@ type cachedData struct {
 	Matches  []model.Match `json:"matches"`
 }
 
+type cachedPastEvents struct {
+	CachedAt time.Time  `json:"cached_at"`
+	Events   []rawEvent `json:"events"`
+}
+
 // Client implements model.Client for fetching ESPN soccer fixtures.
 type Client struct {
 	baseURL      string
 	httpClient   *http.Client
 	cacheDir     string
 	cacheTTL     time.Duration
+	pastCacheTTL time.Duration
 	loc          *time.Location
 	now          func() time.Time
 	retryBackoff func() time.Duration
@@ -226,6 +233,12 @@ func WithCacheDir(dir string) Option {
 func WithCacheTTL(ttl time.Duration) Option {
 	return func(c *Client) {
 		c.cacheTTL = ttl
+	}
+}
+
+func WithPastCacheTTL(ttl time.Duration) Option {
+	return func(c *Client) {
+		c.pastCacheTTL = ttl
 	}
 }
 
@@ -268,10 +281,11 @@ func NewClient(opts ...Option) *Client {
 		httpClient: &http.Client{
 			Timeout: defaultTimeout,
 		},
-		cacheDir: defaultCache,
-		cacheTTL: defaultCacheTTL,
-		loc:      loc,
-		now:      time.Now,
+		cacheDir:     defaultCache,
+		cacheTTL:     defaultCacheTTL,
+		pastCacheTTL: defaultPastCacheTTL,
+		loc:          loc,
+		now:          time.Now,
 		retryBackoff: func() time.Duration {
 			return time.Duration(200+rand.IntN(301)) * time.Millisecond
 		},
@@ -284,25 +298,80 @@ func NewClient(opts ...Option) *Client {
 	return c
 }
 
+// parseRetryAfter parses the standard HTTP Retry-After header.
+// It supports either an integer number of seconds (e.g. "120")
+// or an HTTP-date (RFC 1123 / RFC 850 / ANSI C as parsed by http.ParseTime).
+func parseRetryAfter(headerVal string, now time.Time) (time.Duration, bool) {
+	headerVal = strings.TrimSpace(headerVal)
+	if headerVal == "" {
+		return 0, false
+	}
+	if secs, err := strconv.Atoi(headerVal); err == nil && secs >= 0 {
+		return time.Duration(secs) * time.Second, true
+	}
+	if t, err := http.ParseTime(headerVal); err == nil {
+		d := t.Sub(now)
+		if d > 0 {
+			return d, true
+		}
+		return 0, true
+	}
+	return 0, false
+}
+
+func (c *Client) calculateBackoff(attempt int, resp *http.Response) time.Duration {
+	if resp != nil {
+		if ra := resp.Header.Get("Retry-After"); ra != "" {
+			if d, ok := parseRetryAfter(ra, c.now()); ok {
+				return d
+			}
+		}
+	}
+
+	if c.retryBackoff != nil {
+		base := c.retryBackoff()
+		if base <= 0 {
+			return 0
+		}
+		return base * time.Duration(1<<attempt)
+	}
+
+	base := time.Duration(200+rand.IntN(301)) * time.Millisecond
+	return base * time.Duration(1<<attempt)
+}
+
 // doWithRetry executes HTTP request with transient retry and backoff + jitter.
 func (c *Client) doWithRetry(req *http.Request) (*http.Response, error) {
 	const maxRetries = 2
 	var resp *http.Response
 	var err error
 
+	client := c.httpClient
+	if client == nil {
+		client = http.DefaultClient
+	}
+
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		clonedReq := req.Clone(req.Context())
-		resp, err = c.httpClient.Do(clonedReq)
-		if err == nil {
+		resp, err = client.Do(clonedReq)
+
+		if req.Context().Err() != nil {
+			if resp != nil && resp.Body != nil {
+				resp.Body.Close()
+			}
+			return nil, req.Context().Err()
+		}
+
+		isTransient := err != nil || (resp != nil && (resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500))
+		if !isTransient {
 			return resp, nil
 		}
 
-		if req.Context().Err() != nil {
-			return nil, err
-		}
-
 		if attempt < maxRetries {
-			backoff := c.retryBackoff()
+			backoff := c.calculateBackoff(attempt, resp)
+			if resp != nil && resp.Body != nil {
+				resp.Body.Close()
+			}
 			if backoff > 0 {
 				select {
 				case <-req.Context().Done():
@@ -312,7 +381,7 @@ func (c *Client) doWithRetry(req *http.Request) (*http.Response, error) {
 			}
 		}
 	}
-	return nil, err
+	return resp, err
 }
 
 // LeagueCode maps a user-facing league key to the ESPN league code.
@@ -424,6 +493,42 @@ func (c *Client) fallbackMatches(leagueKey string, origErr error) ([]model.Match
 	return nil, origErr
 }
 
+// atomicWriteFile writes data to a temporary file in the same directory as targetPath,
+// and then atomically renames it to targetPath.
+func atomicWriteFile(targetPath string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(targetPath)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+
+	tmpFile, err := os.CreateTemp(dir, ".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmpFile.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tmpName)
+		}
+	}()
+
+	if _, err := tmpFile.Write(data); err != nil {
+		_ = tmpFile.Close()
+		return err
+	}
+	if err := tmpFile.Close(); err != nil {
+		return err
+	}
+	_ = os.Chmod(tmpName, perm)
+
+	if err := os.Rename(tmpName, targetPath); err != nil {
+		return err
+	}
+	cleanup = false
+	return nil
+}
+
 func (c *Client) setCache(leagueKey string, matches []model.Match) {
 	if err := os.MkdirAll(c.cacheDir, 0o755); err != nil {
 		return
@@ -437,12 +542,68 @@ func (c *Client) setCache(leagueKey string, matches []model.Match) {
 	if err != nil {
 		return
 	}
-	_ = os.WriteFile(cachePath, data, 0o644)
+	_ = atomicWriteFile(cachePath, data, 0o644)
 }
 
 func (c *Client) invalidateCache(leagueKey string) {
 	cachePath := c.cacheFilePath(leagueKey)
 	_ = os.Remove(cachePath)
+	pastPath := c.pastCacheFilePath(leagueKey)
+	_ = os.Remove(pastPath)
+}
+
+func (c *Client) pastCacheFilePath(leagueKey string) string {
+	cleanKey := strings.ReplaceAll(leagueKey, "/", "_")
+	return filepath.Join(c.cacheDir, fmt.Sprintf("past_matches_%s.json", cleanKey))
+}
+
+func (c *Client) readDiskPastEvents(leagueKey string) (*cachedPastEvents, bool) {
+	cachePath := c.pastCacheFilePath(leagueKey)
+	data, err := os.ReadFile(cachePath)
+	if err != nil {
+		return nil, false
+	}
+
+	var cached cachedPastEvents
+	if err := json.Unmarshal(data, &cached); err != nil {
+		return nil, false
+	}
+
+	return &cached, true
+}
+
+func (c *Client) getCachedPastEvents(leagueKey string) ([]rawEvent, bool) {
+	cached, ok := c.readDiskPastEvents(leagueKey)
+	if !ok {
+		return nil, false
+	}
+
+	ttl := c.pastCacheTTL
+	if ttl <= 0 {
+		ttl = defaultPastCacheTTL
+	}
+
+	if c.now().Sub(cached.CachedAt) > ttl {
+		return nil, false
+	}
+
+	return cached.Events, true
+}
+
+func (c *Client) setCachedPastEvents(leagueKey string, events []rawEvent) {
+	if err := os.MkdirAll(c.cacheDir, 0o755); err != nil {
+		return
+	}
+	cachePath := c.pastCacheFilePath(leagueKey)
+	cached := cachedPastEvents{
+		CachedAt: c.now(),
+		Events:   events,
+	}
+	data, err := json.Marshal(cached)
+	if err != nil {
+		return
+	}
+	_ = atomicWriteFile(cachePath, data, 0o644)
 }
 
 func (c *Client) summaryCachePath(eventID string) string {
@@ -514,7 +675,7 @@ func (c *Client) setCachedSummary(eventID string, stats *model.MatchStats, lineu
 	if err != nil {
 		return
 	}
-	_ = os.WriteFile(cachePath, data, 0o644)
+	_ = atomicWriteFile(cachePath, data, 0o644)
 }
 
 // FetchMatches queries ESPN scoreboard API, extracts official TV broadcasts, and caches results.
@@ -765,8 +926,16 @@ func (c *Client) FetchMatches(ctx context.Context, leagueKey string) ([]model.Ma
 		}
 	}
 
-	// Probe recent past days (1-4 days) to complete the past matchday (e.g. Barcelona on Tuesday when default only has Wednesday)
-	pastEvents := c.fetchRecentPastScoreboardEvents(ctx, leagueCode, now)
+	// Probe recent past days (1-4 days) to complete the past matchday (e.g. Barcelona on Tuesday when default only has Wednesday).
+	// Decouple past days query from live 5s auto-sync polling loop: cached separately with a long TTL (6 to 12 hours)
+	// and only fetched if the past matches cache is empty or expired, never on every 5s live tick.
+	pastEvents, ok := c.getCachedPastEvents(leagueKey)
+	if !ok {
+		pastEvents = c.fetchRecentPastScoreboardEvents(ctx, leagueCode, now)
+		if ctx.Err() == nil {
+			c.setCachedPastEvents(leagueKey, pastEvents)
+		}
+	}
 	for _, ev := range pastEvents {
 		if ev.Date == "" || len(ev.Competitions) == 0 || seenEventIDs[ev.ID] {
 			continue
@@ -843,11 +1012,6 @@ func (c *Client) fetchRecentPastScoreboardEvents(ctx context.Context, leagueCode
 	resChan := make(chan probeRes, 4)
 	var wg sync.WaitGroup
 
-	client := c.httpClient
-	if client == nil {
-		client = http.DefaultClient
-	}
-
 	for d := 1; d <= 4; d++ {
 		wg.Add(1)
 		go func(offset int) {
@@ -870,7 +1034,7 @@ func (c *Client) fetchRecentPastScoreboardEvents(ctx context.Context, leagueCode
 			}
 			req.Header.Set("User-Agent", userAgent)
 
-			resp, err := client.Do(req)
+			resp, err := c.doWithRetry(req)
 			if err != nil {
 				return
 			}
@@ -914,11 +1078,6 @@ func (c *Client) fetchUpcomingScoreboardEvents(ctx context.Context, leagueCode s
 	resChan := make(chan probeRes, 14)
 	var wg sync.WaitGroup
 
-	client := c.httpClient
-	if client == nil {
-		client = http.DefaultClient
-	}
-
 	for d := 1; d <= 14; d++ {
 		wg.Add(1)
 		go func(offset int) {
@@ -941,7 +1100,7 @@ func (c *Client) fetchUpcomingScoreboardEvents(ctx context.Context, leagueCode s
 			}
 			req.Header.Set("User-Agent", userAgent)
 
-			resp, err := client.Do(req)
+			resp, err := c.doWithRetry(req)
 			if err != nil {
 				return
 			}
@@ -1329,7 +1488,7 @@ func (c *Client) setCachedStandings(leagueKey string, standings *model.LeagueSta
 	}
 	data, err := json.Marshal(cached)
 	if err == nil {
-		_ = os.WriteFile(c.standingsCachePath(leagueKey), data, 0o644)
+		_ = atomicWriteFile(c.standingsCachePath(leagueKey), data, 0o644)
 	}
 }
 
@@ -1545,7 +1704,7 @@ func (c *Client) setCachedStatistics(leagueKey string, statistics *model.LeagueS
 	}
 	data, err := json.Marshal(cached)
 	if err == nil {
-		_ = os.WriteFile(c.statisticsCachePath(leagueKey), data, 0o644)
+		_ = atomicWriteFile(c.statisticsCachePath(leagueKey), data, 0o644)
 	}
 }
 

@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -974,5 +976,470 @@ func TestClient_FetchStatistics_Parsing(t *testing.T) {
 	}
 	if len(cached.Statistics.Scorers) != 1 || cached.Statistics.Scorers[0].PlayerName != "Erling Haaland" {
 		t.Errorf("cached scorers mismatch: %+v", cached.Statistics.Scorers)
+	}
+}
+
+func TestAtomicWriteFile(t *testing.T) {
+	tempDir := t.TempDir()
+	targetPath := filepath.Join(tempDir, "sub", "test.txt")
+
+	data1 := []byte("first content")
+	if err := atomicWriteFile(targetPath, data1, 0o644); err != nil {
+		t.Fatalf("atomicWriteFile failed: %v", err)
+	}
+
+	read1, err := os.ReadFile(targetPath)
+	if err != nil {
+		t.Fatalf("failed to read target file: %v", err)
+	}
+	if string(read1) != string(data1) {
+		t.Errorf("expected %q, got %q", string(data1), string(read1))
+	}
+
+	// Atomic overwrite
+	data2 := []byte("overwritten content")
+	if err := atomicWriteFile(targetPath, data2, 0o644); err != nil {
+		t.Fatalf("atomicWriteFile overwrite failed: %v", err)
+	}
+
+	read2, err := os.ReadFile(targetPath)
+	if err != nil {
+		t.Fatalf("failed to read overwritten file: %v", err)
+	}
+	if string(read2) != string(data2) {
+		t.Errorf("expected %q, got %q", string(data2), string(read2))
+	}
+
+	// Verify no temporary files remain in sub directory
+	entries, err := os.ReadDir(filepath.Join(tempDir, "sub"))
+	if err != nil {
+		t.Fatalf("failed to read dir: %v", err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".tmp-") {
+			t.Errorf("unexpected temporary file found: %s", entry.Name())
+		}
+	}
+}
+
+func TestClient_AtomicCacheWrites(t *testing.T) {
+	tempDir := t.TempDir()
+	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	client := NewClient(
+		WithCacheDir(tempDir),
+		WithNow(func() time.Time { return now }),
+	)
+
+	// 1. setCache
+	matches := []model.Match{
+		{ID: "m1", Title: "Team A vs Team B"},
+	}
+	client.setCache("laliga", matches)
+	if cached, ok := client.readDiskCache("laliga"); !ok || len(cached.Matches) != 1 {
+		t.Errorf("setCache atomic write verification failed")
+	}
+
+	// 2. setCachedSummary
+	stats := &model.MatchStats{HomeShots: "10"}
+	client.setCachedSummary("ev1", stats, nil, "Referee A", 20000)
+	if sum, ok := client.readDiskSummary("ev1"); !ok || sum.Referee != "Referee A" {
+		t.Errorf("setCachedSummary atomic write verification failed")
+	}
+
+	// 3. setCachedStandings
+	standings := &model.LeagueStandings{LeagueKey: "laliga"}
+	client.setCachedStandings("laliga", standings)
+	if st, ok := client.readDiskStandings("laliga"); !ok || st.Standings.LeagueKey != "laliga" {
+		t.Errorf("setCachedStandings atomic write verification failed")
+	}
+
+	// 4. setCachedStatistics
+	statistics := &model.LeagueStatistics{LeagueKey: "laliga"}
+	client.setCachedStatistics("laliga", statistics)
+	if s, ok := client.readDiskStatistics("laliga"); !ok || s.Statistics.LeagueKey != "laliga" {
+		t.Errorf("setCachedStatistics atomic write verification failed")
+	}
+
+	// 5. setCachedPastEvents
+	pastEvs := []rawEvent{{ID: "past1"}}
+	client.setCachedPastEvents("laliga", pastEvs)
+	if p, ok := client.readDiskPastEvents("laliga"); !ok || len(p.Events) != 1 {
+		t.Errorf("setCachedPastEvents atomic write verification failed")
+	}
+
+	// Verify no .tmp-* files remain in cacheDir
+	entries, err := os.ReadDir(tempDir)
+	if err != nil {
+		t.Fatalf("failed to read cache dir: %v", err)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".tmp-") {
+			t.Errorf("temporary file %s was not cleaned up after atomic write", e.Name())
+		}
+	}
+}
+
+func TestParseRetryAfter(t *testing.T) {
+	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		name       string
+		header     string
+		expectedD  time.Duration
+		expectedOk bool
+	}{
+		{name: "empty", header: "", expectedD: 0, expectedOk: false},
+		{name: "zero seconds", header: "0", expectedD: 0, expectedOk: true},
+		{name: "positive seconds", header: "5", expectedD: 5 * time.Second, expectedOk: true},
+		{name: "with spaces", header: " 120 ", expectedD: 120 * time.Second, expectedOk: true},
+		{name: "negative seconds", header: "-1", expectedD: 0, expectedOk: false},
+		{name: "invalid text", header: "invalid", expectedD: 0, expectedOk: false},
+		{
+			name:       "future HTTP date",
+			header:     now.Add(10 * time.Second).Format(http.TimeFormat),
+			expectedD:  10 * time.Second,
+			expectedOk: true,
+		},
+		{
+			name:       "past HTTP date",
+			header:     now.Add(-10 * time.Second).Format(http.TimeFormat),
+			expectedD:  0,
+			expectedOk: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d, ok := parseRetryAfter(tt.header, now)
+			if ok != tt.expectedOk {
+				t.Fatalf("expected ok=%v, got %v", tt.expectedOk, ok)
+			}
+			if d != tt.expectedD {
+				t.Fatalf("expected duration %v, got %v", tt.expectedD, d)
+			}
+		})
+	}
+}
+
+func TestClient_CalculateBackoff(t *testing.T) {
+	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	client := NewClient(
+		WithNow(func() time.Time { return now }),
+		WithRetryBackoff(func() time.Duration { return 100 * time.Millisecond }),
+	)
+
+	// When Retry-After header is present
+	resp := &http.Response{
+		Header: http.Header{
+			"Retry-After": []string{"3"},
+		},
+	}
+	d := client.calculateBackoff(0, resp)
+	if d != 3*time.Second {
+		t.Errorf("expected 3s from Retry-After, got %v", d)
+	}
+
+	// Exponential backoff when no Retry-After
+	d0 := client.calculateBackoff(0, nil)
+	d1 := client.calculateBackoff(1, nil)
+	d2 := client.calculateBackoff(2, nil)
+
+	if d0 != 100*time.Millisecond {
+		t.Errorf("attempt 0: expected 100ms, got %v", d0)
+	}
+	if d1 != 200*time.Millisecond {
+		t.Errorf("attempt 1: expected 200ms, got %v", d1)
+	}
+	if d2 != 400*time.Millisecond {
+		t.Errorf("attempt 2: expected 400ms, got %v", d2)
+	}
+
+	// When retryBackoff returns 0 (test mode)
+	zeroClient := NewClient(
+		WithRetryBackoff(func() time.Duration { return 0 }),
+	)
+	if zeroClient.calculateBackoff(1, nil) != 0 {
+		t.Errorf("expected 0 backoff when retryBackoff returns 0")
+	}
+}
+
+func TestClient_DoWithRetry_5xx_Success(t *testing.T) {
+	var mainAttempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.RawQuery, "dates=") {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"events": []}`)
+			return
+		}
+		att := mainAttempts.Add(1)
+		if att == 1 {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		if att == 2 {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"events": []}`)
+	}))
+	defer server.Close()
+
+	client := NewClient(
+		WithBaseURL(server.URL),
+		WithCacheDir(t.TempDir()),
+		WithRetryBackoff(func() time.Duration { return 0 }),
+	)
+
+	matches, err := client.FetchMatches(context.Background(), "laliga")
+	if err != nil {
+		t.Fatalf("expected success after retries, got err: %v", err)
+	}
+	if matches == nil {
+		t.Fatalf("expected matches slice, got nil")
+	}
+	if mainAttempts.Load() != 3 {
+		t.Fatalf("expected exactly 3 attempts, got %d", mainAttempts.Load())
+	}
+}
+
+func TestClient_DoWithRetry_429_Success(t *testing.T) {
+	var mainAttempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.RawQuery, "dates=") {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"events": []}`)
+			return
+		}
+		att := mainAttempts.Add(1)
+		if att == 1 {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"events": []}`)
+	}))
+	defer server.Close()
+
+	client := NewClient(
+		WithBaseURL(server.URL),
+		WithCacheDir(t.TempDir()),
+		WithRetryBackoff(func() time.Duration { return 0 }),
+	)
+
+	matches, err := client.FetchMatches(context.Background(), "laliga")
+	if err != nil {
+		t.Fatalf("expected success after retries on 429, got err: %v", err)
+	}
+	if matches == nil {
+		t.Fatalf("expected matches slice, got nil")
+	}
+	if mainAttempts.Load() != 2 {
+		t.Fatalf("expected 2 attempts, got %d", mainAttempts.Load())
+	}
+}
+
+func TestClient_DoWithRetry_Direct(t *testing.T) {
+	var attempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		att := attempts.Add(1)
+		if att == 1 {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, "OK")
+	}))
+	defer server.Close()
+
+	client := NewClient(
+		WithRetryBackoff(func() time.Duration { return 0 }),
+	)
+
+	req, err := http.NewRequest(http.MethodGet, server.URL, nil)
+	if err != nil {
+		t.Fatalf("failed to create req: %v", err)
+	}
+
+	resp, err := client.doWithRetry(req)
+	if err != nil {
+		t.Fatalf("expected nil err, got: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200 OK, got %d", resp.StatusCode)
+	}
+	if attempts.Load() != 2 {
+		t.Errorf("expected 2 attempts, got %d", attempts.Load())
+	}
+}
+
+func TestClient_DoWithRetry_5xx_Exhausted(t *testing.T) {
+	var attempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts.Add(1)
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	client := NewClient(
+		WithBaseURL(server.URL),
+		WithCacheDir(t.TempDir()),
+		WithRetryBackoff(func() time.Duration { return 0 }),
+	)
+
+	_, err := client.FetchMatches(context.Background(), "laliga")
+	if err == nil {
+		t.Fatalf("expected error after exhausted retries, got nil")
+	}
+	if !strings.Contains(err.Error(), "503") {
+		t.Errorf("expected error to mention 503, got: %v", err)
+	}
+	if attempts.Load() != 3 {
+		t.Fatalf("expected 3 attempts (1 initial + 2 retries), got %d", attempts.Load())
+	}
+}
+
+func TestClient_DecoupledPastDaysCache(t *testing.T) {
+	fixedNow := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	currentTime := fixedNow
+
+	var mainRequests atomic.Int32
+	var pastRequests atomic.Int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.RawQuery, "dates=") {
+			pastRequests.Add(1)
+			fmt.Fprint(w, `{"events": []}`)
+			return
+		}
+		mainRequests.Add(1)
+		fmt.Fprint(w, `{
+			"events": [
+				{
+					"id": "today1",
+					"date": "2026-10-16T15:00Z",
+					"competitions": [
+						{
+							"id": "c1",
+							"competitors": [
+								{"id": "1", "homeAway": "home", "team": {"displayName": "Team A"}},
+								{"id": "2", "homeAway": "away", "team": {"displayName": "Team B"}}
+							]
+						}
+					],
+					"status": {"type": {"state": "in", "description": "1T 10'"}}
+				}
+			]
+		}`)
+	}))
+	defer server.Close()
+
+	tempDir := t.TempDir()
+	client := NewClient(
+		WithBaseURL(server.URL),
+		WithCacheDir(tempDir),
+		WithNow(func() time.Time { return currentTime }),
+		WithRetryBackoff(func() time.Duration { return 0 }),
+		WithPastCacheTTL(6*time.Hour),
+	)
+
+	ctx := model.WithForceRefresh(context.Background())
+
+	// Call 1: First fetch with forceRefresh.
+	// Since past cache is empty, it MUST query past days.
+	matches1, err := client.FetchMatches(ctx, "laliga")
+	if err != nil {
+		t.Fatalf("call 1 failed: %v", err)
+	}
+	if len(matches1) != 1 {
+		t.Fatalf("call 1 expected 1 match, got %d", len(matches1))
+	}
+	if mainRequests.Load() != 1 {
+		t.Fatalf("expected 1 main request, got %d", mainRequests.Load())
+	}
+	pastCountAfterCall1 := pastRequests.Load()
+	if pastCountAfterCall1 == 0 {
+		t.Fatalf("expected past days to be queried on call 1")
+	}
+
+	// Verify past cache file was created
+	pastCacheFile := filepath.Join(tempDir, "past_matches_laliga.json")
+	if _, err := os.Stat(pastCacheFile); err != nil {
+		t.Fatalf("expected past cache file to exist: %v", err)
+	}
+
+	// Call 2: Second fetch with forceRefresh immediately after (simulating live 5s tick).
+	// Main scoreboard MUST be refreshed (live tick), but past days MUST NOT be queried.
+	currentTime = currentTime.Add(5 * time.Second)
+	matches2, err := client.FetchMatches(ctx, "laliga")
+	if err != nil {
+		t.Fatalf("call 2 failed: %v", err)
+	}
+	if len(matches2) != 1 {
+		t.Fatalf("call 2 expected 1 match, got %d", len(matches2))
+	}
+	if mainRequests.Load() != 2 {
+		t.Fatalf("expected 2 main requests, got %d", mainRequests.Load())
+	}
+	if pastRequests.Load() != pastCountAfterCall1 {
+		t.Fatalf("past days were queried on live 5s tick! expected %d past requests, got %d",
+			pastCountAfterCall1, pastRequests.Load())
+	}
+
+	// Call 3: Advance time beyond pastCacheTTL (6 hours + 1 minute).
+	// Now past cache is expired, so past days MUST be queried again!
+	currentTime = currentTime.Add(6*time.Hour + time.Minute)
+	_, err = client.FetchMatches(ctx, "laliga")
+	if err != nil {
+		t.Fatalf("call 3 failed: %v", err)
+	}
+	if pastRequests.Load() <= pastCountAfterCall1 {
+		t.Fatalf("expected past days to be queried after TTL expiry, but past requests did not increase")
+	}
+}
+
+func TestClient_ProbeFunctions_UseDoWithRetry(t *testing.T) {
+	var pastAttempts atomic.Int32
+	var upcomingAttempts atomic.Int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		q := r.URL.RawQuery
+		if strings.Contains(q, "dates=") {
+			// First call fails with 500, retry succeeds
+			if pastAttempts.Add(1) == 1 {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			fmt.Fprint(w, `{"events": [{"id": "past10", "date": "2026-10-15T15:00Z", "competitions": []}]}`)
+			return
+		}
+		if upcomingAttempts.Add(1) == 1 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		fmt.Fprint(w, `{"events": []}`)
+	}))
+	defer server.Close()
+
+	client := NewClient(
+		WithBaseURL(server.URL),
+		WithCacheDir(t.TempDir()),
+		WithRetryBackoff(func() time.Duration { return 0 }),
+	)
+
+	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	// fetchRecentPastScoreboardEvents should retry on 500 and succeed
+	events := client.fetchRecentPastScoreboardEvents(context.Background(), "laliga", now)
+	if len(events) == 0 {
+		t.Errorf("expected past events returned after retry, got 0")
+	}
+	if pastAttempts.Load() < 2 {
+		t.Errorf("expected at least 2 attempts for past probe due to retry, got %d", pastAttempts.Load())
 	}
 }
