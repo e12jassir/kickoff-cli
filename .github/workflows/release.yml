@@ -19,7 +19,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version-file: go.mod
           cache: true
 
       - name: Build All Cross-Platform Binaries
@@ -27,29 +27,35 @@ jobs:
           mkdir -p dist
           VERSION="${GITHUB_REF_NAME:-v0.1.0}"
           CLEAN_VER="${VERSION#v}"
+          COMMIT="$(git rev-parse --short HEAD)"
+          DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          LDFLAGS="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE}"
 
-          echo "Building version $VERSION..."
+          echo "Building version $VERSION (commit $COMMIT)..."
 
           # 1. Linux x86_64
-          GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o kickoff ./cmd/kickoff
+          GOOS=linux GOARCH=amd64 go build -ldflags="$LDFLAGS" -o kickoff ./cmd/kickoff
+          # Fail the release if the version metadata did not get embedded: without it
+          # the binary reports "dev" and the self-updater never sees new releases.
+          ./kickoff --version | grep -qF "$VERSION" || { echo "::error::version metadata missing from the built binary"; exit 1; }
           tar -czf "dist/kickoff_${CLEAN_VER}_linux_amd64.tar.gz" kickoff LICENSE README.md
           cp "dist/kickoff_${CLEAN_VER}_linux_amd64.tar.gz" "dist/kickoff_linux_amd64.tar.gz"
           rm kickoff
 
           # 2. Linux ARM64
-          GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o kickoff ./cmd/kickoff
+          GOOS=linux GOARCH=arm64 go build -ldflags="$LDFLAGS" -o kickoff ./cmd/kickoff
           tar -czf "dist/kickoff_${CLEAN_VER}_linux_arm64.tar.gz" kickoff LICENSE README.md
           cp "dist/kickoff_${CLEAN_VER}_linux_arm64.tar.gz" "dist/kickoff_linux_arm64.tar.gz"
           rm kickoff
 
           # 3. Windows x86_64 (.zip bundle with kickoff.exe, Instalar-Kickoff.bat, and kickoff.ico)
-          GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o kickoff.exe ./cmd/kickoff
+          GOOS=windows GOARCH=amd64 go build -ldflags="$LDFLAGS" -o kickoff.exe ./cmd/kickoff
           zip -j "dist/kickoff_${CLEAN_VER}_windows_amd64.zip" kickoff.exe assets/Instalar-Kickoff.bat assets/install-mpv.bat assets/kickoff.ico LICENSE README.md
           cp "dist/kickoff_${CLEAN_VER}_windows_amd64.zip" "dist/kickoff_windows_amd64.zip"
           rm kickoff.exe
 
           # 4. macOS Apple Silicon (ARM64)
-          GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o kickoff ./cmd/kickoff
+          GOOS=darwin GOARCH=arm64 go build -ldflags="$LDFLAGS" -o kickoff ./cmd/kickoff
           tar -czf "dist/kickoff_${CLEAN_VER}_darwin_arm64.tar.gz" kickoff LICENSE README.md
           cp "dist/kickoff_${CLEAN_VER}_darwin_arm64.tar.gz" "dist/kickoff_darwin_arm64.tar.gz"
           cp "dist/kickoff_${CLEAN_VER}_darwin_arm64.tar.gz" "dist/kickoff_${CLEAN_VER}_macos_arm64.tar.gz"
