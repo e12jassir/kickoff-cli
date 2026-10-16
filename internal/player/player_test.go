@@ -222,3 +222,52 @@ func TestController_Lifecycle_Timeout(t *testing.T) {
 		t.Fatalf("expected ErrPlayerTimeout, got: %v", err)
 	}
 }
+
+// TestController_StopConcurrentWithPlayStream_NoDoubleWait is a regression test
+// for the double cmd.Wait() data race. It launches a long-lived fake player,
+// lets the reaper goroutine enter cmd.Wait(), and then calls Stop()
+// concurrently. Before the fix, stopLocked called cmd.Wait() on the same
+// *exec.Cmd, racing the reaper; under -race this test fails.
+func TestController_StopConcurrentWithPlayStream_NoDoubleWait(t *testing.T) {
+	mockScript, err := os.CreateTemp("", "mock-mpv-live-*.sh")
+	if err != nil {
+		t.Fatalf("failed to create temp mock script: %v", err)
+	}
+	defer os.Remove(mockScript.Name())
+
+	_, _ = mockScript.WriteString("#!/bin/sh\nsleep 30\n")
+	_ = mockScript.Close()
+	_ = os.Chmod(mockScript.Name(), 0o755)
+
+	ctrl := NewController(
+		WithMPVBinary(mockScript.Name()),
+		WithPollTimeout(5*time.Second),
+	)
+	defer ctrl.Stop()
+
+	req := model.PlayRequest{
+		Channel: model.Channel{Name: "Test Channel", URL: "http://example.invalid/test.m3u8"},
+		Match:   model.Match{Title: "Team A vs Team B"},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	playErr := make(chan error, 1)
+	go func() {
+		playErr <- ctrl.PlayStream(ctx, req)
+	}()
+
+	// Give the reaper goroutine time to start and block in cmd.Wait().
+	time.Sleep(200 * time.Millisecond)
+
+	// Stop concurrently with the live reaper: this must not call Wait() again.
+	_ = ctrl.Stop()
+
+	cancel()
+	select {
+	case <-playErr:
+	case <-time.After(5 * time.Second):
+		t.Fatal("PlayStream did not return after Stop")
+	}
+}

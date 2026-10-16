@@ -22,6 +22,11 @@ import (
 const (
 	defaultPollTimeout = 25 * time.Second
 	defaultDialTimeout = 200 * time.Millisecond
+
+	// stopWaitTimeout bounds how long stopLocked waits for the reaper goroutine
+	// to observe process termination after a kill is issued. A wedged kill must
+	// never hold c.mu forever.
+	stopWaitTimeout = 3 * time.Second
 )
 
 type mpvResponse struct {
@@ -160,13 +165,38 @@ func (c *Controller) Stop() error {
 	return c.stopLocked()
 }
 
+// stopLocked terminates the currently supervised process and releases its
+// socket resources. Callers must hold c.mu.
+//
+// Ownership invariant: exactly one goroutine calls cmd.Wait() for a given
+// *exec.Cmd. The reaper goroutine spawned by pollIPCConfirmation owns Wait()
+// and is the only component allowed to call it. stopLocked must never call
+// Wait itself; it signals termination with killProcess and then waits for the
+// reaper to report completion by receiving from c.doneCh.
+//
+// This also covers the normal-exit path, where the reaper has already closed
+// doneCh while c.currentCmd remains set: receiving from a closed channel
+// returns immediately, so the process is never reaped a second time.
+//
+// Deadlock safety: stopLocked runs with c.mu held (Stop and PlayStream hold the
+// lock when they call it). The reaper never acquires c.mu -- it only calls
+// cmd.Wait(), sends to exitCh, and closes doneCh -- so waiting on c.doneCh here
+// cannot deadlock.
 func (c *Controller) stopLocked() error {
 	var errs []string
 
 	if c.currentCmd != nil && c.currentCmd.Process != nil {
 		killProcess(c.currentCmd)
-		_ = c.currentCmd.Wait()
+
+		if c.doneCh != nil {
+			select {
+			case <-c.doneCh:
+			case <-time.After(stopWaitTimeout):
+			}
+		}
+
 		c.currentCmd = nil
+		c.doneCh = nil
 	}
 
 	if c.currentDir != "" {
