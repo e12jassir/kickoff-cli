@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -37,6 +38,7 @@ func printHelp() {
 	fmt.Println("Commands:")
 	fmt.Println("  kickoff                     Open interactive match explorer in terminal")
 	fmt.Println("  kickoff demo                Open terminal with simulated live matches (demo mode)")
+	fmt.Println("  kickoff bar                 Headless status bar mode for Polybar, Waybar, Tmux, Starship")
 	fmt.Println("  kickoff init                Initialize channels.json with an example starter template")
 	fmt.Println("  kickoff config import <src> Import channels from local file or URL (JSON or M3U playlist)")
 	fmt.Println("  kickoff import <src>        Shortcut for 'kickoff config import'")
@@ -104,6 +106,15 @@ func main() {
 			os.Exit(0)
 		case "setup":
 			if err := updater.RunSetup(); err != nil {
+				os.Exit(1)
+			}
+			os.Exit(0)
+		case "bar":
+			if err := RunBar(os.Args[2:], nil, nil, os.Stdout); err != nil {
+				if errors.Is(err, ErrNoLiveMatches) {
+					os.Exit(1)
+				}
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
 			os.Exit(0)

@@ -103,10 +103,33 @@ git clone https://github.com/e12jassir/kickoff-cli.git && cd kickoff-cli && make
 
 ```text
 kickoff            Open the match explorer
+kickoff bar        Status bar & prompt integration (plain, tmux, waybar, starship)
 kickoff update     Update to the latest release
 kickoff setup      Check mpv, fonts, config and cache
 kickoff version    Print the version
 ```
+
+### 📊 Status Bar & Shell Integration
+
+Display live scores in your terminal prompt, status bar or window manager:
+
+```bash
+# Plain text (scripts, Polybar, conky)
+kickoff bar -f plain
+
+# Tmux statusline (Linux, macOS, WSL)
+kickoff bar -f tmux
+
+# Waybar (Linux Hyprland / Sway JSON protocol)
+kickoff bar -f waybar
+
+# Starship prompt / Oh My Posh
+kickoff bar -f starship
+
+# Continuous daemon mode with desktop notifications on goals
+kickoff bar --watch --notify
+```
+
 
 <br/>
 
