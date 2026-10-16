@@ -201,4 +201,11 @@ var (
 	FooterKeyStyle = lipgloss.NewStyle().
 			Foreground(ColorText).
 			Bold(true)
+
+	OfflineBadgeStyle = lipgloss.NewStyle().
+			Foreground(ColorAccent).
+			Bold(true)
+
+	LiveBadgeStyle = lipgloss.NewStyle().
+			Foreground(ColorCategory)
 )

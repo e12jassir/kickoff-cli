@@ -140,6 +140,8 @@ type Match struct {
 	Attendance int           `json:"attendance"`
 	Broadcasts []string      `json:"broadcasts,omitempty"`
 	SlotIndex  int           `json:"slotIndex,omitempty"`
+	IsOffline  bool          `json:"isOffline,omitempty"`
+	CachedAt   time.Time     `json:"cachedAt,omitempty"`
 }
 
 // Channel represents an HLS stream signal for a match.
@@ -203,6 +205,8 @@ type MatchDetails struct {
 	Lineups    *MatchLineups `json:"lineups"`
 	Referee    string        `json:"referee"`
 	Attendance int           `json:"attendance"`
+	IsOffline  bool          `json:"isOffline,omitempty"`
+	CachedAt   time.Time     `json:"cachedAt,omitempty"`
 }
 
 // Client defines the contract for fetching fixtures and match details from ESPN.

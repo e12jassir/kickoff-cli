@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/rand/v2"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -17,10 +18,10 @@ import (
 
 const (
 	defaultBaseURL  = "https://site.api.espn.com/apis/site/v2/sports/soccer"
-	defaultCacheTTL = 300 * time.Second
-	liveCacheTTL    = 15 * time.Second
+	defaultCacheTTL = 30 * time.Second
+	liveCacheTTL    = 5 * time.Second
 	defaultTimeout  = 10 * time.Second
-	userAgent       = "Mozilla/5.0"
+	userAgent       = "kickoff-cli/1.0 (+https://github.com/e12jassir/kickoff-cli)"
 )
 
 type rawResponse struct {
@@ -180,12 +181,13 @@ type cachedData struct {
 
 // Client implements model.Client for fetching ESPN soccer fixtures.
 type Client struct {
-	baseURL    string
-	httpClient *http.Client
-	cacheDir   string
-	cacheTTL   time.Duration
-	loc        *time.Location
-	now        func() time.Time
+	baseURL      string
+	httpClient   *http.Client
+	cacheDir     string
+	cacheTTL     time.Duration
+	loc          *time.Location
+	now          func() time.Time
+	retryBackoff func() time.Duration
 }
 
 type Option func(*Client)
@@ -226,6 +228,12 @@ func WithNow(nowFunc func() time.Time) Option {
 	}
 }
 
+func WithRetryBackoff(fn func() time.Duration) Option {
+	return func(c *Client) {
+		c.retryBackoff = fn
+	}
+}
+
 func NewClient(opts ...Option) *Client {
 	cacheBase, err := os.UserCacheDir()
 	if err != nil || cacheBase == "" {
@@ -249,6 +257,9 @@ func NewClient(opts ...Option) *Client {
 		cacheTTL: defaultCacheTTL,
 		loc:      loc,
 		now:      time.Now,
+		retryBackoff: func() time.Duration {
+			return time.Duration(200+rand.IntN(301)) * time.Millisecond
+		},
 	}
 
 	for _, opt := range opts {
@@ -256,6 +267,37 @@ func NewClient(opts ...Option) *Client {
 	}
 
 	return c
+}
+
+// doWithRetry executes HTTP request with transient retry and backoff + jitter.
+func (c *Client) doWithRetry(req *http.Request) (*http.Response, error) {
+	const maxRetries = 2
+	var resp *http.Response
+	var err error
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		clonedReq := req.Clone(req.Context())
+		resp, err = c.httpClient.Do(clonedReq)
+		if err == nil {
+			return resp, nil
+		}
+
+		if req.Context().Err() != nil {
+			return nil, err
+		}
+
+		if attempt < maxRetries {
+			backoff := c.retryBackoff()
+			if backoff > 0 {
+				select {
+				case <-req.Context().Done():
+					return nil, req.Context().Err()
+				case <-time.After(backoff):
+				}
+			}
+		}
+	}
+	return nil, err
 }
 
 // WarmupCache concurrently pre-fetches all given leagues in the background.
@@ -318,7 +360,7 @@ func (c *Client) cacheFilePath(leagueKey string) string {
 	return filepath.Join(c.cacheDir, fmt.Sprintf("matches_%s.json", cleanKey))
 }
 
-func (c *Client) getCached(leagueKey string) ([]model.Match, bool) {
+func (c *Client) readDiskCache(leagueKey string) (*cachedData, bool) {
 	cachePath := c.cacheFilePath(leagueKey)
 	data, err := os.ReadFile(cachePath)
 	if err != nil {
@@ -327,7 +369,15 @@ func (c *Client) getCached(leagueKey string) ([]model.Match, bool) {
 
 	var cached cachedData
 	if err := json.Unmarshal(data, &cached); err != nil {
-		_ = os.Remove(cachePath)
+		return nil, false
+	}
+
+	return &cached, true
+}
+
+func (c *Client) getCached(leagueKey string) ([]model.Match, bool) {
+	cached, ok := c.readDiskCache(leagueKey)
+	if !ok {
 		return nil, false
 	}
 
@@ -346,6 +396,23 @@ func (c *Client) getCached(leagueKey string) ([]model.Match, bool) {
 	}
 
 	return cached.Matches, true
+}
+
+func (c *Client) fallbackMatches(leagueKey string, origErr error) ([]model.Match, error) {
+	if cached, ok := c.readDiskCache(leagueKey); ok && len(cached.Matches) > 0 {
+		matches := make([]model.Match, len(cached.Matches))
+		for i, m := range cached.Matches {
+			m.IsOffline = true
+			if c.loc != nil {
+				m.CachedAt = cached.CachedAt.In(c.loc)
+			} else {
+				m.CachedAt = cached.CachedAt
+			}
+			matches[i] = m
+		}
+		return matches, nil
+	}
+	return nil, origErr
 }
 
 func (c *Client) setCache(leagueKey string, matches []model.Match) {
@@ -373,24 +440,50 @@ func (c *Client) summaryCachePath(eventID string) string {
 	return filepath.Join(c.cacheDir, fmt.Sprintf("summary-%s.json", eventID))
 }
 
-func (c *Client) getCachedSummary(eventID string) (*model.MatchStats, *model.MatchLineups, string, int, bool) {
+func (c *Client) readDiskSummary(eventID string) (*cachedSummary, bool) {
 	cachePath := c.summaryCachePath(eventID)
 	data, err := os.ReadFile(cachePath)
 	if err != nil {
-		return nil, nil, "", 0, false
+		return nil, false
 	}
 
 	var cached cachedSummary
 	if err := json.Unmarshal(data, &cached); err != nil {
-		_ = os.Remove(cachePath)
-		return nil, nil, "", 0, false
+		return nil, false
+	}
+
+	return &cached, true
+}
+
+func (c *Client) getCachedSummary(eventID string) (*cachedSummary, bool) {
+	cached, ok := c.readDiskSummary(eventID)
+	if !ok {
+		return nil, false
 	}
 
 	if c.now().Sub(cached.CachedAt) > c.cacheTTL {
-		return nil, nil, "", 0, false
+		return nil, false
 	}
 
-	return cached.Stats, cached.Lineups, cached.Referee, cached.Attendance, true
+	return cached, true
+}
+
+func (c *Client) fallbackSummary(eventID string, origErr error) (*model.MatchDetails, error) {
+	if cached, ok := c.readDiskSummary(eventID); ok {
+		cachedAt := cached.CachedAt
+		if c.loc != nil {
+			cachedAt = cachedAt.In(c.loc)
+		}
+		return &model.MatchDetails{
+			Stats:      cached.Stats,
+			Lineups:    cached.Lineups,
+			Referee:    cached.Referee,
+			Attendance: cached.Attendance,
+			IsOffline:  true,
+			CachedAt:   cachedAt,
+		}, nil
+	}
+	return nil, origErr
 }
 
 func (c *Client) setCachedSummary(eventID string, stats *model.MatchStats, lineups *model.MatchLineups, referee string, attendance int) {
@@ -435,22 +528,19 @@ func (c *Client) FetchMatches(ctx context.Context, leagueKey string) ([]model.Ma
 	}
 	req.Header.Set("User-Agent", userAgent)
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doWithRetry(req)
 	if err != nil {
-		c.invalidateCache(leagueKey)
-		return nil, fmt.Errorf("network request failed: %w", err)
+		return c.fallbackMatches(leagueKey, fmt.Errorf("network request failed: %w", err))
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		c.invalidateCache(leagueKey)
-		return nil, fmt.Errorf("upstream espn returned status code %d", resp.StatusCode)
+		return c.fallbackMatches(leagueKey, fmt.Errorf("upstream espn returned status code %d", resp.StatusCode))
 	}
 
 	var raw rawResponse
 	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
-		c.invalidateCache(leagueKey)
-		return nil, fmt.Errorf("%w: %v", model.ErrCorruptedPayload, err)
+		return c.fallbackMatches(leagueKey, fmt.Errorf("%w: %v", model.ErrCorruptedPayload, err))
 	}
 
 	now := c.now().In(c.loc)
@@ -691,12 +781,18 @@ func (c *Client) FetchMatchDetails(ctx context.Context, leagueKey, eventID strin
 	}
 
 	if !model.IsForceRefresh(ctx) {
-		if stats, lineups, ref, att, found := c.getCachedSummary(eventID); found {
+		if cached, found := c.getCachedSummary(eventID); found {
+			cachedAt := cached.CachedAt
+			if c.loc != nil {
+				cachedAt = cachedAt.In(c.loc)
+			}
 			return &model.MatchDetails{
-				Stats:      stats,
-				Lineups:    lineups,
-				Referee:    ref,
-				Attendance: att,
+				Stats:      cached.Stats,
+				Lineups:    cached.Lineups,
+				Referee:    cached.Referee,
+				Attendance: cached.Attendance,
+				IsOffline:  false,
+				CachedAt:   cachedAt,
 			}, nil
 		}
 	}
@@ -706,23 +802,23 @@ func (c *Client) FetchMatchDetails(ctx context.Context, leagueKey, eventID strin
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return nil, nil
+		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("User-Agent", userAgent)
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doWithRetry(req)
 	if err != nil {
-		return nil, nil
+		return c.fallbackSummary(eventID, fmt.Errorf("network request failed: %w", err))
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, nil
+		return c.fallbackSummary(eventID, fmt.Errorf("upstream espn returned status code %d", resp.StatusCode))
 	}
 
 	var raw rawSummaryResponse
 	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
-		return nil, nil
+		return c.fallbackSummary(eventID, fmt.Errorf("%w: %v", model.ErrCorruptedPayload, err))
 	}
 
 	var stats *model.MatchStats
@@ -928,11 +1024,17 @@ func (c *Client) FetchMatchDetails(ctx context.Context, leagueKey, eventID strin
 	}
 
 	c.setCachedSummary(eventID, stats, lineups, referee, attendance)
+	now := c.now()
+	if c.loc != nil {
+		now = now.In(c.loc)
+	}
 	return &model.MatchDetails{
 		Stats:      stats,
 		Lineups:    lineups,
 		Referee:    referee,
 		Attendance: attendance,
+		IsOffline:  false,
+		CachedAt:   now,
 	}, nil
 }
 

@@ -2,6 +2,7 @@ package espn
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -173,12 +174,12 @@ func TestClient_FetchMatches(t *testing.T) {
 			expectError:   true,
 		},
 		{
-			name: "Upstream HTTP 500 error returns error and invalidates cache",
+			name: "Upstream HTTP 500 error without valid cache returns error without deleting cache",
 			handler: func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusInternalServerError)
 			},
 			preCache: func(dir string) {
-				// Pre-populate stale cache file to verify invalidation
+				// Pre-populate corrupted cache file to verify it's never removed on error
 				cachePath := filepath.Join(dir, "matches_champions.json")
 				_ = os.WriteFile(cachePath, []byte("stale data"), 0o644)
 			},
@@ -207,6 +208,7 @@ func TestClient_FetchMatches(t *testing.T) {
 				WithBaseURL(server.URL),
 				WithCacheDir(tempDir),
 				WithNow(func() time.Time { return fixedNow }),
+				WithRetryBackoff(func() time.Duration { return 0 }),
 			)
 
 			matches, err := client.FetchMatches(context.Background(), tt.leagueKey)
@@ -242,14 +244,158 @@ func TestClient_FetchMatches(t *testing.T) {
 				}
 			}
 
-			// If error expected and preCache existed, check that cache file was removed
+			// If error expected and preCache existed, verify cache file was NOT removed
 			if tt.expectError && tt.preCache != nil {
 				cachePath := filepath.Join(tempDir, fmt.Sprintf("matches_%s.json", tt.leagueKey))
-				if _, err := os.Stat(cachePath); !os.IsNotExist(err) {
-					t.Errorf("expected cache file to be invalidated/removed on error")
+				if _, err := os.Stat(cachePath); os.IsNotExist(err) {
+					t.Errorf("expected cache file to NOT be invalidated/removed on error")
 				}
 			}
 		})
+	}
+}
+
+func TestClient_FetchMatches_OfflineFallback(t *testing.T) {
+	fixedNow := time.Date(2026, 10, 13, 12, 0, 0, 0, time.FixedZone("America/Bogota", -5*3600))
+	cachedTime := fixedNow.Add(-10 * time.Minute)
+
+	// Server returning 500 error
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	tempDir, err := os.MkdirTemp("", "espn-offline-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	client := NewClient(
+		WithBaseURL(server.URL),
+		WithCacheDir(tempDir),
+		WithNow(func() time.Time { return fixedNow }),
+		WithRetryBackoff(func() time.Duration { return 0 }),
+	)
+
+	// Pre-populate disk cache with valid matches
+	cachedMatches := []model.Match{
+		{
+			ID:        "999",
+			Title:     "Real Madrid vs Barcelona",
+			LeagueKey: "laliga",
+			Status:    model.MatchStatus{State: "in", Description: "1T 25'"},
+		},
+	}
+	cachedBytes, _ := json.Marshal(cachedData{
+		CachedAt: cachedTime,
+		Matches:  cachedMatches,
+	})
+	cacheFile := filepath.Join(tempDir, "matches_laliga.json")
+	if err := os.WriteFile(cacheFile, cachedBytes, 0o644); err != nil {
+		t.Fatalf("failed to write cache file: %v", err)
+	}
+
+	// Fetch with force refresh so it attempts network, hits 500, and falls back to offline cache
+	ctx := model.WithForceRefresh(context.Background())
+	matches, err := client.FetchMatches(ctx, "laliga")
+	if err != nil {
+		t.Fatalf("expected nil error on offline fallback, got: %v", err)
+	}
+
+	if len(matches) != 1 {
+		t.Fatalf("expected 1 match from offline cache, got %d", len(matches))
+	}
+
+	m := matches[0]
+	if !m.IsOffline {
+		t.Errorf("expected match.IsOffline to be true, got false")
+	}
+	if !m.CachedAt.Equal(cachedTime) {
+		t.Errorf("expected match.CachedAt %v, got %v", cachedTime, m.CachedAt)
+	}
+	if m.ID != "999" {
+		t.Errorf("expected match ID 999, got %s", m.ID)
+	}
+
+	// Verify cache file was NOT deleted
+	if _, err := os.Stat(cacheFile); os.IsNotExist(err) {
+		t.Errorf("cache file was unexpectedly deleted")
+	}
+
+	// Simulate complete network failure (closed server)
+	server.Close()
+	matchesOffline, errOffline := client.FetchMatches(ctx, "laliga")
+	if errOffline != nil {
+		t.Fatalf("expected nil error when server is down, got: %v", errOffline)
+	}
+	if len(matchesOffline) != 1 || !matchesOffline[0].IsOffline {
+		t.Errorf("expected offline match on network failure")
+	}
+}
+
+func TestClient_FetchMatchDetails_OfflineFallback(t *testing.T) {
+	fixedNow := time.Date(2026, 10, 13, 12, 0, 0, 0, time.FixedZone("America/Bogota", -5*3600))
+	cachedTime := fixedNow.Add(-10 * time.Minute)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer server.Close()
+
+	tempDir, err := os.MkdirTemp("", "espn-summary-offline-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	client := NewClient(
+		WithBaseURL(server.URL),
+		WithCacheDir(tempDir),
+		WithNow(func() time.Time { return fixedNow }),
+		WithRetryBackoff(func() time.Duration { return 0 }),
+	)
+
+	// Pre-populate summary cache
+	sum := cachedSummary{
+		CachedAt: cachedTime,
+		Stats: &model.MatchStats{
+			HomeShots: "12",
+			AwayShots: "8",
+		},
+		Referee:    "Wilmar Roldan",
+		Attendance: 45000,
+	}
+	data, _ := json.Marshal(sum)
+	sumPath := filepath.Join(tempDir, "summary-event123.json")
+	if err := os.WriteFile(sumPath, data, 0o644); err != nil {
+		t.Fatalf("failed to write summary cache: %v", err)
+	}
+
+	ctx := model.WithForceRefresh(context.Background())
+	details, err := client.FetchMatchDetails(ctx, "laliga", "event123")
+	if err != nil {
+		t.Fatalf("expected nil error on offline fallback, got: %v", err)
+	}
+	if details == nil {
+		t.Fatalf("expected details, got nil")
+	}
+	if !details.IsOffline {
+		t.Errorf("expected details.IsOffline to be true, got false")
+	}
+	if !details.CachedAt.Equal(cachedTime) {
+		t.Errorf("expected details.CachedAt %v, got %v", cachedTime, details.CachedAt)
+	}
+	if details.Stats == nil || details.Stats.HomeShots != "12" {
+		t.Errorf("expected HomeShots 12, got %v", details.Stats)
+	}
+	if details.Referee != "Wilmar Roldan" {
+		t.Errorf("expected referee Wilmar Roldan, got %s", details.Referee)
+	}
+
+	// Verify summary cache file was not deleted
+	if _, err := os.Stat(sumPath); os.IsNotExist(err) {
+		t.Errorf("summary cache file was unexpectedly deleted")
 	}
 }
 

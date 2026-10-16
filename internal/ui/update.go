@@ -83,18 +83,14 @@ func (m Model) nextSyncInterval() time.Duration {
 		return 30 * time.Second
 	}
 	if len(m.matches) == 0 {
-		return 60 * time.Second
+		return 30 * time.Second
 	}
 
 	hasLive := false
 	hasUpcomingSoon := false
-	allFinished := true
 	now := time.Now()
 
 	for _, match := range m.matches {
-		if !match.Status.Completed && match.Status.State != "post" {
-			allFinished = false
-		}
 		if match.Status.State == "in" {
 			hasLive = true
 			break
@@ -105,13 +101,13 @@ func (m Model) nextSyncInterval() time.Duration {
 		}
 	}
 
-	if hasLive || hasUpcomingSoon {
+	if hasLive {
+		return 5 * time.Second
+	}
+	if hasUpcomingSoon {
 		return 15 * time.Second
 	}
-	if allFinished {
-		return 5 * time.Minute
-	}
-	return 60 * time.Second
+	return 30 * time.Second
 }
 
 func fetchMatchesCmd(client model.Client, leagueKey string) tea.Cmd {
@@ -215,9 +211,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, forceRefreshMatchesCmd(m.client, league.Key, true))
 
 			if m.state == StateChannelSelect && len(m.matches) > 0 && m.matchCursor < len(m.matches) {
-				selID := m.matches[m.matchCursor].ID
-				if selID != "" {
-					cmds = append(cmds, forceFetchMatchStatsCmd(m.client, league.Key, selID))
+				selMatch := m.matches[m.matchCursor]
+				if selMatch.ID != "" && selMatch.Status.State == "in" {
+					cmds = append(cmds, forceFetchMatchStatsCmd(m.client, league.Key, selMatch.ID))
 				}
 			}
 		}

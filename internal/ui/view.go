@@ -110,6 +110,30 @@ func renderBrowsing(m Model) string {
 	} else {
 		headerText = fmt.Sprintf("⚽ KICKOFF · %s %s", curr.Emoji, curr.Name)
 	}
+
+	var statusBadge string
+	if len(m.matches) > 0 && m.matches[0].IsOffline {
+		cachedTimeStr := "--:--"
+		if !m.matches[0].CachedAt.IsZero() {
+			cachedTimeStr = m.matches[0].CachedAt.Format("15:04")
+		}
+		statusBadge = OfflineBadgeStyle.Render(fmt.Sprintf("[OFFLINE · cached at %s]", cachedTimeStr))
+	} else {
+		hasLive := false
+		for _, match := range m.matches {
+			if match.Status.State == "in" {
+				hasLive = true
+				break
+			}
+		}
+		if hasLive {
+			statusBadge = LiveBadgeStyle.Render("[LIVE · 5s sync]")
+		}
+	}
+
+	if statusBadge != "" {
+		headerText += "  " + statusBadge
+	}
 	header := AppTitleStyle.Render(headerText)
 
 	var body string

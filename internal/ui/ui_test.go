@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/e12jassir/kickoff-cli/internal/model"
@@ -976,4 +977,135 @@ func TestModel_NoEmoji(t *testing.T) {
 		t.Errorf("did not expect trophy emoji in no-emoji view:\n%s", viewNoEmoji)
 	}
 }
+
+func TestModel_FastSyncIntervals(t *testing.T) {
+	client := &mockClient{}
+	cat := &mockCatalog{}
+	p := &mockPlayer{}
+	m := NewModel(client, cat, p)
+
+	// 1. Outside browsing (StateMainMenu) -> 30s
+	if interval := m.nextSyncInterval(); interval != 30*time.Second {
+		t.Errorf("expected 30s in StateMainMenu, got %v", interval)
+	}
+
+	m.state = StateBrowsing
+
+	// 2. No matches -> 30s
+	m.matches = nil
+	if interval := m.nextSyncInterval(); interval != 30*time.Second {
+		t.Errorf("expected 30s for empty matches, got %v", interval)
+	}
+
+	// 3. Live match -> 5s
+	m.matches = []model.Match{
+		{
+			ID:     "1",
+			Status: model.MatchStatus{State: "in"},
+		},
+	}
+	if interval := m.nextSyncInterval(); interval != 5*time.Second {
+		t.Errorf("expected 5s when match is live, got %v", interval)
+	}
+
+	// 4. Upcoming soon match (within 15 minutes) -> 15s
+	m.matches = []model.Match{
+		{
+			ID:        "2",
+			StartTime: time.Now().Add(5 * time.Minute),
+			Status:    model.MatchStatus{State: "pre"},
+		},
+	}
+	if interval := m.nextSyncInterval(); interval != 15*time.Second {
+		t.Errorf("expected 15s for upcoming soon match, got %v", interval)
+	}
+
+	// 5. General browsing / far in future / finished -> 30s
+	m.matches = []model.Match{
+		{
+			ID:        "3",
+			StartTime: time.Now().Add(3 * time.Hour),
+			Status:    model.MatchStatus{State: "pre"},
+		},
+		{
+			ID:        "4",
+			StartTime: time.Now().Add(-3 * time.Hour),
+			Status:    model.MatchStatus{State: "post", Completed: true},
+		},
+	}
+	if interval := m.nextSyncInterval(); interval != 30*time.Second {
+		t.Errorf("expected 30s for general browsing, got %v", interval)
+	}
+}
+
+func TestModel_OfflineBadgeRendering(t *testing.T) {
+	client := &mockClient{}
+	cat := &mockCatalog{}
+	p := &mockPlayer{}
+	m := NewModel(client, cat, p)
+	m.state = StateBrowsing
+
+	cachedTime := time.Date(2026, 10, 16, 14, 30, 0, 0, time.Local)
+	m.matches = []model.Match{
+		{
+			ID:        "101",
+			Title:     "Arsenal vs Chelsea",
+			IsOffline: true,
+			CachedAt:  cachedTime,
+			Status:    model.MatchStatus{State: "post", Description: "Final"},
+		},
+	}
+
+	view := m.View()
+	expectedBadge := "[OFFLINE · cached at 14:30]"
+	if !strings.Contains(view, expectedBadge) {
+		t.Errorf("expected %q in view, got:\n%s", expectedBadge, view)
+	}
+}
+
+func TestModel_LiveBadgeRendering(t *testing.T) {
+	client := &mockClient{}
+	cat := &mockCatalog{}
+	p := &mockPlayer{}
+	m := NewModel(client, cat, p)
+	m.state = StateBrowsing
+
+	m.matches = []model.Match{
+		{
+			ID:        "102",
+			Title:     "Liverpool vs Man City",
+			IsOffline: false,
+			Status:    model.MatchStatus{State: "in", Description: "1T 30'"},
+		},
+	}
+
+	view := m.View()
+	expectedBadge := "[LIVE · 5s sync]"
+	if !strings.Contains(view, expectedBadge) {
+		t.Errorf("expected %q in view, got:\n%s", expectedBadge, view)
+	}
+}
+
+func TestModel_AutoSyncTickMsg_LiveMatchModal(t *testing.T) {
+	client := &mockClient{}
+	cat := &mockCatalog{}
+	p := &mockPlayer{}
+	m := NewModel(client, cat, p)
+	m.state = StateChannelSelect
+	m.matchCursor = 0
+	m.matches = []model.Match{
+		{
+			ID:        "live-1",
+			Title:     "Junior vs Nacional",
+			Status:    model.MatchStatus{State: "in"},
+			LeagueKey: "colombia",
+		},
+	}
+
+	_, cmd := m.Update(autoSyncTickMsg(time.Now()))
+	if cmd == nil {
+		t.Fatalf("expected batch commands on autoSyncTickMsg, got nil")
+	}
+}
+
 
