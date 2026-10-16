@@ -1058,6 +1058,8 @@ func (c *Client) FetchMatchDetails(ctx context.Context, leagueKey, eventID strin
 				Lineups:    cached.Lineups,
 				Referee:    cached.Referee,
 				Attendance: cached.Attendance,
+				HomeCoach:  cached.HomeCoach,
+				AwayCoach:  cached.AwayCoach,
 				IsOffline:  false,
 				CachedAt:   cachedAt,
 			}, nil
