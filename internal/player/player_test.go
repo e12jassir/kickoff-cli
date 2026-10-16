@@ -39,7 +39,7 @@ func TestBuildArgs(t *testing.T) {
 	req := model.PlayRequest{
 		Channel: model.Channel{
 			Name:        "Sports HD (720p)",
-			URL:         "https://test.boldmss.com/live/feed.m3u8",
+			URL:         "https://example.invalid/live/feed.m3u8",
 			BitrateMode: "min",
 		},
 		Match: model.Match{
@@ -65,8 +65,8 @@ func TestBuildArgs(t *testing.T) {
 		"--network-timeout=20",
 		"--input-ipc-server=/tmp/mock.sock",
 		"--title=kickoff: Barcelona vs Galatasaray (Sports HD (720p))",
-		// Sanitized URL check (must be http, not https)
-		"http://test.boldmss.com/live/feed.m3u8",
+		// Sanitized URL check (valid RFC domain and scheme preserved)
+		"https://example.invalid/live/feed.m3u8",
 	}
 
 	argStr := strings.Join(args, " ")
@@ -176,7 +176,7 @@ func TestController_Lifecycle_PrematureExit(t *testing.T) {
 	defer ctrl.Stop()
 
 	req := model.PlayRequest{
-		Channel: model.Channel{Name: "Test Channel", URL: "http://example.com/test.m3u8"},
+		Channel: model.Channel{Name: "Test Channel", URL: "http://example.invalid/test.m3u8"},
 		Match:   model.Match{Title: "Team A vs Team B"},
 	}
 
@@ -209,7 +209,7 @@ func TestController_Lifecycle_Timeout(t *testing.T) {
 	defer ctrl.Stop()
 
 	req := model.PlayRequest{
-		Channel: model.Channel{Name: "Test Channel", URL: "http://example.com/test.m3u8"},
+		Channel: model.Channel{Name: "Test Channel", URL: "http://example.invalid/test.m3u8"},
 		Match:   model.Match{Title: "Team A vs Team B"},
 	}
 

@@ -2,6 +2,7 @@ package model
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 )
@@ -149,6 +150,30 @@ type Channel struct {
 	Resolution  string `json:"resolution"`  // "720p", "1080p"
 	BitrateMode string `json:"bitrateMode"` // "min", "max"
 	Recommended bool   `json:"recommended"`
+}
+
+// UnmarshalJSON implements custom JSON unmarshaling for Channel to support
+// both camelCase ("bitrateMode") and snake_case ("bitrate_mode") fields.
+func (c *Channel) UnmarshalJSON(data []byte) error {
+	type channelAlias Channel
+	var aux struct {
+		channelAlias
+		BitrateModeSnake string `json:"bitrate_mode"`
+		DisplayNameSnake string `json:"display_name"`
+	}
+
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+
+	*c = Channel(aux.channelAlias)
+	if c.BitrateMode == "" && aux.BitrateModeSnake != "" {
+		c.BitrateMode = aux.BitrateModeSnake
+	}
+	if c.DisplayName == "" && aux.DisplayNameSnake != "" {
+		c.DisplayName = aux.DisplayNameSnake
+	}
+	return nil
 }
 
 // PlayRequest contains parameters required to launch playback.

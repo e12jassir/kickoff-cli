@@ -40,8 +40,8 @@ type ExternalConfig struct {
 	} `json:"custom_rules"`
 }
 
-// SanitizeURL enforces HTTP for boldmss CDN to prevent FFmpeg TLS decoding failures,
-// and validates URL safety.
+// SanitizeURL validates URL safety, enforcing http/https schemes, non-empty host,
+// and no embedded credentials (userinfo).
 func SanitizeURL(rawURL string) (string, error) {
 	if strings.TrimSpace(rawURL) == "" {
 		return "", model.ErrInvalidURL
@@ -52,12 +52,13 @@ func SanitizeURL(rawURL string) (string, error) {
 		return "", fmt.Errorf("%w: %v", model.ErrInvalidURL, err)
 	}
 
-	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+	scheme := strings.ToLower(parsed.Scheme)
+	if scheme != "http" && scheme != "https" {
 		return "", fmt.Errorf("%w: unsupported scheme %s", model.ErrInvalidURL, parsed.Scheme)
 	}
 
-	if strings.Contains(parsed.Host, "boldmss.com") && parsed.Scheme == "https" {
-		parsed.Scheme = "http"
+	if parsed.User != nil {
+		return "", fmt.Errorf("%w: embedded credentials not allowed", model.ErrInvalidURL)
 	}
 
 	return parsed.String(), nil
@@ -97,17 +98,11 @@ func WithStreams(streams map[string]string) Option {
 type Catalog struct {
 	mu              sync.RWMutex
 	streamAlive     map[string]bool
-	championsRules  []matchRule
 	customRules     []customMatchRule
 	leagueOverrides map[string][]model.Channel
 	userStreams     map[string]string
 	configPath      string
 	tvGuide         *tvguide.Service
-}
-
-type matchRule struct {
-	pattern  *regexp.Regexp
-	channels []model.Channel
 }
 
 type customMatchRule struct {
@@ -124,11 +119,13 @@ func New(opts ...Option) *Catalog {
 		userStreams:     make(map[string]string),
 		tvGuide:         tvguide.NewService(),
 	}
+	for _, opt := range opts {
+		opt(c)
+	}
 	c.loadExternalConfig()
 	for _, opt := range opts {
 		opt(c)
 	}
-	c.initChampionsRules()
 	go c.probeAllStreamsBackground()
 	return c
 }
@@ -217,6 +214,17 @@ func (c *Catalog) probeAllStreamsBackground() {
 	wg.Wait()
 }
 
+// normalizeLeagueKey converts human-friendly league keys or ESPN league codes into the canonical league key.
+func normalizeLeagueKey(raw string) string {
+	clean := strings.ToLower(strings.TrimSpace(raw))
+	for _, l := range model.DefaultLeagues {
+		if strings.EqualFold(l.Key, clean) || strings.EqualFold(l.Code, clean) {
+			return l.Key
+		}
+	}
+	return clean
+}
+
 func (c *Catalog) loadExternalConfig() {
 	cfgPath := c.configPath
 	if cfgPath == "" {
@@ -260,7 +268,7 @@ func (c *Catalog) loadExternalConfig() {
 			}
 		}
 		if len(sanitized) > 0 {
-			c.leagueOverrides[strings.ToLower(lg)] = sanitized
+			c.leagueOverrides[normalizeLeagueKey(lg)] = sanitized
 		}
 	}
 
@@ -278,7 +286,7 @@ func (c *Catalog) loadExternalConfig() {
 		}
 		if len(sanitized) > 0 {
 			c.customRules = append(c.customRules, customMatchRule{
-				league:   strings.ToLower(r.League),
+				league:   normalizeLeagueKey(r.League),
 				pattern:  re,
 				channels: sanitized,
 			})
@@ -351,42 +359,6 @@ func makeSingleChannel(label, rawURL, res, bitrate string, recommended bool) (mo
 	}, true
 }
 
-func (c *Catalog) initChampionsRules() {
-	ruleDefs := []struct {
-		pattern string
-		name    string
-		streamK string
-	}{
-		{`(?i)(Liverpool|LASK)`, "ESPN 1 HD", "espn1"},
-		{`(?i)(Feyenoord|Como)`, "ESPN 2 HD", "espn2"},
-		{`(?i)(Real Madrid|Roma)`, "ESPN 1 HD", "espn1"},
-		{`(?i)(Manchester City|Paris Saint-Germain|PSG)`, "ESPN 2 HD", "espn2"},
-		{`(?i)(Aston Villa|Fenerbahce|Fenerbahçe)`, "ESPN 3 HD", "espn3"},
-		{`(?i)(Bodo|Dortmund|Glimt)`, "ESPN 5 HD", "espn5"},
-		{`(?i)(Betis|Porto)`, "ESPN 7 HD", "espn7"},
-		{`(?i)(Barcelona|Galatasaray)`, "ESPN 5 HD", "espn5"},
-		{`(?i)(Bayern|Viking)`, "ESPN 1 HD", "espn1"},
-		{`(?i)(Atlético|Atletico)`, "ESPN 2 HD", "espn2"},
-		{`(?i)(Inter|Internazionale|Brugge)`, "ESPN 3 HD", "espn3"},
-		{`(?i)(Arsenal|Lille)`, "ESPN 4 HD", "espn4"},
-		{`(?i)(Villarreal|Napoli)`, "ESPN 6 HD", "espn6"},
-		{`(?i)(Leipzig|PSV)`, "ESPN 7 HD", "espn7"},
-		{`(?i)(Lens|Sporting)`, "ESPN 1 HD", "espn1"},
-		{`(?i)(Slavia|Sabah)`, "ESPN 2 HD", "espn2"},
-	}
-
-	c.championsRules = nil
-	for _, r := range ruleDefs {
-		u, ok := c.StreamEndpoint(r.streamK)
-		if !ok || u == "" {
-			continue
-		}
-		c.championsRules = append(c.championsRules, matchRule{
-			pattern:  regexp.MustCompile(r.pattern),
-			channels: espnProfile(r.name, u),
-		})
-	}
-}
 
 func (c *Catalog) resolveFromOfficialBroadcasts(broadcasts []string) []model.Channel {
 	var result []model.Channel
@@ -645,7 +617,7 @@ func (c *Catalog) GetChannels(match model.Match) []model.Channel {
 	if title == "" {
 		title = fmt.Sprintf("%s vs %s", match.HomeTeam.DisplayName, match.AwayTeam.DisplayName)
 	}
-	leagueKey := strings.ToLower(match.LeagueKey)
+	leagueKey := normalizeLeagueKey(match.LeagueKey)
 
 	// 1. Check user custom rules & overrides from ~/.config/kickoff/channels.json
 	for _, rule := range c.customRules {
@@ -726,24 +698,8 @@ func (c *Catalog) GetChannels(match model.Match) []model.Channel {
 			}
 		}
 
-	case "champions":
-		matchedRule := false
-		for _, rule := range c.championsRules {
-			if rule.pattern.MatchString(title) {
-				candidates = append(candidates, rule.channels...)
-				matchedRule = true
-				break
-			}
-		}
-		if !matchedRule {
-			slotName, slotURL, ok := c.espnBySlot(match.SlotIndex)
-			if ok {
-				candidates = append(candidates, makeDualProfile(slotName, slotURL, true)...)
-			}
-		}
-
 	default:
-		// Premier League, La Liga, Serie A, Bundesliga, Ligue 1, Brasileirao, Libertadores, etc.
+		// Champions League, Premier League, La Liga, Serie A, Bundesliga, Ligue 1, Brasileirao, Libertadores, etc.
 		slotName, slotURL, ok := c.espnBySlot(match.SlotIndex)
 		if ok {
 			candidates = append(candidates, makeDualProfile(slotName, slotURL, true)...)

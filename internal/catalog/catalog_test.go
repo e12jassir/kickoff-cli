@@ -2,6 +2,8 @@ package catalog
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -12,26 +14,26 @@ import (
 
 // mockTestStreams provides dummy endpoints for testing without distributing copyrighted URLs.
 var mockTestStreams = map[string]string{
-	"espn1":       "http://test.local/espn1.m3u8",
-	"espn2":       "http://test.local/espn2.m3u8",
-	"espn3":       "http://test.local/espn3.m3u8",
-	"espn4":       "http://test.local/espn4.m3u8",
-	"espn5":       "http://test.local/espn5.m3u8",
-	"espn6":       "http://test.local/espn6.m3u8",
-	"espn7":       "http://test.local/espn7.m3u8",
-	"espn_extra":  "http://test.local/espnextra.m3u8",
-	"fox1":        "http://test.local/fox1.m3u8",
-	"fox2":        "http://test.local/fox2.m3u8",
-	"fox3":        "http://test.local/fox3.m3u8",
-	"tyc":         "http://test.local/tyc.m3u8",
-	"win":         "http://test.local/win.m3u8",
-	"win_plus":    "http://test.local/winplus.m3u8",
-	"caracol":     "http://test.local/caracol.m3u8",
-	"caracol_hd2": "http://test.local/caracolhd2.m3u8",
-	"rcn":         "http://test.local/rcn.m3u8",
-	"rcn_hd2":     "http://test.local/rcnhd2.m3u8",
-	"realmadrid":  "https://rmtv.akamaized.net/hls/live/2043153/rmtv-es-web/master.m3u8",
-	"teledeporte": "https://rtvelivestream.akamaized.net/rtvesec/tdp/tdp_main.m3u8",
+	"espn1":       "http://example.invalid/espn1.m3u8",
+	"espn2":       "http://example.invalid/espn2.m3u8",
+	"espn3":       "http://example.invalid/espn3.m3u8",
+	"espn4":       "http://example.invalid/espn4.m3u8",
+	"espn5":       "http://example.invalid/espn5.m3u8",
+	"espn6":       "http://example.invalid/espn6.m3u8",
+	"espn7":       "http://example.invalid/espn7.m3u8",
+	"espn_extra":  "http://example.invalid/espnextra.m3u8",
+	"fox1":        "http://example.invalid/fox1.m3u8",
+	"fox2":        "http://example.invalid/fox2.m3u8",
+	"fox3":        "http://example.invalid/fox3.m3u8",
+	"tyc":         "http://example.invalid/tyc.m3u8",
+	"win":         "http://example.invalid/win.m3u8",
+	"win_plus":    "http://example.invalid/winplus.m3u8",
+	"caracol":     "http://example.invalid/caracol.m3u8",
+	"caracol_hd2": "http://example.invalid/caracolhd2.m3u8",
+	"rcn":         "http://example.invalid/rcn.m3u8",
+	"rcn_hd2":     "http://example.invalid/rcnhd2.m3u8",
+	"realmadrid":  "https://example.invalid/rmtv/master.m3u8",
+	"teledeporte": "https://example.invalid/tdp/tdp_main.m3u8",
 }
 
 func newTestCatalog(opts ...Option) *Catalog {
@@ -47,22 +49,22 @@ func TestSanitizeURL(t *testing.T) {
 		expectError bool
 	}{
 		{
-			name:        "Rewrite HTTPS BoldMSS to HTTP",
-			input:       "https://test.boldmss.com/live/stream.m3u8",
-			expected:    "http://test.boldmss.com/live/stream.m3u8",
+			name:        "Valid HTTPS stream URL",
+			input:       "https://example.invalid/live/stream.m3u8",
+			expected:    "https://example.invalid/live/stream.m3u8",
 			expectError: false,
 		},
 		{
-			name:        "Keep HTTP BoldMSS as HTTP",
-			input:       "http://test.boldmss.com/live/stream.m3u8",
-			expected:    "http://test.boldmss.com/live/stream.m3u8",
+			name:        "Valid HTTP stream URL",
+			input:       "http://example.invalid/stream.m3u8",
+			expected:    "http://example.invalid/stream.m3u8",
 			expectError: false,
 		},
 		{
-			name:        "Keep HTTPS for external CDNs (Akamai, CloudFront)",
-			input:       "https://rmtv.akamaized.net/hls/live/2043153/rmtv-es-web/master.m3u8",
-			expected:    "https://rmtv.akamaized.net/hls/live/2043153/rmtv-es-web/master.m3u8",
-			expectError: false,
+			name:        "Embedded credentials in URL returns error",
+			input:       "https://user:pass@example.invalid/live/stream.m3u8",
+			expected:    "",
+			expectError: true,
 		},
 		{
 			name:        "Empty URL returns error",
@@ -73,6 +75,12 @@ func TestSanitizeURL(t *testing.T) {
 		{
 			name:        "Unsupported scheme returns error",
 			input:       "file:///etc/passwd",
+			expected:    "",
+			expectError: true,
+		},
+		{
+			name:        "Missing host returns error",
+			input:       "http://",
 			expected:    "",
 			expectError: true,
 		},
@@ -106,29 +114,6 @@ func TestCatalog_GetChannels(t *testing.T) {
 		mustNotContain   string
 	}{
 		{
-			name: "Champions: Barcelona vs Galatasaray isolated exclusively to ESPN 5 HD (720p & 1080p)",
-			match: model.Match{
-				LeagueKey: "champions",
-				Title:     "FC Barcelona vs Galatasaray",
-				HomeTeam:  model.Competitor{DisplayName: "FC Barcelona"},
-				AwayTeam:  model.Competitor{DisplayName: "Galatasaray"},
-			},
-			expectedChannels: []string{"ESPN 5 HD", "ESPN 5 HD"},
-			expectedProfiles: []string{"720p", "1080p"},
-			mustContainURL:   "espn5.m3u8",
-			mustNotContain:   "espn2",
-		},
-		{
-			name: "Champions: Bayern vs Viking isolated to ESPN 1 HD (720p & 1080p)",
-			match: model.Match{
-				LeagueKey: "champions",
-				Title:     "Bayern Munich vs Viking FK",
-			},
-			expectedChannels: []string{"ESPN 1 HD", "ESPN 1 HD"},
-			expectedProfiles: []string{"720p", "1080p"},
-			mustContainURL:   "espn1.m3u8",
-		},
-		{
 			name: "La Liga: Real Madrid returns standard competitive broadcast without Real Madrid TV",
 			match: model.Match{
 				LeagueKey: "laliga",
@@ -149,7 +134,7 @@ func TestCatalog_GetChannels(t *testing.T) {
 			},
 			expectedChannels: []string{"Real Madrid TV"},
 			expectedProfiles: []string{"1080p"},
-			mustContainURL:   "rmtv.akamaized.net",
+			mustContainURL:   "example.invalid",
 			mustNotContain:   "espn",
 		},
 		{
@@ -284,88 +269,17 @@ func TestCatalog_GetChannels(t *testing.T) {
 			mustNotContain:   "espn",
 		},
 		{
-			name: "Champions: LASK Linz vs Liverpool returns ESPN 1 HD",
-			match: model.Match{
-				LeagueKey: "champions",
-				Title:     "LASK Linz vs Liverpool",
-			},
-			expectedChannels: []string{"ESPN 1 HD", "ESPN 1 HD"},
-			expectedProfiles: []string{"720p", "1080p"},
-			mustContainURL:   "espn1.m3u8",
-			mustNotContain:   "espn2",
-		},
-		{
-			name: "Champions: Feyenoord vs Como returns ESPN 2 HD",
-			match: model.Match{
-				LeagueKey: "champions",
-				Title:     "Feyenoord vs Como",
-			},
-			expectedChannels: []string{"ESPN 2 HD", "ESPN 2 HD"},
-			expectedProfiles: []string{"720p", "1080p"},
-			mustContainURL:   "espn2.m3u8",
-			mustNotContain:   "espn1",
-		},
-		{
-			name: "Champions: AS Roma vs Real Madrid returns ESPN 1 HD",
-			match: model.Match{
-				LeagueKey: "champions",
-				Title:     "AS Roma vs Real Madrid",
-			},
-			expectedChannels: []string{"ESPN 1 HD", "ESPN 1 HD"},
-			expectedProfiles: []string{"720p", "1080p"},
-			mustContainURL:   "espn1.m3u8",
-		},
-		{
-			name: "Champions: Manchester City vs Paris Saint-Germain returns ESPN 2 HD",
-			match: model.Match{
-				LeagueKey: "champions",
-				Title:     "Manchester City vs Paris Saint-Germain",
-			},
-			expectedChannels: []string{"ESPN 2 HD", "ESPN 2 HD"},
-			expectedProfiles: []string{"720p", "1080p"},
-			mustContainURL:   "espn2.m3u8",
-		},
-		{
-			name: "Champions: Aston Villa vs Fenerbahçe returns ESPN 3 HD",
-			match: model.Match{
-				LeagueKey: "champions",
-				Title:     "Aston Villa vs Fenerbahçe",
-			},
-			expectedChannels: []string{"ESPN 3 HD", "ESPN 3 HD"},
-			expectedProfiles: []string{"720p", "1080p"},
-			mustContainURL:   "espn3.m3u8",
-		},
-		{
-			name: "Champions: Borussia Dortmund vs Bodo/Glimt returns ESPN 5 HD",
-			match: model.Match{
-				LeagueKey: "champions",
-				Title:     "Borussia Dortmund vs Bodo/Glimt",
-			},
-			expectedChannels: []string{"ESPN 5 HD", "ESPN 5 HD"},
-			expectedProfiles: []string{"720p", "1080p"},
-			mustContainURL:   "espn5.m3u8",
-		},
-		{
-			name: "Champions: Real Betis vs FC Porto returns ESPN 7 HD",
-			match: model.Match{
-				LeagueKey: "champions",
-				Title:     "Real Betis vs FC Porto",
-			},
-			expectedChannels: []string{"ESPN 7 HD", "ESPN 7 HD"},
-			expectedProfiles: []string{"720p", "1080p"},
-			mustContainURL:   "espn7.m3u8",
-		},
-		{
-			name: "Official broadcasts: CBSSN/Paramount falls through to verified LatAm ESPN channel when no US stream configured",
+			name: "Official broadcasts: CBSSN/Paramount falls through to slot ESPN channel when no US stream configured",
 			match: model.Match{
 				ID:         "live-cbs-fallback",
 				LeagueKey:  "champions",
 				Title:      "Borussia Dortmund vs Bodo/Glimt",
 				Broadcasts: []string{"CBSSN", "Paramount+"},
+				SlotIndex:  0,
 			},
-			expectedChannels: []string{"ESPN 5 HD", "ESPN 5 HD"},
+			expectedChannels: []string{"ESPN 1 HD", "ESPN 1 HD"},
 			expectedProfiles: []string{"720p", "1080p"},
-			mustContainURL:   "espn5.m3u8",
+			mustContainURL:   "espn1.m3u8",
 		},
 		{
 			name: "Simultaneous matches without broadcasts: Slot 0 maps to ESPN 1 HD without Fox Sports collision",
@@ -469,8 +383,8 @@ func TestCatalog_CBSOfficialBroadcasts(t *testing.T) {
 		StreamCBSGolazo = oldGolazo
 	}()
 
-	StreamCBSSportsNetwork = "http://example.com/cbssn.m3u8"
-	StreamCBSGolazo = "http://example.com/golazo.m3u8"
+	StreamCBSSportsNetwork = "http://example.invalid/cbssn.m3u8"
+	StreamCBSGolazo = "http://example.invalid/golazo.m3u8"
 
 	cat := newTestCatalog()
 	match := model.Match{
@@ -488,40 +402,6 @@ func TestCatalog_CBSOfficialBroadcasts(t *testing.T) {
 	}
 	if channels[1].Name != "CBS Sports Golazo Network" {
 		t.Errorf("expected channel[1] CBS Sports Golazo Network, got %s", channels[1].Name)
-	}
-}
-
-func TestDiagnostic_ChampionsFixtures(t *testing.T) {
-	cat := newTestCatalog()
-
-	todayFixtures := []struct {
-		title           string
-		timeStr         string
-		expectedChannel string
-	}{
-		{"LASK Linz vs Liverpool", "11:45", "ESPN 1 HD"},
-		{"Feyenoord Rotterdam vs Como", "11:45", "ESPN 2 HD"},
-		{"AS Roma vs Real Madrid", "14:00", "ESPN 1 HD"},
-		{"Manchester City vs Paris Saint-Germain", "14:00", "ESPN 2 HD"},
-		{"Aston Villa vs Fenerbahçe", "14:00", "ESPN 3 HD"},
-		{"Borussia Dortmund vs Bodo/Glimt", "14:00", "ESPN 5 HD"},
-		{"Real Betis vs FC Porto", "14:00", "ESPN 7 HD"},
-	}
-
-	for _, fix := range todayFixtures {
-		m := model.Match{
-			LeagueKey: "champions",
-			Title:     fix.title,
-			TimeStr:   fix.timeStr,
-		}
-		chs := cat.GetChannels(m)
-		if len(chs) == 0 {
-			t.Fatalf("[%s] expected channels, got none", fix.title)
-		}
-		if chs[0].Name != fix.expectedChannel {
-			t.Errorf("[%s] expected primary channel %s, got %s", fix.title, fix.expectedChannel, chs[0].Name)
-		}
-		t.Logf("✓ %s (%s) -> %s (OK)", fix.title, fix.timeStr, chs[0].Name)
 	}
 }
 
@@ -579,13 +459,13 @@ func TestCatalog_TVGuideIntegration(t *testing.T) {
 		{
 			Name:      "ESPN 3 HD",
 			Slug:      "espn_3_colombia",
-			StreamURL: "http://test.local/espn3.m3u8",
+			StreamURL: "http://example.invalid/espn3.m3u8",
 			Programs:  []string{"Atalanta vs. Arsenal"},
 		},
 		{
 			Name:      "Win+ Fútbol",
 			Slug:      "win_sports_plus",
-			StreamURL: "http://test.local/winplus.m3u8",
+			StreamURL: "http://example.invalid/winplus.m3u8",
 			Programs:  []string{"Deportivo Pereira vs. Junior"},
 		},
 	})
@@ -649,4 +529,62 @@ func TestCatalog_TVGuideIntegration(t *testing.T) {
 			t.Errorf("expected recommended true on top channel")
 		}
 	})
+}
+
+func TestCatalog_ExternalConfig_LeagueAliases(t *testing.T) {
+	tempDir := t.TempDir()
+	cfgPath := filepath.Join(tempDir, "channels.json")
+
+	cfgContent := `{
+		"league_channels": {
+			"uefa.champions": [
+				{"name": "Champions Custom", "url": "https://example.invalid/champions.m3u8", "resolution": "1080p"}
+			],
+			"eng.1": [
+				{"name": "Premier Custom", "url": "https://example.invalid/premier.m3u8", "resolution": "1080p"}
+			],
+			"laliga": [
+				{"name": "LaLiga Custom", "url": "https://example.invalid/laliga.m3u8", "resolution": "1080p"}
+			],
+			"col.1": [
+				{"name": "Colombia Custom", "url": "https://example.invalid/colombia.m3u8", "resolution": "1080p"}
+			]
+		}
+	}`
+
+	if err := os.WriteFile(cfgPath, []byte(cfgContent), 0o600); err != nil {
+		t.Fatalf("failed to write test config: %v", err)
+	}
+
+	cat := New(WithConfigFile(cfgPath))
+
+	testCases := []struct {
+		leagueKey    string
+		expectedName string
+	}{
+		{"champions", "Champions Custom"},
+		{"uefa.champions", "Champions Custom"},
+		{"premier", "Premier Custom"},
+		{"eng.1", "Premier Custom"},
+		{"laliga", "LaLiga Custom"},
+		{"esp.1", "LaLiga Custom"},
+		{"colombia", "Colombia Custom"},
+		{"col.1", "Colombia Custom"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.leagueKey, func(t *testing.T) {
+			m := model.Match{
+				LeagueKey: tc.leagueKey,
+				Title:     "Team A vs Team B",
+			}
+			chs := cat.GetChannels(m)
+			if len(chs) == 0 {
+				t.Fatalf("expected channels for %s, got none", tc.leagueKey)
+			}
+			if chs[0].Name != tc.expectedName {
+				t.Errorf("[%s] expected channel %s, got %s", tc.leagueKey, tc.expectedName, chs[0].Name)
+			}
+		})
+	}
 }

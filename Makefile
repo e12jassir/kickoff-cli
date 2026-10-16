@@ -16,7 +16,7 @@ setup-channels:
 	@mkdir -p $(CONFIG_DIR)
 	@if [ ! -f $(CONFIG_DIR)/channels.json ]; then \
 		echo "Inicializando configuración de canales en $(CONFIG_DIR)/channels.json..."; \
-		cp -n assets/channels.default.json $(CONFIG_DIR)/channels.json 2>/dev/null || true; \
+		cp -n channels.json.example $(CONFIG_DIR)/channels.json 2>/dev/null || true; \
 	fi
 
 install: build setup-channels

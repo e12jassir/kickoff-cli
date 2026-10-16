@@ -2,3 +2,8 @@ bin/
 *.exe
 .DS_Store
 *.log
+
+# Local strategy docs and agent artifacts
+.atl/
+PLAN-10-10.md
+PROPUESTAS_*.md

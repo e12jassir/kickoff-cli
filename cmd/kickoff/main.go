@@ -23,6 +23,16 @@ func main() {
 
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
+		case "init":
+			initFlags := flag.NewFlagSet("init", flag.ExitOnError)
+			force := initFlags.Bool("force", false, "Sobrescribir archivo existente")
+			initFlags.BoolVar(force, "f", false, "Sobrescribir archivo existente (abreviado)")
+			_ = initFlags.Parse(os.Args[2:])
+			if err := RunInit(*force); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			os.Exit(0)
 		case "update":
 			if err := updater.SelfUpdate(context.Background(), "", version); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -41,6 +51,7 @@ func main() {
 			fmt.Printf("kickoff v%s — Terminal live football streaming & score tracker\n\n", version)
 			fmt.Println("Comandos:")
 			fmt.Println("  kickoff          Abre el explorador interactivo de partidos en la terminal")
+			fmt.Println("  kickoff init     Inicializa el archivo channels.json con una plantilla de ejemplo")
 			fmt.Println("  kickoff update   Actualiza kickoff automáticamente a la última versión")
 			fmt.Println("  kickoff setup    Diagnostica y verifica dependencias del sistema (mpv, fuentes)")
 			fmt.Println("  kickoff version  Muestra la versión actual")
