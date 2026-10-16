@@ -9,11 +9,7 @@ import (
 
 // Standard domain errors.
 var (
-	ErrNoMatchesFound   = errors.New("no matches found")
 	ErrCorruptedPayload = errors.New("corrupted or invalid payload")
-	ErrNetworkTimeout   = errors.New("network timeout")
-	ErrCacheExpired     = errors.New("cache expired")
-	ErrPlaybackFailed   = errors.New("playback failed")
 	ErrPlayerTimeout    = errors.New("player initialization timed out")
 	ErrPlayerExited     = errors.New("player exited prematurely")
 	ErrInvalidURL       = errors.New("invalid stream url")
