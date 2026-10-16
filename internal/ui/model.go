@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -50,9 +51,10 @@ type Model struct {
 	categoryIndices map[string][]int // category name -> indices into m.leagues
 	expandedCats    map[string]bool // category name -> whether it is expanded
 
-	matches     []model.Match
-	pastMatches []model.Match
-	matchCursor int
+	matches       []model.Match
+	pastMatches   []model.Match
+	matchCursor   int
+	resumenCursor int
 
 	standings     *model.LeagueStandings
 	standingsErr  error
@@ -131,9 +133,10 @@ func NewModel(client model.Client, catalog model.Resolver, player model.Controll
 		categoryIndices: categoryIndices,
 		expandedCats:    expandedCats,
 		activeTab:       0,
-		leagueTab:       TabPartidos,
+		leagueTab:       TabResumen,
 		matches:         nil,
 		matchCursor:     0,
+		resumenCursor:   0,
 		channels:        nil,
 		channelCursor:   0,
 		modalTab:        0,
@@ -191,4 +194,36 @@ func (m Model) Init() tea.Cmd {
 		cmds = append(cmds, checkUpdateCmd(m.version))
 	}
 	return tea.Batch(cmds...)
+}
+
+// ResumenMatches returns the deduplicated list of recent completed matches for TabResumen.
+func (m Model) ResumenMatches() []model.Match {
+	var pastMatches []model.Match
+	seenIDs := make(map[string]bool)
+
+	for _, mt := range m.pastMatches {
+		id := mt.ID
+		if id == "" {
+			id = mt.HomeTeam.DisplayName + mt.AwayTeam.DisplayName
+		}
+		if !seenIDs[id] {
+			seenIDs[id] = true
+			pastMatches = append(pastMatches, mt)
+		}
+	}
+
+	for _, mt := range m.matches {
+		if mt.Status.Completed || strings.ToLower(mt.Status.State) == "post" {
+			id := mt.ID
+			if id == "" {
+				id = mt.HomeTeam.DisplayName + mt.AwayTeam.DisplayName
+			}
+			if !seenIDs[id] {
+				seenIDs[id] = true
+				pastMatches = append(pastMatches, mt)
+			}
+		}
+	}
+
+	return pastMatches
 }

@@ -211,7 +211,7 @@ func renderBrowsing(m Model) string {
 	tabsRow := lipgloss.JoinHorizontal(lipgloss.Center, renderedTabs[0], "   ", renderedTabs[1], "   ", renderedTabs[2], "   ", renderedTabs[3])
 
 	var body string
-	footer := FooterHelpStyle.Render("1-4/tab: cambiar vista  •  ↑/↓: navegar  •  enter: ver partido  •  esc: ligas  •  r: recargar  •  q: salir")
+	footer := FooterHelpStyle.Render("h/l o ←/→: pestaña  •  j/k o ↑/↓: navegar  •  enter: detalles  •  esc: ligas  •  r: recargar  •  q: salir")
 
 	// Connecting stream pulse overlay check
 	if m.state == StatePlaying && m.connecting {
@@ -247,12 +247,17 @@ func renderBrowsing(m Model) string {
 
 		case StateChannelSelect:
 			var selMatch model.Match
-			if len(m.matches) > 0 && m.matchCursor < len(m.matches) {
+			if m.leagueTab == TabResumen {
+				pms := m.ResumenMatches()
+				if len(pms) > 0 && m.resumenCursor < len(pms) {
+					selMatch = pms[m.resumenCursor]
+				}
+			} else if len(m.matches) > 0 && m.matchCursor < len(m.matches) {
 				selMatch = m.matches[m.matchCursor]
 			}
 			modalContent := renderChannelModal(selMatch, m.channels, m.channelCursor, m.modalTab, m.livePulse, m.spinner.View(), m.noEmoji)
 			body = ModalBoxStyle.Render(modalContent)
-			footer = FooterHelpStyle.Render("←/→/tab: pestaña  •  ↑/↓: canal  •  enter: reproducir  •  esc: volver")
+			footer = FooterHelpStyle.Render("h/l o ←/→: pestaña  •  j/k o ↑/↓: canal  •  enter: reproducir  •  esc: volver")
 
 		default: // StateBrowsing, StatePlaying
 			switch m.leagueTab {
@@ -318,17 +323,63 @@ func renderTabPartidos(m Model, curr model.League) string {
 		headerText = fmt.Sprintf("PRÓXIMOS PARTIDOS%s (%d)", firstDate, len(m.matches))
 	}
 
+	cursor := m.matchCursor
+	if cursor >= len(m.matches) {
+		cursor = len(m.matches) - 1
+	}
+	if cursor < 0 {
+		cursor = 0
+	}
+
+	headerText += fmt.Sprintf("  •  [%d/%d]", cursor+1, len(m.matches))
+
 	var lines []string
 	lines = append(lines, CategoryHeaderStyle.Render(headerText))
 	lines = append(lines, "")
 
-	for i, match := range m.matches {
-		isSelected := i == m.matchCursor
+	// Sliding window for scroll support
+	windowSize := 4
+	if m.height >= 36 {
+		windowSize = 6
+	} else if m.height >= 28 {
+		windowSize = 5
+	}
+	if windowSize > len(m.matches) {
+		windowSize = len(m.matches)
+	}
+
+	start := 0
+	if cursor >= windowSize {
+		start = cursor - windowSize + 1
+	}
+	end := start + windowSize
+	if end > len(m.matches) {
+		end = len(m.matches)
+		start = end - windowSize
+		if start < 0 {
+			start = 0
+		}
+	}
+
+	if start > 0 {
+		upScroll := lipgloss.NewStyle().Foreground(ColorMuted).Width(56).Align(lipgloss.Center).Render(fmt.Sprintf("▲  %d partidos anteriores  ▲", start))
+		lines = append(lines, upScroll, "")
+	}
+
+	for i := start; i < end; i++ {
+		match := m.matches[i]
+		isSelected := i == cursor
 		itemLines := renderMatchItem(match, isSelected, m.livePulse)
 		lines = append(lines, itemLines...)
-		if i < len(m.matches)-1 {
+		if i < end-1 {
 			lines = append(lines, "")
 		}
+	}
+
+	if end < len(m.matches) {
+		remaining := len(m.matches) - end
+		downScroll := lipgloss.NewStyle().Foreground(ColorMuted).Width(56).Align(lipgloss.Center).Render(fmt.Sprintf("▼  %d partidos más abajo  ▼", remaining))
+		lines = append(lines, "", downScroll)
 	}
 
 	return MatchBoxStyle.Render(strings.Join(lines, "\n"))
@@ -350,52 +401,141 @@ func renderTabResumen(m Model, curr model.League) string {
 	}
 
 	// 2. Past Match Results (FT)
-	var pastMatches []model.Match
-	pastMatches = append(pastMatches, m.pastMatches...)
-	for _, mt := range m.matches {
-		if mt.Status.Completed || strings.ToLower(mt.Status.State) == "post" {
-			pastMatches = append(pastMatches, mt)
-		}
-	}
+	pastMatches := m.ResumenMatches()
 
-	var upcomingMatches []model.Match
-	for _, mt := range m.matches {
-		if strings.ToLower(mt.Status.State) == "pre" {
-			upcomingMatches = append(upcomingMatches, mt)
-		}
-	}
-
-	lines = append(lines, CategoryHeaderStyle.Render(fmt.Sprintf("RESULTADOS RECIENTES / JORNADA PASADA (%d)", len(pastMatches))))
 	if len(pastMatches) == 0 {
+		lines = append(lines, CategoryHeaderStyle.Render("RESULTADOS RECIENTES / JORNADA PASADA (0)"))
 		lines = append(lines, EmptyStateStyle.Render("No hay partidos finalizados recientemente."))
-	} else {
-		for _, pm := range pastMatches {
-			datePrefix := ""
-			if !pm.StartTime.IsZero() {
-				datePrefix = fmt.Sprintf("[%s] ", pm.StartTime.Format("02/01"))
-			}
-			score := fmt.Sprintf("%s%s %s - %s %s", datePrefix, pm.HomeTeam.DisplayName, pm.HomeTeam.Score, pm.AwayTeam.Score, pm.AwayTeam.DisplayName)
-			lines = append(lines, fmt.Sprintf("  • %s  (%s)", ScoreboardTeams.Render(score), StatusPostStyle.Render("FINAL")))
-		}
+		return MatchBoxStyle.Render(strings.Join(lines, "\n"))
 	}
+
+	cursor := m.resumenCursor
+	if cursor >= len(pastMatches) {
+		cursor = len(pastMatches) - 1
+	}
+	if cursor < 0 {
+		cursor = 0
+	}
+
+	headerText := fmt.Sprintf("RESULTADOS RECIENTES (%d)  •  [%d/%d]", len(pastMatches), cursor+1, len(pastMatches))
+	lines = append(lines, CategoryHeaderStyle.Render(headerText))
 	lines = append(lines, "")
 
-	// 3. Next Upcoming Fixtures
-	lines = append(lines, CategoryHeaderStyle.Render(fmt.Sprintf("PRÓXIMOS ENCUENTROS (%d)", len(upcomingMatches))))
-	if len(upcomingMatches) == 0 {
-		lines = append(lines, EmptyStateStyle.Render("No hay próximos partidos programados."))
-	} else {
-		for _, um := range upcomingMatches {
-			datePrefix := ""
-			if !um.StartTime.IsZero() {
-				datePrefix = fmt.Sprintf("%s ", um.StartTime.Format("02/01"))
-			}
-			fixture := fmt.Sprintf("%s vs %s", um.HomeTeam.DisplayName, um.AwayTeam.DisplayName)
-			lines = append(lines, fmt.Sprintf("  • %s  %s  (%s)", MatchTimeStyle.Render(datePrefix+um.TimeStr), TeamNameStyle.Render(fixture), VenueStyle.Render(um.Venue)))
+	// Sliding window for scroll support
+	windowSize := 3
+	if m.height >= 36 {
+		windowSize = 5
+	} else if m.height >= 28 {
+		windowSize = 4
+	}
+	if windowSize > len(pastMatches) {
+		windowSize = len(pastMatches)
+	}
+
+	start := 0
+	if cursor >= windowSize {
+		start = cursor - windowSize + 1
+	}
+	end := start + windowSize
+	if end > len(pastMatches) {
+		end = len(pastMatches)
+		start = end - windowSize
+		if start < 0 {
+			start = 0
 		}
+	}
+
+	if start > 0 {
+		upScroll := lipgloss.NewStyle().Foreground(ColorMuted).Width(56).Align(lipgloss.Center).Render(fmt.Sprintf("▲  %d partidos anteriores  ▲", start))
+		lines = append(lines, upScroll)
+	}
+
+	for i := start; i < end; i++ {
+		pm := pastMatches[i]
+		isSelected := i == cursor
+		lines = append(lines, renderResumenCard(pm, isSelected))
+	}
+
+	if end < len(pastMatches) {
+		remaining := len(pastMatches) - end
+		downScroll := lipgloss.NewStyle().Foreground(ColorMuted).Width(56).Align(lipgloss.Center).Render(fmt.Sprintf("▼  %d partidos más abajo  ▼", remaining))
+		lines = append(lines, downScroll)
 	}
 
 	return MatchBoxStyle.Render(strings.Join(lines, "\n"))
+}
+
+func renderResumenCard(pm model.Match, isSelected bool) string {
+	cardStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(ColorBorder).
+		Padding(0, 1).
+		Width(56)
+
+	if isSelected {
+		cardStyle = cardStyle.BorderForeground(ColorBorderSelected)
+	}
+
+	dateStr := "--/--"
+	if !pm.StartTime.IsZero() {
+		dateStr = pm.StartTime.Format("02/01")
+	}
+
+	prefix := "  "
+	if isSelected {
+		prefix = "› "
+	}
+	dateCol := MatchTimeStyle.Render(fmt.Sprintf("%s%s", prefix, dateStr))
+
+	homeName := pm.HomeTeam.DisplayName
+	if homeName == "" {
+		homeName = "Local"
+	}
+	homeTrunc := truncateModalText(homeName, 14)
+	homeStyled := lipgloss.NewStyle().Width(14).Align(lipgloss.Right).Foreground(ColorTextMuted).Render(homeTrunc)
+	if isSelected {
+		homeStyled = lipgloss.NewStyle().Width(14).Align(lipgloss.Right).Foreground(ColorHighlight).Bold(true).Render(homeTrunc)
+	}
+
+	homeScore := pm.HomeTeam.Score
+	awayScore := pm.AwayTeam.Score
+	if homeScore == "" && awayScore == "" {
+		homeScore = "0"
+		awayScore = "0"
+	}
+	scoreStr := fmt.Sprintf(" %s - %s ", homeScore, awayScore)
+	scoreStyled := ScoreStyle.Width(7).Align(lipgloss.Center).Render(scoreStr)
+
+	awayName := pm.AwayTeam.DisplayName
+	if awayName == "" {
+		awayName = "Visitante"
+	}
+	awayTrunc := truncateModalText(awayName, 14)
+	awayStyled := lipgloss.NewStyle().Width(14).Align(lipgloss.Left).Foreground(ColorTextMuted).Render(awayTrunc)
+	if isSelected {
+		awayStyled = lipgloss.NewStyle().Width(14).Align(lipgloss.Left).Foreground(ColorHighlight).Bold(true).Render(awayTrunc)
+	}
+
+	statusBadge := StatusPostStyle.Render("[FINAL]")
+
+	line1 := fmt.Sprintf("%s %s%s%s %s", dateCol, homeStyled, scoreStyled, awayStyled, statusBadge)
+
+	venue := pm.Venue
+	if venue == "" {
+		venue = "Estadio Principal"
+	}
+	venueTrunc := truncateModalText(venue, 26)
+	venueStyled := VenueStyle.Render(venueTrunc)
+
+	var line2 string
+	if isSelected {
+		hintStyled := lipgloss.NewStyle().Foreground(ColorCategory).Render("Enter: detalles")
+		line2 = fmt.Sprintf("        %-26s   %s", venueStyled, hintStyled)
+	} else {
+		line2 = fmt.Sprintf("        %s", venueStyled)
+	}
+
+	return cardStyle.Render(line1 + "\n" + line2)
 }
 
 func renderTabPosiciones(m Model, curr model.League) string {
@@ -418,7 +558,7 @@ func renderTabPosiciones(m Model, curr model.League) string {
 		currentGrp := m.standings.Groups[grpIdx]
 		displayEntries = currentGrp.Entries
 
-		groupNav := fmt.Sprintf("◄ %s (%d/%d) ►  [h/l: grupo]", currentGrp.Name, grpIdx+1, len(m.standings.Groups))
+		groupNav := fmt.Sprintf("◄ %s (%d/%d) ►  [ [ / ] : grupo ]", currentGrp.Name, grpIdx+1, len(m.standings.Groups))
 		headerTitle = fmt.Sprintf("POSICIONES · %s", lipgloss.NewStyle().Foreground(ColorHighlight).Bold(true).Render(groupNav))
 	} else {
 		displayEntries = m.standings.Entries

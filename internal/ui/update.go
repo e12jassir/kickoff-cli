@@ -414,6 +414,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				break
 			}
 		}
+		for i := range m.pastMatches {
+			if m.pastMatches[i].ID == msg.matchID {
+				m.pastMatches[i].Stats = msg.stats
+				m.pastMatches[i].Lineups = msg.lineups
+				if msg.referee != "" {
+					m.pastMatches[i].Referee = msg.referee
+				}
+				if msg.attendance > 0 {
+					m.pastMatches[i].Attendance = msg.attendance
+				}
+				break
+			}
+		}
 		return m, nil
 
 	case playbackStartedMsg:
@@ -594,11 +607,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 				if len(m.leagues) > 0 {
 					m.activeTab = m.leagueCursor
-					m.leagueTab = TabPartidos
+					m.leagueTab = TabResumen
 					m.state = StateLoading
 					m.matches = nil
 					m.pastMatches = nil
 					m.matchCursor = 0
+					m.resumenCursor = 0
 					m.standings = nil
 					m.statistics = nil
 					m.channels = nil
@@ -636,7 +650,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, fetchStatisticsCmd(m.client, m.CurrentLeague().Key)
 				}
 				return m, nil
-			case "tab":
+			case "right", "l", "tab":
 				m.leagueTab = (m.leagueTab + 1) % 4
 				league := m.CurrentLeague()
 				if m.leagueTab == TabPosiciones && m.standings == nil && m.standingsErr == nil {
@@ -646,7 +660,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, fetchStatisticsCmd(m.client, league.Key)
 				}
 				return m, nil
-			case "shift+tab":
+			case "left", "h", "shift+tab":
 				m.leagueTab = (m.leagueTab - 1 + 4) % 4
 				league := m.CurrentLeague()
 				if m.leagueTab == TabPosiciones && m.standings == nil && m.standingsErr == nil {
@@ -656,52 +670,74 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, fetchStatisticsCmd(m.client, league.Key)
 				}
 				return m, nil
-			case "up", "k":
-				if m.leagueTab == TabPartidos && m.matchCursor > 0 {
-					m.matchCursor--
-				}
-			case "down", "j":
-				if m.leagueTab == TabPartidos && m.matchCursor < len(m.matches)-1 {
-					m.matchCursor++
-				}
-			case "enter":
-				if m.leagueTab == TabPartidos && len(m.matches) > 0 && m.matchCursor < len(m.matches) {
-					selectedMatch := m.matches[m.matchCursor]
-					m.channels = m.catalog.GetChannels(selectedMatch)
-					m.channelCursor = 0
-					m.modalTab = 0
-					m.state = StateChannelSelect
-					if (selectedMatch.Stats == nil || selectedMatch.Lineups == nil) && selectedMatch.ID != "" {
-						return m, fetchMatchStatsCmd(m.client, m.CurrentLeague().Key, selectedMatch.ID)
-					}
-				}
-			case "left", "h":
+			case "[", "p":
 				if m.leagueTab == TabPosiciones && m.standings != nil && len(m.standings.Groups) > 0 {
 					numGrps := len(m.standings.Groups)
 					m.selectedGroup = (m.selectedGroup - 1 + numGrps) % numGrps
 					return m, nil
 				}
-				m.state = StateMainMenu
-				m.matches = nil
-				m.matchCursor = 0
-				m.standings = nil
-				m.statistics = nil
-				m.channels = nil
-				m.channelCursor = 0
-				m.modalTab = 0
-				m.statusMsg = ""
-				m.errorMsg = ""
-				return m, nil
-			case "right", "l":
+			case "]", "n":
 				if m.leagueTab == TabPosiciones && m.standings != nil && len(m.standings.Groups) > 0 {
 					numGrps := len(m.standings.Groups)
 					m.selectedGroup = (m.selectedGroup + 1) % numGrps
 					return m, nil
 				}
+			case "up", "k":
+				if m.leagueTab == TabResumen {
+					if m.resumenCursor > 0 {
+						m.resumenCursor--
+					}
+				} else if m.leagueTab == TabPartidos {
+					if m.matchCursor > 0 {
+						m.matchCursor--
+					}
+				}
+				return m, nil
+			case "down", "j":
+				if m.leagueTab == TabResumen {
+					pms := m.ResumenMatches()
+					if m.resumenCursor < len(pms)-1 {
+						m.resumenCursor++
+					}
+				} else if m.leagueTab == TabPartidos {
+					if m.matchCursor < len(m.matches)-1 {
+						m.matchCursor++
+					}
+				}
+				return m, nil
+			case "enter":
+				if m.leagueTab == TabResumen {
+					pms := m.ResumenMatches()
+					if len(pms) > 0 && m.resumenCursor < len(pms) {
+						selectedMatch := pms[m.resumenCursor]
+						m.channels = m.catalog.GetChannels(selectedMatch)
+						m.channelCursor = 0
+						m.modalTab = 0
+						m.state = StateChannelSelect
+						if (selectedMatch.Stats == nil || selectedMatch.Lineups == nil) && selectedMatch.ID != "" {
+							return m, fetchMatchStatsCmd(m.client, m.CurrentLeague().Key, selectedMatch.ID)
+						}
+						return m, nil
+					}
+				} else if m.leagueTab == TabPartidos {
+					if len(m.matches) > 0 && m.matchCursor < len(m.matches) {
+						selectedMatch := m.matches[m.matchCursor]
+						m.channels = m.catalog.GetChannels(selectedMatch)
+						m.channelCursor = 0
+						m.modalTab = 0
+						m.state = StateChannelSelect
+						if (selectedMatch.Stats == nil || selectedMatch.Lineups == nil) && selectedMatch.ID != "" {
+							return m, fetchMatchStatsCmd(m.client, m.CurrentLeague().Key, selectedMatch.ID)
+						}
+						return m, nil
+					}
+				}
 			case "esc", "backspace":
 				m.state = StateMainMenu
 				m.matches = nil
+				m.pastMatches = nil
 				m.matchCursor = 0
+				m.resumenCursor = 0
 				m.standings = nil
 				m.statistics = nil
 				m.channels = nil

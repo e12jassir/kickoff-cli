@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -211,6 +212,13 @@ func TestModel_Enter_Transition_To_Matches(t *testing.T) {
 	if len(m.matches) != 2 {
 		t.Fatalf("expected 2 matches, got %d", len(m.matches))
 	}
+	if m.leagueTab != TabResumen {
+		t.Fatalf("expected default tab TabResumen, got %d", m.leagueTab)
+	}
+
+	// Switch to Tab 2 (Partidos) to view upcoming matches
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m = newM.(Model)
 
 	viewStr := m.View()
 	if !strings.Contains(viewStr, "KICKOFF") {
@@ -259,7 +267,7 @@ func TestModel_Esc_Back_To_MainMenu(t *testing.T) {
 		t.Errorf("expected main menu view after Esc, got:\n%s", viewStr)
 	}
 
-	// Test 'h' key returns to main menu as well
+	// Test Backspace key returns to main menu as well
 	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = newM.(Model)
 	newM, _ = m.Update(matchesLoadedMsg{
@@ -268,10 +276,27 @@ func TestModel_Esc_Back_To_MainMenu(t *testing.T) {
 	})
 	m = newM.(Model)
 
-	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
 	m = newM.(Model)
 	if m.state != StateMainMenu {
-		t.Fatalf("expected state StateMainMenu after 'h', got %d", m.state)
+		t.Fatalf("expected state StateMainMenu after Backspace, got %d", m.state)
+	}
+
+	// Verify 'h' key cycles tabs in browsing mode instead of exiting
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newM.(Model)
+	newM, _ = m.Update(matchesLoadedMsg{
+		leagueKey: m.CurrentLeague().Key,
+		matches:   []model.Match{{ID: "m3"}},
+	})
+	m = newM.(Model)
+	if m.leagueTab != TabResumen {
+		t.Fatalf("expected TabResumen, got %d", m.leagueTab)
+	}
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m = newM.(Model)
+	if m.leagueTab != TabGoleadores {
+		t.Fatalf("expected TabGoleadores after 'h' from TabResumen, got %d", m.leagueTab)
 	}
 }
 
@@ -297,6 +322,10 @@ func TestModel_Channel_Modal_And_Playback(t *testing.T) {
 			{ID: "m2", Title: "Chelsea vs City"},
 		},
 	})
+	m = newM.(Model)
+
+	// Switch to TabPartidos to browse upcoming match streams
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m = newM.(Model)
 
 	// Navigate down to match 1
@@ -457,8 +486,16 @@ func TestModel_EmptyMatches_And_Error(t *testing.T) {
 	m = newM.(Model)
 
 	viewStr := m.View()
+	if !strings.Contains(viewStr, "No hay partidos finalizados recientemente") {
+		t.Errorf("expected empty state message in TabResumen, got:\n%s", viewStr)
+	}
+
+	// Switch to Tab 2 (Partidos) to verify empty state message for upcoming matches
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m = newM.(Model)
+	viewStr = m.View()
 	if !strings.Contains(viewStr, "No hay próximos partidos programados") {
-		t.Errorf("expected empty state message, got:\n%s", viewStr)
+		t.Errorf("expected empty state message in TabPartidos, got:\n%s", viewStr)
 	}
 
 	// Simulate error
@@ -605,6 +642,10 @@ func TestModel_Match_Events_And_Stats_Modal(t *testing.T) {
 	})
 	m = newM.(Model)
 
+	// Switch to TabPartidos to select the upcoming match
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m = newM.(Model)
+
 	// Select match with Enter -> transitions to StateChannelSelect and returns stats fetch command
 	newM, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = newM.(Model)
@@ -677,7 +718,7 @@ func TestModel_Match_Events_And_Stats_Modal(t *testing.T) {
 	}
 
 	// Verify footer helper
-	if !strings.Contains(viewTab0, "←/→/tab: pestaña") || !strings.Contains(viewTab0, "↑/↓: canal") {
+	if !strings.Contains(viewTab0, "pestaña") || !strings.Contains(viewTab0, "canal") {
 		t.Errorf("expected footer helper in Tab 0, got:\n%s", viewTab0)
 	}
 
@@ -828,6 +869,10 @@ func TestModel_Modal_CursorGatingAndFallbacks(t *testing.T) {
 			},
 		},
 	})
+	m = newM.(Model)
+
+	// Switch to TabPartidos
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m = newM.(Model)
 
 	// Enter match modal
@@ -1187,18 +1232,9 @@ func TestModel_LeagueTabs_NavigationAndRendering(t *testing.T) {
 	m.standings = client.standings
 	m.statistics = client.statistics
 
-	// Verify Tab 2 (Partidos) is default when browsing
-	m.leagueTab = TabPartidos
-	viewPartidos := m.View()
-	if !strings.Contains(viewPartidos, "PARTIDOS DE HOY") && !strings.Contains(viewPartidos, "PRÓXIMOS PARTIDOS") {
-		t.Errorf("expected 'PARTIDOS DE HOY' or 'PRÓXIMOS PARTIDOS' in TabPartidos view, got:\n%s", viewPartidos)
-	}
-
-	// Press '1' -> Tab 1 (Resumen)
-	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
-	m = newM.(Model)
+	// Verify Tab 1 (Resumen) is default when browsing
 	if m.leagueTab != TabResumen {
-		t.Errorf("expected TabResumen after key '1', got %d", m.leagueTab)
+		t.Errorf("expected TabResumen as default, got %d", m.leagueTab)
 	}
 	viewResumen := m.View()
 	if !strings.Contains(viewResumen, "Líder de Liga") {
@@ -1207,8 +1243,16 @@ func TestModel_LeagueTabs_NavigationAndRendering(t *testing.T) {
 	if !strings.Contains(viewResumen, "RESULTADOS RECIENTES") {
 		t.Errorf("expected 'RESULTADOS RECIENTES' in TabResumen view")
 	}
-	if !strings.Contains(viewResumen, "PRÓXIMOS ENCUENTROS") {
-		t.Errorf("expected 'PRÓXIMOS ENCUENTROS' in TabResumen view")
+
+	// Press '2' -> Tab 2 (Partidos)
+	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m = newM.(Model)
+	if m.leagueTab != TabPartidos {
+		t.Errorf("expected TabPartidos after key '2', got %d", m.leagueTab)
+	}
+	viewPartidos := m.View()
+	if !strings.Contains(viewPartidos, "PARTIDOS DE HOY") && !strings.Contains(viewPartidos, "PRÓXIMOS PARTIDOS") {
+		t.Errorf("expected 'PARTIDOS DE HOY' or 'PRÓXIMOS PARTIDOS' in TabPartidos view, got:\n%s", viewPartidos)
 	}
 
 	// Press '3' -> Tab 3 (Posiciones)
@@ -1242,11 +1286,18 @@ func TestModel_LeagueTabs_NavigationAndRendering(t *testing.T) {
 		t.Errorf("expected 'MÁXIMOS ASISTENTES' in goleadores view")
 	}
 
-	// Cycle forward with Tab key: TabGoleadores -> TabResumen
-	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	// Cycle forward with 'l' key: TabGoleadores -> TabResumen
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
 	m = newM.(Model)
 	if m.leagueTab != TabResumen {
-		t.Errorf("expected TabResumen after Tab key cycle, got %d", m.leagueTab)
+		t.Errorf("expected TabResumen after 'l' key cycle, got %d", m.leagueTab)
+	}
+
+	// Cycle backward with 'h' key: TabResumen -> TabGoleadores
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m = newM.(Model)
+	if m.leagueTab != TabGoleadores {
+		t.Errorf("expected TabGoleadores after 'h' key cycle, got %d", m.leagueTab)
 	}
 }
 
@@ -1339,6 +1390,118 @@ func TestModel_SmoothBar_Fractions(t *testing.T) {
 	posView := renderPossessionBar("65%", "35%", 60)
 	if !strings.Contains(posView, "65%") || !strings.Contains(posView, "35%") {
 		t.Errorf("expected possession numbers in posView, got:\n%s", posView)
+	}
+}
+
+func TestModel_TabResumen_SymmetricalCards_Scroll_And_NvimNav(t *testing.T) {
+	client := &mockClient{}
+	cat := &mockCatalog{}
+	p := &mockPlayer{}
+	m := NewModel(client, cat, p)
+	m.state = StateBrowsing
+	m.height = 24 // Standard height -> windowSize = 3
+
+	// Setup 6 completed past matches
+	for i := 1; i <= 6; i++ {
+		m.pastMatches = append(m.pastMatches, model.Match{
+			ID:        fmt.Sprintf("past-%d", i),
+			Title:     fmt.Sprintf("Team %d vs Rival %d", i, i),
+			StartTime: time.Date(2026, 10, 14, 20, 0, 0, 0, time.UTC),
+			Venue:     fmt.Sprintf("Estadio %d", i),
+			HomeTeam:  model.Competitor{DisplayName: fmt.Sprintf("Team %d", i), Score: fmt.Sprintf("%d", i)},
+			AwayTeam:  model.Competitor{DisplayName: fmt.Sprintf("Rival %d", i), Score: fmt.Sprintf("%d", i-1)},
+			Status:    model.MatchStatus{State: "post", Completed: true, Description: "Final"},
+		})
+	}
+
+	// 1. Initial State: Must be TabResumen
+	if m.leagueTab != TabResumen {
+		t.Fatalf("expected TabResumen as default, got %d", m.leagueTab)
+	}
+	if m.resumenCursor != 0 {
+		t.Fatalf("expected initial resumenCursor 0, got %d", m.resumenCursor)
+	}
+
+	viewResumen := m.View()
+	// Must contain symmetric cards with teams, scores and FINAL badge
+	if !strings.Contains(viewResumen, "Team 1") || !strings.Contains(viewResumen, "[FINAL]") {
+		t.Errorf("expected Team 1 and [FINAL] in symmetric card, got:\n%s", viewResumen)
+	}
+	// Must have scroll down indicator since there are 6 matches and windowSize is 3
+	if !strings.Contains(viewResumen, "más abajo") {
+		t.Errorf("expected down scroll indicator 'más abajo' in TabResumen, got:\n%s", viewResumen)
+	}
+	// Must NOT contain PRÓXIMOS ENCUENTROS
+	if strings.Contains(viewResumen, "PRÓXIMOS ENCUENTROS") {
+		t.Errorf("TabResumen should NOT contain 'PRÓXIMOS ENCUENTROS'")
+	}
+
+	// 2. Navigate down with 'j' (Neovim key)
+	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	m = newM.(Model)
+	if m.resumenCursor != 1 {
+		t.Fatalf("expected resumenCursor 1 after 'j', got %d", m.resumenCursor)
+	}
+
+	// Navigate down to item 3 to scroll the window
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	m = newM.(Model)
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	m = newM.(Model)
+	if m.resumenCursor != 3 {
+		t.Fatalf("expected resumenCursor 3, got %d", m.resumenCursor)
+	}
+
+	viewScrolled := m.View()
+	// Now it should have up scroll indicator
+	if !strings.Contains(viewScrolled, "anteriores") {
+		t.Errorf("expected up scroll indicator 'anteriores' after scrolling down, got:\n%s", viewScrolled)
+	}
+
+	// 3. Navigate up with 'k'
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	m = newM.(Model)
+	if m.resumenCursor != 2 {
+		t.Fatalf("expected resumenCursor 2 after 'k', got %d", m.resumenCursor)
+	}
+
+	// 4. Press Enter on past match -> Opens modal
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newM.(Model)
+	if m.state != StateChannelSelect {
+		t.Fatalf("expected StateChannelSelect after Enter on past match, got %d", m.state)
+	}
+
+	// Press Esc to close modal
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = newM.(Model)
+	if m.state != StateBrowsing {
+		t.Fatalf("expected StateBrowsing after Esc, got %d", m.state)
+	}
+
+	// 5. Test Neovim tab switching ('l' to go right, 'h' to go left)
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	m = newM.(Model)
+	if m.leagueTab != TabPartidos {
+		t.Fatalf("expected TabPartidos after 'l', got %d", m.leagueTab)
+	}
+
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	m = newM.(Model)
+	if m.leagueTab != TabPosiciones {
+		t.Fatalf("expected TabPosiciones after Right arrow, got %d", m.leagueTab)
+	}
+
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	m = newM.(Model)
+	if m.leagueTab != TabPartidos {
+		t.Fatalf("expected TabPartidos after Left arrow, got %d", m.leagueTab)
+	}
+
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m = newM.(Model)
+	if m.leagueTab != TabResumen {
+		t.Fatalf("expected TabResumen after 'h', got %d", m.leagueTab)
 	}
 }
 
