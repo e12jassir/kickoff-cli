@@ -965,41 +965,6 @@ func renderChannelModal(match model.Match, channels []model.Channel, selectedIdx
 				}
 				modal.WriteString(fmt.Sprintf("%s    %s\n", colLeft.Render(truncateModalText(hText, 28)), colRight.Render(truncateModalText(aText, 28))))
 			}
-
-			// Coach / DT display
-			homeCoach := match.HomeTeamCoach()
-			awayCoach := match.AwayTeamCoach()
-			if homeCoach == "" && match.Lineups != nil {
-				homeCoach = match.Lineups.HomeCoach
-				if homeCoach == "" {
-					homeCoach = match.Lineups.Home.Coach
-				}
-			}
-			if awayCoach == "" && match.Lineups != nil {
-				awayCoach = match.Lineups.AwayCoach
-				if awayCoach == "" {
-					awayCoach = match.Lineups.Away.Coach
-				}
-			}
-			if homeCoach != "" || awayCoach != "" {
-				modal.WriteString("\n")
-				hCoachText := ""
-				if homeCoach != "" {
-					hCoachText = "👔 DT: " + homeCoach
-					if noEmoji {
-						hCoachText = "DT: " + homeCoach
-					}
-				}
-				aCoachText := ""
-				if awayCoach != "" {
-					aCoachText = "👔 DT: " + awayCoach
-					if noEmoji {
-						aCoachText = "DT: " + awayCoach
-					}
-				}
-				coachStyle := lipgloss.NewStyle().Width(28).Align(lipgloss.Left).Foreground(ColorCategory).Italic(true)
-				modal.WriteString(fmt.Sprintf("%s    %s\n", coachStyle.Render(truncateModalText(hCoachText, 28)), coachStyle.Render(truncateModalText(aCoachText, 28))))
-			}
 		}
 	}
 
