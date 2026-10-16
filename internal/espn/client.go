@@ -101,14 +101,6 @@ type rawSummaryResponse struct {
 type rawGameInfo struct {
 	Attendance int           `json:"attendance"`
 	Officials  []rawOfficial `json:"officials"`
-	Coaches    []rawCoach    `json:"coaches"`
-}
-
-type rawCoach struct {
-	FirstName   string      `json:"firstName"`
-	LastName    string      `json:"lastName"`
-	DisplayName string      `json:"displayName"`
-	Athlete     *rawAthlete `json:"athlete"`
 }
 
 type rawOfficial struct {
@@ -119,7 +111,6 @@ type rawRoster struct {
 	Team      *rawTeam        `json:"team"`
 	Formation string          `json:"formation"`
 	Roster    []rawRosterItem `json:"roster"`
-	Coaches   []rawCoach      `json:"coaches"`
 }
 
 type rawRosterItem struct {
@@ -127,13 +118,10 @@ type rawRosterItem struct {
 	Jersey   string      `json:"jersey"`
 	Position *rawPos     `json:"position"`
 	Athlete  *rawAthlete `json:"athlete"`
-	Role     string      `json:"role"`
 }
 
 type rawPos struct {
 	Abbreviation string `json:"abbreviation"`
-	Name         string `json:"name"`
-	DisplayName  string `json:"displayName"`
 }
 
 type rawBoxscore struct {
@@ -158,8 +146,6 @@ type cachedSummary struct {
 	Lineups    *model.MatchLineups `json:"lineups"`
 	Referee    string              `json:"referee"`
 	Attendance int                 `json:"attendance"`
-	HomeCoach  string              `json:"home_coach,omitempty"`
-	AwayCoach  string              `json:"away_coach,omitempty"`
 }
 
 type cachedStandings struct {
@@ -502,8 +488,6 @@ func (c *Client) fallbackSummary(eventID string, origErr error) (*model.MatchDet
 			Lineups:    cached.Lineups,
 			Referee:    cached.Referee,
 			Attendance: cached.Attendance,
-			HomeCoach:  cached.HomeCoach,
-			AwayCoach:  cached.AwayCoach,
 			IsOffline:  true,
 			CachedAt:   cachedAt,
 		}, nil
@@ -511,8 +495,8 @@ func (c *Client) fallbackSummary(eventID string, origErr error) (*model.MatchDet
 	return nil, origErr
 }
 
-func (c *Client) setCachedSummary(eventID string, stats *model.MatchStats, lineups *model.MatchLineups, referee string, attendance int, homeCoach, awayCoach string) {
-	if stats == nil && lineups == nil && referee == "" && attendance == 0 && homeCoach == "" && awayCoach == "" {
+func (c *Client) setCachedSummary(eventID string, stats *model.MatchStats, lineups *model.MatchLineups, referee string, attendance int) {
+	if stats == nil && lineups == nil && referee == "" && attendance == 0 {
 		return
 	}
 	if err := os.MkdirAll(c.cacheDir, 0o755); err != nil {
@@ -525,8 +509,6 @@ func (c *Client) setCachedSummary(eventID string, stats *model.MatchStats, lineu
 		Lineups:    lineups,
 		Referee:    referee,
 		Attendance: attendance,
-		HomeCoach:  homeCoach,
-		AwayCoach:  awayCoach,
 	}
 	data, err := json.Marshal(cached)
 	if err != nil {
@@ -1039,8 +1021,6 @@ func (c *Client) FetchMatchDetails(ctx context.Context, leagueKey, eventID strin
 				Lineups:    cached.Lineups,
 				Referee:    cached.Referee,
 				Attendance: cached.Attendance,
-				HomeCoach:  cached.HomeCoach,
-				AwayCoach:  cached.AwayCoach,
 				IsOffline:  false,
 				CachedAt:   cachedAt,
 			}, nil
@@ -1252,40 +1232,10 @@ func (c *Client) FetchMatchDetails(ctx context.Context, leagueKey, eventID strin
 				}
 			}
 
-			coachName := ""
-			if len(r.Coaches) > 0 {
-				if r.Coaches[0].DisplayName != "" {
-					coachName = r.Coaches[0].DisplayName
-				} else if r.Coaches[0].Athlete != nil && r.Coaches[0].Athlete.DisplayName != "" {
-					coachName = r.Coaches[0].Athlete.DisplayName
-				} else if r.Coaches[0].FirstName != "" || r.Coaches[0].LastName != "" {
-					coachName = strings.TrimSpace(r.Coaches[0].FirstName + " " + r.Coaches[0].LastName)
-				}
-			}
-			if coachName == "" {
-				for _, item := range r.Roster {
-					isCoach := strings.EqualFold(item.Role, "coach") || strings.EqualFold(item.Role, "manager")
-					if !isCoach && item.Position != nil {
-						posStr := strings.ToLower(item.Position.Abbreviation + " " + item.Position.Name + " " + item.Position.DisplayName)
-						if strings.Contains(posStr, "coach") || strings.Contains(posStr, "manager") || strings.Contains(posStr, "dt") {
-							isCoach = true
-						}
-					}
-					if isCoach && item.Athlete != nil {
-						coachName = item.Athlete.DisplayName
-						if coachName == "" {
-							coachName = item.Athlete.ShortName
-						}
-						break
-					}
-				}
-			}
-
 			return model.TeamLineup{
 				Formation: r.Formation,
 				Starters:  starters,
 				Bench:     bench,
-				Coach:     coachName,
 			}
 		}
 
@@ -1293,18 +1243,9 @@ func (c *Client) FetchMatchDetails(ctx context.Context, leagueKey, eventID strin
 		awayLineup := parseLineup(awayRoster)
 
 		lineups = &model.MatchLineups{
-			Home:      homeLineup,
-			Away:      awayLineup,
-			HomeCoach: homeLineup.Coach,
-			AwayCoach: awayLineup.Coach,
+			Home: homeLineup,
+			Away: awayLineup,
 		}
-	}
-
-	homeCoach := ""
-	awayCoach := ""
-	if lineups != nil {
-		homeCoach = lineups.HomeCoach
-		awayCoach = lineups.AwayCoach
 	}
 
 	referee := ""
@@ -1314,15 +1255,9 @@ func (c *Client) FetchMatchDetails(ctx context.Context, leagueKey, eventID strin
 		if len(raw.GameInfo.Officials) > 0 {
 			referee = raw.GameInfo.Officials[0].DisplayName
 		}
-		if homeCoach == "" && len(raw.GameInfo.Coaches) > 0 {
-			homeCoach = raw.GameInfo.Coaches[0].DisplayName
-		}
-		if awayCoach == "" && len(raw.GameInfo.Coaches) > 1 {
-			awayCoach = raw.GameInfo.Coaches[1].DisplayName
-		}
 	}
 
-	c.setCachedSummary(eventID, stats, lineups, referee, attendance, homeCoach, awayCoach)
+	c.setCachedSummary(eventID, stats, lineups, referee, attendance)
 	now := c.now()
 	if c.loc != nil {
 		now = now.In(c.loc)
@@ -1332,8 +1267,6 @@ func (c *Client) FetchMatchDetails(ctx context.Context, leagueKey, eventID strin
 		Lineups:    lineups,
 		Referee:    referee,
 		Attendance: attendance,
-		HomeCoach:  homeCoach,
-		AwayCoach:  awayCoach,
 		IsOffline:  false,
 		CachedAt:   now,
 	}, nil
