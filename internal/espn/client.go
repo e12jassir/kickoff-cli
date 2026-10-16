@@ -326,29 +326,7 @@ func (c *Client) doWithRetry(req *http.Request) (*http.Response, error) {
 	return nil, err
 }
 
-// WarmupCache concurrently pre-fetches all given leagues in the background.
-func (c *Client) WarmupCache(ctx context.Context, leagues []model.League) {
-	var wg sync.WaitGroup
-	sem := make(chan struct{}, 5)
-
-	for _, lg := range leagues {
-		wg.Add(1)
-		go func(key string) {
-			defer wg.Done()
-			select {
-			case sem <- struct{}{}:
-				defer func() { <-sem }()
-			case <-ctx.Done():
-				return
-			}
-			reqCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
-			defer cancel()
-			_, _ = c.FetchMatches(reqCtx, key)
-		}(lg.Key)
-	}
-	wg.Wait()
-}
-
+// LeagueCode maps a user-facing league key to the ESPN league code.
 func LeagueCode(leagueKey string) string {
 	switch strings.ToLower(leagueKey) {
 	case "laliga":
