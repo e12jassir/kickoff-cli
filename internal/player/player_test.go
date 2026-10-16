@@ -75,6 +75,39 @@ func TestBuildArgs(t *testing.T) {
 			t.Errorf("BuildArgs missing expected substring %q in: %s", sub, argStr)
 		}
 	}
+
+	// Threat matrix verification: '--' must directly precede cleanURL
+	if len(args) < 2 {
+		t.Fatalf("BuildArgs returned too few arguments: %v", args)
+	}
+	if args[len(args)-2] != "--" {
+		t.Errorf("BuildArgs expected '--' delimiter before URL, got %q", args[len(args)-2])
+	}
+	if args[len(args)-1] != "https://example.invalid/live/feed.m3u8" {
+		t.Errorf("BuildArgs expected URL as final argument, got %q", args[len(args)-1])
+	}
+}
+
+func TestBuildArgs_ArgumentInjectionProtection(t *testing.T) {
+	// A malicious URL that attempts to inject mpv flags
+	req := model.PlayRequest{
+		Channel: model.Channel{
+			Name: "Evil Channel",
+			URL:  "--script=/tmp/malicious.lua",
+		},
+		Match: model.Match{Title: "Match"},
+	}
+
+	args := BuildArgs(req, "/tmp/test.sock")
+	if len(args) < 2 {
+		t.Fatalf("BuildArgs returned too few arguments: %v", args)
+	}
+	if args[len(args)-2] != "--" {
+		t.Fatalf("expected '--' before final argument, got %q", args[len(args)-2])
+	}
+	if args[len(args)-1] != "--script=/tmp/malicious.lua" {
+		t.Fatalf("expected cleanURL as final argument, got %q", args[len(args)-1])
+	}
 }
 
 func TestQueryVoConfigured_MockSocket(t *testing.T) {

@@ -153,7 +153,7 @@ func BuildArgs(req model.PlayRequest, sockPath string) []string {
 	if sockPath != "" {
 		args = append(args, fmt.Sprintf("--input-ipc-server=%s", sockPath))
 	}
-	args = append(args, cleanURL)
+	args = append(args, "--", cleanURL)
 	return args
 }
 

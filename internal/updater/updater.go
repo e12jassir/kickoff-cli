@@ -6,6 +6,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,8 +23,10 @@ import (
 )
 
 const (
-	DefaultRepo    = "e12jassir/kickoff-cli"
-	defaultTimeout = 5 * time.Second
+	DefaultRepo         = "e12jassir/kickoff-cli"
+	defaultTimeout      = 5 * time.Second
+	maxReleaseReadSize  = 100 * 1024 * 1024 // 100MB bounded read for binary archives
+	maxChecksumReadSize = 10 * 1024 * 1024  // 10MB bounded read for checksums / metadata
 )
 
 // ReleaseInfo holds GitHub release metadata.
@@ -108,10 +112,15 @@ func CompareVersions(v1, v2 string) int {
 
 // CheckForUpdate queries GitHub for the latest release and checks if a newer version is available.
 func CheckForUpdate(ctx context.Context, repo, currentVersion string) (*ReleaseInfo, bool, error) {
-	if repo == "" {
-		repo = DefaultRepo
+	var apiURL string
+	if strings.HasPrefix(repo, "http://") || strings.HasPrefix(repo, "https://") {
+		apiURL = repo
+	} else {
+		if repo == "" {
+			repo = DefaultRepo
+		}
+		apiURL = fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", repo)
 	}
-	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", repo)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
 	if err != nil {
@@ -132,7 +141,7 @@ func CheckForUpdate(ctx context.Context, repo, currentVersion string) (*ReleaseI
 	}
 
 	var rel ReleaseInfo
-	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxChecksumReadSize)).Decode(&rel); err != nil {
 		return nil, false, err
 	}
 
@@ -140,11 +149,11 @@ func CheckForUpdate(ctx context.Context, repo, currentVersion string) (*ReleaseI
 	return &rel, isNewer, nil
 }
 
-// FindAssetURL locates the binary archive URL corresponding to the current OS and architecture.
+// FindAsset locates the binary archive Asset corresponding to the current OS and architecture.
 // It supports both versioned (kickoff_{version}_{os}_{arch}.tar.gz) and unversioned/releaser
 // (kickoff_{os}_{arch}.tar.gz) formats, standardizing on 'darwin' while retaining backward
 // compatibility for 'macos'.
-func FindAssetURL(rel *ReleaseInfo, goos, goarch string) (string, error) {
+func FindAsset(rel *ReleaseInfo, goos, goarch string) (*Asset, error) {
 	normOS := strings.ToLower(goos)
 	normArch := strings.ToLower(goarch)
 
@@ -187,8 +196,9 @@ func FindAssetURL(rel *ReleaseInfo, goos, goarch string) (string, error) {
 		return false
 	}
 
-	var fallbackURL string
-	for _, a := range rel.Assets {
+	var fallbackAsset *Asset
+	for i := range rel.Assets {
+		a := &rel.Assets[i]
 		name := strings.ToLower(a.Name)
 		isZip := strings.HasSuffix(name, ".zip")
 		isTarGz := strings.HasSuffix(name, ".tar.gz")
@@ -204,28 +214,94 @@ func FindAssetURL(rel *ReleaseInfo, goos, goarch string) (string, error) {
 
 		if normOS == "windows" {
 			if isZip {
-				return a.BrowserDownloadURL, nil
+				return a, nil
 			}
-			if isTarGz && fallbackURL == "" {
-				fallbackURL = a.BrowserDownloadURL
+			if isTarGz && fallbackAsset == nil {
+				fallbackAsset = a
 			}
 		} else {
 			if isTarGz {
 				if (normOS == "darwin" || normOS == "macos") && isDarwinToken {
-					return a.BrowserDownloadURL, nil
+					return a, nil
 				}
-				if fallbackURL == "" {
-					fallbackURL = a.BrowserDownloadURL
+				if fallbackAsset == nil {
+					fallbackAsset = a
 				}
 			}
 		}
 	}
 
-	if fallbackURL != "" {
-		return fallbackURL, nil
+	if fallbackAsset != nil {
+		return fallbackAsset, nil
 	}
 
-	return "", fmt.Errorf("no release asset found for %s/%s", normOS, normArch)
+	return nil, fmt.Errorf("no release asset found for %s/%s", normOS, normArch)
+}
+
+// FindAssetURL locates the binary archive URL corresponding to the current OS and architecture.
+func FindAssetURL(rel *ReleaseInfo, goos, goarch string) (string, error) {
+	asset, err := FindAsset(rel, goos, goarch)
+	if err != nil {
+		return "", err
+	}
+	return asset.BrowserDownloadURL, nil
+}
+
+// FindChecksumURL locates the download URL for checksums.txt.
+func FindChecksumURL(rel *ReleaseInfo, assetURL string) (string, error) {
+	for _, a := range rel.Assets {
+		if strings.EqualFold(a.Name, "checksums.txt") {
+			return a.BrowserDownloadURL, nil
+		}
+	}
+	if idx := strings.LastIndex(assetURL, "/"); idx != -1 {
+		return assetURL[:idx+1] + "checksums.txt", nil
+	}
+	return "", errors.New("checksums.txt not found in release assets")
+}
+
+// ParseChecksums parses a standard sha256sum file into a map of filename -> expected sha256 hex hash.
+func ParseChecksums(content string) map[string]string {
+	result := make(map[string]string)
+	lines := strings.Split(content, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) >= 2 {
+			hash := strings.ToLower(fields[0])
+			rest := strings.TrimSpace(line[len(fields[0]):])
+			rest = strings.TrimPrefix(rest, "*")
+			rest = strings.TrimSpace(rest)
+			rest = strings.TrimPrefix(rest, "./")
+			base := filepath.Base(rest)
+			result[strings.ToLower(base)] = hash
+		}
+	}
+	return result
+}
+
+// VerifyChecksum verifies that the SHA-256 hash of assetData matches the entry in checksums.txt.
+// It fails closed if the asset is missing from checksums.txt or if the hash mismatches.
+func VerifyChecksum(assetData []byte, assetName string, checksumsContent string) error {
+	checksums := ParseChecksums(checksumsContent)
+	baseName := strings.ToLower(filepath.Base(assetName))
+
+	expectedHash, ok := checksums[baseName]
+	if !ok {
+		return fmt.Errorf("no checksum entry found for %q in checksums.txt", assetName)
+	}
+
+	h := sha256.Sum256(assetData)
+	actualHash := hex.EncodeToString(h[:])
+
+	if !strings.EqualFold(actualHash, expectedHash) {
+		return fmt.Errorf("checksum mismatch for %q: expected %s, got %s", assetName, expectedHash, actualHash)
+	}
+
+	return nil
 }
 
 // ExtractBinaryFromZip extracts the executable binary named 'kickoff' (or 'kickoff.exe') from a zip archive.
@@ -298,10 +374,11 @@ func SelfUpdate(ctx context.Context, repo, currentVersion string) error {
 
 	fmt.Printf("✨ New version available: %s! Downloading update...\n", rel.TagName)
 
-	assetURL, err := FindAssetURL(rel, runtime.GOOS, runtime.GOARCH)
+	asset, err := FindAsset(rel, runtime.GOOS, runtime.GOARCH)
 	if err != nil {
 		return fmt.Errorf("no precompiled package found for your system (%s/%s): %w", runtime.GOOS, runtime.GOARCH, err)
 	}
+	assetURL := asset.BrowserDownloadURL
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, assetURL, nil)
 	if err != nil {
@@ -320,9 +397,40 @@ func SelfUpdate(ctx context.Context, repo, currentVersion string) error {
 		return fmt.Errorf("download server responded with HTTP %d", resp.StatusCode)
 	}
 
-	bodyBytes, err := io.ReadAll(resp.Body)
+	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxReleaseReadSize))
 	if err != nil {
 		return fmt.Errorf("error reading downloaded package: %w", err)
+	}
+
+	// Verify SHA-256 checksum against checksums.txt (fail-closed)
+	checksumURL, err := FindChecksumURL(rel, assetURL)
+	if err != nil {
+		return fmt.Errorf("failed to locate checksums.txt: %w", err)
+	}
+
+	chkReq, err := http.NewRequestWithContext(ctx, http.MethodGet, checksumURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request for checksums: %w", err)
+	}
+	chkReq.Header.Set("User-Agent", "kickoff-cli-updater")
+
+	chkResp, err := client.Do(chkReq)
+	if err != nil {
+		return fmt.Errorf("error downloading checksums.txt: %w", err)
+	}
+	defer chkResp.Body.Close()
+
+	if chkResp.StatusCode != http.StatusOK {
+		return fmt.Errorf("checksums download server responded with HTTP %d", chkResp.StatusCode)
+	}
+
+	chkBytes, err := io.ReadAll(io.LimitReader(chkResp.Body, maxChecksumReadSize))
+	if err != nil {
+		return fmt.Errorf("error reading checksums.txt: %w", err)
+	}
+
+	if err := VerifyChecksum(bodyBytes, asset.Name, string(chkBytes)); err != nil {
+		return fmt.Errorf("security verification failed: %w", err)
 	}
 
 	var binData []byte

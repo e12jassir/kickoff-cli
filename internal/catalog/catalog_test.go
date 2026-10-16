@@ -2,6 +2,9 @@ package catalog
 
 import (
 	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -619,5 +622,124 @@ func TestNew_AppliesOptionsExactlyOnce(t *testing.T) {
 	}
 	if espn1 != "http://programmatic.invalid/espn1.m3u8" {
 		t.Fatalf("programmatic streams must take precedence over channels.json: got %q", espn1)
+	}
+}
+
+func TestCatalog_ExternalConfig_PlaylistURL(t *testing.T) {
+	mockM3U := `#EXTM3U
+#EXTINF:-1 tvg-id="remote-espn1" tvg-name="Remote ESPN 1",Remote ESPN 1 HD
+http://example.com/remote/espn1.m3u8
+#EXTINF:-1 tvg-id="remote-win" tvg-name="Remote Win",Remote Win Sports HD
+http://example.com/remote/win.m3u8
+`
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(mockM3U))
+	}))
+	defer ts.Close()
+
+	cfgPath := filepath.Join(t.TempDir(), "channels.json")
+	cfgContent := fmt.Sprintf(`{"playlist_url": "%s"}`, ts.URL+"/playlist.m3u")
+	if err := os.WriteFile(cfgPath, []byte(cfgContent), 0o600); err != nil {
+		t.Fatalf("failed to write test config: %v", err)
+	}
+
+	cat := New(WithConfigFile(cfgPath))
+
+	cat.mu.RLock()
+	defer cat.mu.RUnlock()
+
+	if len(cat.m3uChannels) != 2 {
+		t.Fatalf("expected 2 remote channels loaded from playlist_url, got %d", len(cat.m3uChannels))
+	}
+	if cat.m3uChannels[0].Name != "Remote ESPN 1 HD" {
+		t.Errorf("expected first channel name 'Remote ESPN 1 HD', got %q", cat.m3uChannels[0].Name)
+	}
+	if cat.m3uChannels[1].Name != "Remote Win Sports HD" {
+		t.Errorf("expected second channel name 'Remote Win Sports HD', got %q", cat.m3uChannels[1].Name)
+	}
+}
+
+func TestCatalog_ExternalConfig_PlaylistPathPrecedence(t *testing.T) {
+	// If both PlaylistPath and PlaylistURL are provided, PlaylistPath wins.
+	localM3U := filepath.Join(t.TempDir(), "local.m3u")
+	localContent := `#EXTM3U
+#EXTINF:-1,Local Channel
+http://example.com/local.m3u8
+`
+	if err := os.WriteFile(localM3U, []byte(localContent), 0o600); err != nil {
+		t.Fatalf("failed to write local m3u: %v", err)
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("remote URL should not be fetched when local path is set")
+	}))
+	defer ts.Close()
+
+	cfgPath := filepath.Join(t.TempDir(), "channels.json")
+	cfgContent := fmt.Sprintf(`{"playlist_path": "%s", "playlist_url": "%s"}`, localM3U, ts.URL+"/remote.m3u")
+	if err := os.WriteFile(cfgPath, []byte(cfgContent), 0o600); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	cat := New(WithConfigFile(cfgPath))
+
+	cat.mu.RLock()
+	defer cat.mu.RUnlock()
+
+	if len(cat.m3uChannels) != 1 {
+		t.Fatalf("expected exactly 1 channel from local file, got %d", len(cat.m3uChannels))
+	}
+	if cat.m3uChannels[0].Name != "Local Channel" {
+		t.Errorf("expected channel 'Local Channel', got %q", cat.m3uChannels[0].Name)
+	}
+}
+
+func TestCatalog_ProbeStreams_RejectsHTMLErrorPages(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/html-error":
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("<html><body><h1>404 Not Found</h1></body></html>"))
+		case "/generic-ok-no-m3u":
+			w.Header().Set("Content-Type", "text/plain")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("some random text response"))
+		case "/valid-stream":
+			w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("#EXTM3U\n#EXTINF:-1,Valid\nhttp://example.com/segment.ts\n"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	cat := &Catalog{
+		streamAlive: make(map[string]bool),
+		userStreams: make(map[string]string),
+	}
+
+	probeTargets := []string{
+		ts.URL + "/html-error",
+		ts.URL + "/generic-ok-no-m3u",
+		ts.URL + "/valid-stream",
+	}
+
+	cat.probeAllStreamsBackground(probeTargets)
+
+	cat.mu.RLock()
+	defer cat.mu.RUnlock()
+
+	if cat.streamAlive[ts.URL+"/html-error"] {
+		t.Errorf("HTML error page with 200 OK must NOT be marked alive")
+	}
+	if cat.streamAlive[ts.URL+"/generic-ok-no-m3u"] {
+		t.Errorf("Generic plain text response with 200 OK and no #EXTM3U must NOT be marked alive")
+	}
+	if !cat.streamAlive[ts.URL+"/valid-stream"] {
+		t.Errorf("Valid M3U8 stream must be marked alive")
 	}
 }

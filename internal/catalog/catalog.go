@@ -20,8 +20,9 @@ import (
 
 // Public free-to-air (FTA) channels with legal webcasts.
 const (
-	StreamRealMadrid  = "https://rmtv.akamaized.net/hls/live/2043153/rmtv-es-web/master.m3u8"
-	StreamTeledeporte = "https://rtvelivestream.akamaized.net/rtvesec/tdp/tdp_main.m3u8"
+	StreamRealMadrid    = "https://rmtv.akamaized.net/hls/live/2043153/rmtv-es-web/master.m3u8"
+	StreamTeledeporte   = "https://rtvelivestream.akamaized.net/rtvesec/tdp/tdp_main.m3u8"
+	maxPlaylistReadSize = 50 * 1024 * 1024 // 50MB bounded read for remote playlists
 )
 
 // Optional US stream endpoints (configurable via environment variables).
@@ -224,9 +225,16 @@ func (c *Catalog) probeAllStreamsBackground(envStreams []string) {
 
 			if resp.StatusCode >= 200 && resp.StatusCode < 400 {
 				buf := make([]byte, 256)
-				n, _ := io.ReadAtLeast(resp.Body, buf, 7)
+				n, _ := io.ReadAtLeast(io.LimitReader(resp.Body, 1024), buf, 7)
 				bodyStr := string(buf[:n])
-				if strings.Contains(bodyStr, "#EXTM3U") || resp.StatusCode == http.StatusOK {
+				contentType := strings.ToLower(resp.Header.Get("Content-Type"))
+				isHTML := strings.Contains(contentType, "text/html")
+				isStreamContent := strings.Contains(contentType, "application/vnd.apple.mpegurl") ||
+					strings.Contains(contentType, "application/x-mpegurl") ||
+					strings.Contains(contentType, "audio/mpegurl") ||
+					strings.Contains(contentType, "video/mp2t")
+
+				if !isHTML && (strings.Contains(bodyStr, "#EXTM3U") || isStreamContent) {
 					c.mu.Lock()
 					c.streamAlive[target] = true
 					c.mu.Unlock()
@@ -332,6 +340,26 @@ func (c *Catalog) loadExternalConfig() {
 		}
 		if m3uList, err := ParseM3UFile(p); err == nil && len(m3uList) > 0 {
 			c.m3uChannels = append(c.m3uChannels, m3uList...)
+		}
+	} else if ext.PlaylistURL != "" {
+		if cleanURL, err := SanitizeURL(ext.PlaylistURL); err == nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, cleanURL, nil)
+			if err == nil {
+				req.Header.Set("User-Agent", "kickoff-cli")
+				client := &http.Client{Timeout: 10 * time.Second}
+				resp, err := client.Do(req)
+				if err == nil {
+					defer resp.Body.Close()
+					if resp.StatusCode == http.StatusOK {
+						limitedReader := io.LimitReader(resp.Body, maxPlaylistReadSize)
+						if m3uList, err := ParseM3U(limitedReader); err == nil && len(m3uList) > 0 {
+							c.m3uChannels = append(c.m3uChannels, m3uList...)
+						}
+					}
+				}
+			}
 		}
 	}
 }

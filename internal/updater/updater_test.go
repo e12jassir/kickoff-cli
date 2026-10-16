@@ -5,6 +5,13 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -164,5 +171,120 @@ func TestExtractBinaryFromZip(t *testing.T) {
 	}
 	if string(extracted) != string(content) {
 		t.Errorf("extracted content mismatch: got %q, expected %q", string(extracted), string(content))
+	}
+}
+
+func TestParseChecksums(t *testing.T) {
+	content := `# Release checksums
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  kickoff_linux_amd64.tar.gz
+a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90 *kickoff_windows_amd64.zip
+f0e1d2c3b4a5968778695a4b3c2d1e0ff0e1d2c3b4a5968778695a4b3c2d1e0f  ./dist/kickoff_darwin_arm64.tar.gz
+
+`
+	res := ParseChecksums(content)
+
+	if res["kickoff_linux_amd64.tar.gz"] != "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" {
+		t.Errorf("failed parsing kickoff_linux_amd64.tar.gz checksum")
+	}
+	if res["kickoff_windows_amd64.zip"] != "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90" {
+		t.Errorf("failed parsing binary asterisk syntax for windows zip")
+	}
+	if res["kickoff_darwin_arm64.tar.gz"] != "f0e1d2c3b4a5968778695a4b3c2d1e0ff0e1d2c3b4a5968778695a4b3c2d1e0f" {
+		t.Errorf("failed parsing relative path syntax for darwin archive")
+	}
+}
+
+func TestVerifyChecksum(t *testing.T) {
+	data := []byte("hello kickoff world")
+	h := sha256.Sum256(data)
+	correctHash := hex.EncodeToString(h[:])
+
+	checksumsContent := correctHash + "  kickoff_linux_amd64.tar.gz\n"
+
+	// 1. Success case
+	if err := VerifyChecksum(data, "kickoff_linux_amd64.tar.gz", checksumsContent); err != nil {
+		t.Fatalf("expected valid checksum verification, got: %v", err)
+	}
+
+	// 2. Mismatched checksum case (fail closed)
+	badData := []byte("tampered binary content")
+	if err := VerifyChecksum(badData, "kickoff_linux_amd64.tar.gz", checksumsContent); err == nil {
+		t.Fatalf("expected fail closed on checksum mismatch, got nil")
+	} else if !strings.Contains(err.Error(), "checksum mismatch") {
+		t.Fatalf("expected 'checksum mismatch' error message, got: %v", err)
+	}
+
+	// 3. Missing asset in checksums.txt case (fail closed)
+	if err := VerifyChecksum(data, "other_package.tar.gz", checksumsContent); err == nil {
+		t.Fatalf("expected fail closed on missing asset in checksums.txt, got nil")
+	} else if !strings.Contains(err.Error(), "no checksum entry found") {
+		t.Fatalf("expected 'no checksum entry found' error message, got: %v", err)
+	}
+}
+
+func TestFindChecksumURL(t *testing.T) {
+	rel := &ReleaseInfo{
+		TagName: "v0.1.1",
+		Assets: []Asset{
+			{Name: "kickoff_0.1.1_linux_amd64.tar.gz", BrowserDownloadURL: "https://example.com/linux_amd64.tar.gz"},
+			{Name: "checksums.txt", BrowserDownloadURL: "https://example.com/checksums.txt"},
+		},
+	}
+
+	u, err := FindChecksumURL(rel, "https://example.com/linux_amd64.tar.gz")
+	if err != nil || u != "https://example.com/checksums.txt" {
+		t.Fatalf("expected checksums.txt URL, got: %s (err: %v)", u, err)
+	}
+
+	// Test fallback when checksums.txt is not in rel.Assets
+	relNoChk := &ReleaseInfo{
+		TagName: "v0.1.1",
+		Assets: []Asset{
+			{Name: "kickoff_0.1.1_linux_amd64.tar.gz", BrowserDownloadURL: "https://example.com/releases/v0.1.1/linux_amd64.tar.gz"},
+		},
+	}
+	uFallback, err := FindChecksumURL(relNoChk, "https://example.com/releases/v0.1.1/linux_amd64.tar.gz")
+	if err != nil || uFallback != "https://example.com/releases/v0.1.1/checksums.txt" {
+		t.Fatalf("expected derived fallback checksums.txt URL, got: %s (err: %v)", uFallback, err)
+	}
+}
+
+func TestSelfUpdate_ChecksumMismatchFailsClosed(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/releases/latest":
+			rel := ReleaseInfo{
+				TagName: "v99.9.9",
+				Assets: []Asset{
+					{
+						Name:               "kickoff_linux_amd64.tar.gz",
+						BrowserDownloadURL: "http://" + r.Host + "/asset.tar.gz",
+					},
+					{
+						Name:               "checksums.txt",
+						BrowserDownloadURL: "http://" + r.Host + "/checksums.txt",
+					},
+				},
+			}
+			_ = json.NewEncoder(w).Encode(rel)
+		case "/asset.tar.gz":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("fake-corrupted-archive-content"))
+		case "/checksums.txt":
+			w.WriteHeader(http.StatusOK)
+			// Return a mismatched hash
+			_, _ = w.Write([]byte("1111111111111111111111111111111111111111111111111111111111111111  kickoff_linux_amd64.tar.gz\n"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	err := SelfUpdate(context.Background(), ts.URL+"/releases/latest", "v0.1.0")
+	if err == nil {
+		t.Fatalf("expected SelfUpdate to fail closed on checksum mismatch, got nil")
+	}
+	if !strings.Contains(err.Error(), "security verification failed") {
+		t.Fatalf("expected security verification failed error, got: %v", err)
 	}
 }
