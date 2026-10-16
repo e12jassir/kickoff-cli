@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/e12jassir/kickoff-cli/internal/locale"
 	"github.com/e12jassir/kickoff-cli/internal/model"
 )
 
@@ -272,7 +273,9 @@ func NewClient(opts ...Option) *Client {
 	}
 	defaultCache := filepath.Join(cacheBase, "kickoff")
 
-	loc := time.FixedZone("America/Bogota", -5*3600)
+	// Default display timezone comes from the shared locale resolver
+	// (KICKOFF_TZ, else America/Bogota). WithTimezone still overrides it.
+	loc := locale.Location()
 
 	c := &Client{
 		baseURL: defaultBaseURL,
@@ -1346,8 +1349,8 @@ func (c *Client) FetchMatchStats(ctx context.Context, leagueKey, eventID string)
 
 // Standings JSON parsing structures
 type rawStandingsResponse struct {
-	Name     string               `json:"name"`
-	Children []rawStandingsChild  `json:"children"`
+	Name      string               `json:"name"`
+	Children  []rawStandingsChild  `json:"children"`
 	Standings *rawStandingsWrapper `json:"standings"`
 }
 
@@ -1361,8 +1364,8 @@ type rawStandingsWrapper struct {
 }
 
 type rawStandingsEntry struct {
-	Team  *rawTeam              `json:"team"`
-	Stats []rawStatisticItem    `json:"stats"`
+	Team  *rawTeam           `json:"team"`
+	Stats []rawStatisticItem `json:"stats"`
 }
 
 func (c *Client) standingsCachePath(leagueKey string) string {
@@ -1560,9 +1563,9 @@ type rawStatisticsResponse struct {
 }
 
 type rawStatsCategory struct {
-	Name        string            `json:"name"`
-	DisplayName string            `json:"displayName"`
-	Leaders     []rawStatsLeader  `json:"leaders"`
+	Name        string           `json:"name"`
+	DisplayName string           `json:"displayName"`
+	Leaders     []rawStatsLeader `json:"leaders"`
 }
 
 type rawStatsAthlete struct {

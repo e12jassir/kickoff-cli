@@ -11,8 +11,18 @@ import (
 	"testing"
 	"time"
 
+	"github.com/e12jassir/kickoff-cli/internal/locale"
 	"github.com/e12jassir/kickoff-cli/internal/model"
 )
+
+// TestMain pins the display timezone for the whole test binary. These tests
+// assert on Bogota (UTC-5) wall-clock times, so the ambient KICKOFF_TZ of the
+// machine must not leak in. The zone is pinned before any test runs because
+// locale.Location() caches its result with sync.Once.
+func TestMain(m *testing.M) {
+	_ = os.Setenv(locale.EnvVar, "America/Bogota")
+	os.Exit(m.Run())
+}
 
 func TestClient_FetchMatches(t *testing.T) {
 	fixedNow := time.Date(2026, 10, 13, 12, 0, 0, 0, time.FixedZone("America/Bogota", -5*3600))

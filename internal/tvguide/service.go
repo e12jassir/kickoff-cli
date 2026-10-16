@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/e12jassir/kickoff-cli/internal/locale"
 	"github.com/e12jassir/kickoff-cli/internal/model"
 )
 
@@ -108,7 +109,10 @@ func NewService(opts ...Option) *Service {
 	}
 	defaultCache := filepath.Join(cacheBase, "kickoff")
 
-	loc := time.FixedZone("America/Bogota", -5*3600)
+	// The crawler and the ESPN client must share the same display timezone: if
+	// they disagree, the day boundary shifts and a match can be shown on the
+	// wrong day. Both resolve it through the single locale source of truth.
+	loc := locale.Location()
 
 	s := &Service{
 		cacheDir: defaultCache,
