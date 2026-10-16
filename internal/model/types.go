@@ -103,16 +103,23 @@ type MatchLineups struct {
 	AwayCoach string     `json:"awayCoach,omitempty"`
 }
 
+// StandingsGroup represents a named group or conference in tournament standings.
+type StandingsGroup struct {
+	Name    string           `json:"name"`
+	Entries []StandingsEntry `json:"entries"`
+}
+
 // StandingsEntry represents a team row in league standings.
 type StandingsEntry struct {
-	Rank           int    `json:"rank"`
-	TeamName       string `json:"teamName"`
-	GamesPlayed    string `json:"gamesPlayed"`
-	Wins           string `json:"wins"`
-	Ties           string `json:"ties"`
-	Losses         string `json:"losses"`
-	PointDiff      string `json:"pointDiff"`
-	Points         string `json:"points"`
+	Rank        int    `json:"rank"`
+	TeamName    string `json:"teamName"`
+	GroupName   string `json:"groupName,omitempty"`
+	GamesPlayed string `json:"gamesPlayed"`
+	Wins        string `json:"wins"`
+	Ties        string `json:"ties"`
+	Losses      string `json:"losses"`
+	PointDiff   string `json:"pointDiff"`
+	Points      string `json:"points"`
 }
 
 // LeagueStandings represents a competition standings table.
@@ -120,6 +127,7 @@ type LeagueStandings struct {
 	LeagueKey string           `json:"leagueKey"`
 	Name      string           `json:"name"`
 	Entries   []StandingsEntry `json:"entries"`
+	Groups    []StandingsGroup `json:"groups,omitempty"`
 	IsOffline bool             `json:"isOffline,omitempty"`
 	CachedAt  time.Time        `json:"cachedAt,omitempty"`
 }

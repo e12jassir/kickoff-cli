@@ -364,12 +364,29 @@ func renderTabPosiciones(m Model, curr model.League) string {
 		return MatchBoxStyle.Render(fmt.Sprintf("  %s Cargando tabla de posiciones...", m.spinner.View()))
 	}
 
-	if len(m.standings.Entries) == 0 {
+	var lines []string
+	var displayEntries []model.StandingsEntry
+	headerTitle := "TABLA DE POSICIONES · " + curr.Name
+
+	if len(m.standings.Groups) > 0 {
+		grpIdx := m.selectedGroup
+		if grpIdx < 0 || grpIdx >= len(m.standings.Groups) {
+			grpIdx = 0
+		}
+		currentGrp := m.standings.Groups[grpIdx]
+		displayEntries = currentGrp.Entries
+
+		groupNav := fmt.Sprintf("◄ %s (%d/%d) ►  [h/l: grupo]", currentGrp.Name, grpIdx+1, len(m.standings.Groups))
+		headerTitle = fmt.Sprintf("POSICIONES · %s", lipgloss.NewStyle().Foreground(ColorHighlight).Bold(true).Render(groupNav))
+	} else {
+		displayEntries = m.standings.Entries
+	}
+
+	if len(displayEntries) == 0 {
 		return MatchBoxStyle.Render(EmptyStateStyle.Render("Tabla de posiciones no disponible para esta competición."))
 	}
 
-	var lines []string
-	lines = append(lines, CategoryHeaderStyle.Render("TABLA DE POSICIONES · "+curr.Name))
+	lines = append(lines, CategoryHeaderStyle.Render(headerTitle))
 	lines = append(lines, "")
 
 	// Table header: #  Equipo               PJ  G   E   P   DG  PTS
@@ -377,7 +394,7 @@ func renderTabPosiciones(m Model, curr model.League) string {
 	lines = append(lines, lipgloss.NewStyle().Foreground(ColorCategory).Bold(true).Render(hdr))
 	lines = append(lines, lipgloss.NewStyle().Foreground(ColorBorder).Render("────────────────────────────────────────────────────────────"))
 
-	for _, e := range m.standings.Entries {
+	for _, e := range displayEntries {
 		rankStr := fmt.Sprintf("%d", e.Rank)
 		teamCol := truncateModalText(e.TeamName, 22)
 		row := fmt.Sprintf(" %-2s  %-22s  %3s %3s %3s %3s %4s  %3s", rankStr, teamCol, e.GamesPlayed, e.Wins, e.Ties, e.Losses, e.PointDiff, e.Points)
@@ -400,7 +417,7 @@ func renderTabGoleadores(m Model, curr model.League) string {
 	}
 
 	var lines []string
-	lines = append(lines, CategoryHeaderStyle.Render("MÁXIMOS GOLEADORES"))
+	lines = append(lines, CategoryHeaderStyle.Render("MÁXIMOS GOLEADORES (TOP 5)"))
 	lines = append(lines, "")
 
 	if len(m.statistics.Scorers) == 0 {
@@ -410,13 +427,13 @@ func renderTabGoleadores(m Model, curr model.League) string {
 		lines = append(lines, lipgloss.NewStyle().Foreground(ColorCategory).Bold(true).Render(hdr))
 		lines = append(lines, lipgloss.NewStyle().Foreground(ColorBorder).Render("────────────────────────────────────────────────────────────"))
 
-		limit := 10
+		limit := 5
 		if len(m.statistics.Scorers) < limit {
 			limit = len(m.statistics.Scorers)
 		}
 		for i := 0; i < limit; i++ {
 			s := m.statistics.Scorers[i]
-			row := fmt.Sprintf(" %-2d  %-24s  %-18s  %4s", s.Rank, truncateModalText(s.PlayerName, 24), truncateModalText(s.TeamName, 18), s.Value)
+			row := fmt.Sprintf(" %-2d  %-24s  %-18s  %4s", i+1, truncateModalText(s.PlayerName, 24), truncateModalText(s.TeamName, 18), s.Value)
 			if i < 3 {
 				lines = append(lines, lipgloss.NewStyle().Foreground(ColorHighlight).Bold(true).Render(row))
 			} else {
@@ -426,7 +443,7 @@ func renderTabGoleadores(m Model, curr model.League) string {
 	}
 
 	lines = append(lines, "")
-	lines = append(lines, CategoryHeaderStyle.Render("MÁXIMOS ASISTENTES"))
+	lines = append(lines, CategoryHeaderStyle.Render("MÁXIMOS ASISTENTES (TOP 5)"))
 	lines = append(lines, "")
 
 	if len(m.statistics.Assists) == 0 {
@@ -436,13 +453,13 @@ func renderTabGoleadores(m Model, curr model.League) string {
 		lines = append(lines, lipgloss.NewStyle().Foreground(ColorCategory).Bold(true).Render(hdr))
 		lines = append(lines, lipgloss.NewStyle().Foreground(ColorBorder).Render("────────────────────────────────────────────────────────────"))
 
-		limit := 10
+		limit := 5
 		if len(m.statistics.Assists) < limit {
 			limit = len(m.statistics.Assists)
 		}
 		for i := 0; i < limit; i++ {
 			a := m.statistics.Assists[i]
-			row := fmt.Sprintf(" %-2d  %-24s  %-18s  %4s", a.Rank, truncateModalText(a.PlayerName, 24), truncateModalText(a.TeamName, 18), a.Value)
+			row := fmt.Sprintf(" %-2d  %-24s  %-18s  %4s", i+1, truncateModalText(a.PlayerName, 24), truncateModalText(a.TeamName, 18), a.Value)
 			if i < 3 {
 				lines = append(lines, lipgloss.NewStyle().Foreground(ColorHighlight).Bold(true).Render(row))
 			} else {

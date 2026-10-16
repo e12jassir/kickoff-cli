@@ -551,7 +551,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						return m, fetchMatchStatsCmd(m.client, m.CurrentLeague().Key, selectedMatch.ID)
 					}
 				}
-			case "esc", "backspace", "h":
+			case "left", "h":
+				if m.leagueTab == TabPosiciones && m.standings != nil && len(m.standings.Groups) > 0 {
+					numGrps := len(m.standings.Groups)
+					m.selectedGroup = (m.selectedGroup - 1 + numGrps) % numGrps
+					return m, nil
+				}
+				m.state = StateMainMenu
+				m.matches = nil
+				m.matchCursor = 0
+				m.standings = nil
+				m.statistics = nil
+				m.channels = nil
+				m.channelCursor = 0
+				m.modalTab = 0
+				m.statusMsg = ""
+				m.errorMsg = ""
+				return m, nil
+			case "right", "l":
+				if m.leagueTab == TabPosiciones && m.standings != nil && len(m.standings.Groups) > 0 {
+					numGrps := len(m.standings.Groups)
+					m.selectedGroup = (m.selectedGroup + 1) % numGrps
+					return m, nil
+				}
+			case "esc", "backspace":
 				m.state = StateMainMenu
 				m.matches = nil
 				m.matchCursor = 0

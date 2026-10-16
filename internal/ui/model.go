@@ -46,8 +46,9 @@ type Model struct {
 	matches     []model.Match
 	matchCursor int
 
-	standings    *model.LeagueStandings
-	standingsErr error
+	standings     *model.LeagueStandings
+	standingsErr  error
+	selectedGroup int
 
 	statistics    *model.LeagueStatistics
 	statisticsErr error

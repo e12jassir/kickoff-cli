@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -145,8 +146,9 @@ type rawBoxscoreTeam struct {
 }
 
 type rawStatisticItem struct {
-	Name         string `json:"name"`
-	DisplayValue string `json:"displayValue"`
+	Name         string  `json:"name"`
+	DisplayValue string  `json:"displayValue"`
+	Value        float64 `json:"value"`
 }
 
 type cachedSummary struct {
@@ -1232,45 +1234,91 @@ func (c *Client) FetchStandings(ctx context.Context, leagueKey string) (*model.L
 		return c.fallbackStandings(leagueKey, fmt.Errorf("%w: %v", model.ErrCorruptedPayload, err))
 	}
 
-	var rawEntries []rawStandingsEntry
-	if len(raw.Children) > 0 && raw.Children[0].Standings != nil {
-		rawEntries = raw.Children[0].Standings.Entries
-	} else if raw.Standings != nil {
-		rawEntries = raw.Standings.Entries
-	}
-
-	var entries []model.StandingsEntry
-	for i, re := range rawEntries {
-		teamName := "Equipo"
-		if re.Team != nil {
-			if re.Team.DisplayName != "" {
-				teamName = re.Team.DisplayName
-			} else if re.Team.Name != "" {
-				teamName = re.Team.Name
-			}
-		}
-
-		getStat := func(names ...string) string {
-			for _, name := range names {
-				for _, s := range re.Stats {
-					if strings.EqualFold(s.Name, name) {
-						return s.DisplayValue
-					}
+	parseEntries := func(rawEntries []rawStandingsEntry, groupName string) []model.StandingsEntry {
+		var list []model.StandingsEntry
+		for _, re := range rawEntries {
+			teamName := "Equipo"
+			if re.Team != nil {
+				if re.Team.DisplayName != "" {
+					teamName = re.Team.DisplayName
+				} else if re.Team.Name != "" {
+					teamName = re.Team.Name
 				}
 			}
-			return "-"
+
+			getStat := func(names ...string) string {
+				for _, name := range names {
+					for _, s := range re.Stats {
+						if strings.EqualFold(s.Name, name) {
+							return s.DisplayValue
+						}
+					}
+				}
+				return "-"
+			}
+
+			rankVal := 0
+			for _, s := range re.Stats {
+				if strings.EqualFold(s.Name, "rank") {
+					rankVal = int(s.Value)
+					break
+				}
+			}
+
+			list = append(list, model.StandingsEntry{
+				Rank:        rankVal,
+				TeamName:    teamName,
+				GroupName:   groupName,
+				GamesPlayed: getStat("gamesPlayed"),
+				Wins:        getStat("wins"),
+				Ties:        getStat("ties"),
+				Losses:      getStat("losses"),
+				PointDiff:   getStat("pointDifferential"),
+				Points:      getStat("points"),
+			})
 		}
 
-		entries = append(entries, model.StandingsEntry{
-			Rank:        i + 1,
-			TeamName:    teamName,
-			GamesPlayed: getStat("gamesPlayed"),
-			Wins:        getStat("wins"),
-			Ties:        getStat("ties"),
-			Losses:      getStat("losses"),
-			PointDiff:   getStat("pointDifferential"),
-			Points:      getStat("points"),
+		// Sort by rank if present, or by points descending
+		sort.SliceStable(list, func(i, j int) bool {
+			if list[i].Rank > 0 && list[j].Rank > 0 {
+				return list[i].Rank < list[j].Rank
+			}
+			p1, _ := strconv.Atoi(list[i].Points)
+			p2, _ := strconv.Atoi(list[j].Points)
+			if p1 != p2 {
+				return p1 > p2
+			}
+			gd1, _ := strconv.Atoi(strings.TrimPrefix(list[i].PointDiff, "+"))
+			gd2, _ := strconv.Atoi(strings.TrimPrefix(list[j].PointDiff, "+"))
+			return gd1 > gd2
 		})
+
+		// Assign sequential rank 1..N if rank was not provided by API
+		for i := range list {
+			if list[i].Rank <= 0 {
+				list[i].Rank = i + 1
+			}
+		}
+
+		return list
+	}
+
+	var groups []model.StandingsGroup
+	var allEntries []model.StandingsEntry
+
+	if len(raw.Children) > 0 {
+		for _, child := range raw.Children {
+			if child.Standings != nil && len(child.Standings.Entries) > 0 {
+				gEntries := parseEntries(child.Standings.Entries, child.Name)
+				groups = append(groups, model.StandingsGroup{
+					Name:    child.Name,
+					Entries: gEntries,
+				})
+				allEntries = append(allEntries, gEntries...)
+			}
+		}
+	} else if raw.Standings != nil {
+		allEntries = parseEntries(raw.Standings.Entries, "")
 	}
 
 	now := c.now()
@@ -1281,7 +1329,8 @@ func (c *Client) FetchStandings(ctx context.Context, leagueKey string) (*model.L
 	res := &model.LeagueStandings{
 		LeagueKey: leagueKey,
 		Name:      raw.Name,
-		Entries:   entries,
+		Entries:   allEntries,
+		Groups:    groups,
 		IsOffline: false,
 		CachedAt:  now,
 	}
@@ -1315,10 +1364,18 @@ type rawStatsCategory struct {
 	Leaders     []rawStatsLeader  `json:"leaders"`
 }
 
+type rawStatsAthlete struct {
+	ID          string             `json:"id"`
+	DisplayName string             `json:"displayName"`
+	ShortName   string             `json:"shortName"`
+	Team        *rawTeam           `json:"team"`
+	Statistics  []rawStatisticItem `json:"statistics"`
+}
+
 type rawStatsLeader struct {
 	DisplayValue string             `json:"displayValue"`
 	Value        float64            `json:"value"`
-	Athlete      *rawAthlete        `json:"athlete"`
+	Athlete      *rawStatsAthlete   `json:"athlete"`
 	Team         *rawTeam           `json:"team"`
 	Statistics   []rawStatisticItem `json:"statistics"`
 }
@@ -1389,27 +1446,67 @@ func (c *Client) FetchStatistics(ctx context.Context, leagueKey string) (*model.
 		return c.fallbackStatistics(leagueKey, fmt.Errorf("%w: %v", model.ErrCorruptedPayload, err))
 	}
 
-	parseLeaders := func(leaders []rawStatsLeader) []model.ScorerEntry {
+	parseLeaders := func(leaders []rawStatsLeader, isScorer bool) []model.ScorerEntry {
 		var res []model.ScorerEntry
 		for i, l := range leaders {
 			pName := "Jugador"
-			if l.Athlete != nil && l.Athlete.DisplayName != "" {
-				pName = l.Athlete.DisplayName
-			}
 			tName := ""
-			if l.Team != nil && l.Team.DisplayName != "" {
+			var statsList []rawStatisticItem
+
+			if l.Athlete != nil {
+				if l.Athlete.DisplayName != "" {
+					pName = l.Athlete.DisplayName
+				} else if l.Athlete.ShortName != "" {
+					pName = l.Athlete.ShortName
+				}
+				if l.Athlete.Team != nil && l.Athlete.Team.DisplayName != "" {
+					tName = l.Athlete.Team.DisplayName
+				}
+				statsList = l.Athlete.Statistics
+			}
+			if tName == "" && l.Team != nil && l.Team.DisplayName != "" {
 				tName = l.Team.DisplayName
 			}
+			if len(statsList) == 0 {
+				statsList = l.Statistics
+			}
 
-			valStr := l.DisplayValue
-			for _, st := range l.Statistics {
-				if strings.EqualFold(st.Name, "totalGoals") || strings.EqualFold(st.Name, "goalAssists") {
+			valStr := ""
+			for _, st := range statsList {
+				if isScorer && strings.EqualFold(st.Name, "totalGoals") {
+					valStr = st.DisplayValue
+					break
+				}
+				if !isScorer && strings.EqualFold(st.Name, "goalAssists") {
 					valStr = st.DisplayValue
 					break
 				}
 			}
+
+			if valStr == "" && l.DisplayValue != "" {
+				// Parse "Matches: X, Goals: Y" or "Matches: X, Assists: Y"
+				dv := l.DisplayValue
+				if isScorer && strings.Contains(dv, "Goals: ") {
+					parts := strings.Split(dv, "Goals: ")
+					if len(parts) > 1 {
+						valStr = strings.TrimSpace(parts[1])
+					}
+				} else if !isScorer && strings.Contains(dv, "Assists: ") {
+					parts := strings.Split(dv, "Assists: ")
+					if len(parts) > 1 {
+						valStr = strings.TrimSpace(parts[1])
+					}
+				}
+			}
+
 			if valStr == "" {
-				valStr = fmt.Sprintf("%.0f", l.Value)
+				if l.Value > 0 {
+					valStr = fmt.Sprintf("%.0f", l.Value)
+				} else if l.DisplayValue != "" {
+					valStr = l.DisplayValue
+				} else {
+					valStr = "0"
+				}
 			}
 
 			res = append(res, model.ScorerEntry{
@@ -1427,9 +1524,9 @@ func (c *Client) FetchStatistics(ctx context.Context, leagueKey string) (*model.
 	for _, cat := range raw.Stats {
 		catName := strings.ToLower(cat.Name)
 		if strings.Contains(catName, "goal") || strings.Contains(catName, "scorer") {
-			scorers = parseLeaders(cat.Leaders)
+			scorers = parseLeaders(cat.Leaders, true)
 		} else if strings.Contains(catName, "assist") {
-			assists = parseLeaders(cat.Leaders)
+			assists = parseLeaders(cat.Leaders, false)
 		}
 	}
 
