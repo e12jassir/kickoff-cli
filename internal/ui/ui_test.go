@@ -1512,3 +1512,72 @@ func TestModel_TabResumen_SymmetricalCards_Scroll_And_NvimNav(t *testing.T) {
 		t.Fatalf("expected TabResumen after 'h', got %d", m.leagueTab)
 	}
 }
+
+func TestStateChannelSelect_Enter_EmptyMatchesDoesNotPanic(t *testing.T) {
+	client := &mockClient{}
+	cat := &mockCatalog{channels: []model.Channel{{Name: "ESPN", URL: "http://example.com/live.m3u8"}}}
+	play := &mockPlayer{}
+
+	m := NewModel(client, cat, play).WithInitialState(StateChannelSelect)
+	m.matches = nil
+	m.matchCursor = 5
+	m.channels = []model.Channel{{Name: "ESPN", URL: "http://example.com/live.m3u8"}}
+	m.channelCursor = 0
+	m.modalTab = 0
+
+	// Must not panic when pressing Enter with empty matches
+	newM, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated := newM.(Model)
+	if updated.state != StateChannelSelect {
+		t.Errorf("expected state to remain StateChannelSelect when match cannot be resolved, got %v", updated.state)
+	}
+	if cmd != nil {
+		t.Errorf("expected nil command when match cannot be resolved, got %v", cmd)
+	}
+}
+
+func TestCurrentSelectedMatch(t *testing.T) {
+	client := &mockClient{}
+	cat := &mockCatalog{}
+	play := &mockPlayer{}
+
+	m := NewModel(client, cat, play)
+
+	// Case 1: TabPartidos with matches
+	m.leagueTab = TabPartidos
+	m.matches = []model.Match{
+		{ID: "m1", HomeTeam: model.Competitor{DisplayName: "Team A"}},
+		{ID: "m2", HomeTeam: model.Competitor{DisplayName: "Team B"}},
+	}
+	m.matchCursor = 1
+	match, ok := m.CurrentSelectedMatch()
+	if !ok || match.ID != "m2" {
+		t.Errorf("expected match m2 on TabPartidos, got ok=%v, id=%s", ok, match.ID)
+	}
+
+	// Case 2: TabPartidos with out of bounds cursor
+	m.matchCursor = 10
+	_, ok = m.CurrentSelectedMatch()
+	if ok {
+		t.Errorf("expected ok=false for out of bounds matchCursor")
+	}
+
+	// Case 3: TabResumen with past matches
+	m.leagueTab = TabResumen
+	m.pastMatches = []model.Match{
+		{ID: "p1", HomeTeam: model.Competitor{DisplayName: "Team C"}, Status: model.MatchStatus{Completed: true}},
+	}
+	m.resumenCursor = 0
+	match, ok = m.CurrentSelectedMatch()
+	if !ok || match.ID != "p1" {
+		t.Errorf("expected past match p1 on TabResumen, got ok=%v, id=%s", ok, match.ID)
+	}
+
+	// Case 4: TabResumen with out of bounds cursor
+	m.resumenCursor = 99
+	_, ok = m.CurrentSelectedMatch()
+	if ok {
+		t.Errorf("expected ok=false for out of bounds resumenCursor")
+	}
+}
+

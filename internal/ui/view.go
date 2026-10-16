@@ -246,15 +246,7 @@ func renderBrowsing(m Model) string {
 			footer = FooterHelpStyle.Render("r: recargar  •  esc: volver  •  q: salir")
 
 		case StateChannelSelect:
-			var selMatch model.Match
-			if m.leagueTab == TabResumen {
-				pms := m.ResumenMatches()
-				if len(pms) > 0 && m.resumenCursor < len(pms) {
-					selMatch = pms[m.resumenCursor]
-				}
-			} else if len(m.matches) > 0 && m.matchCursor < len(m.matches) {
-				selMatch = m.matches[m.matchCursor]
-			}
+			selMatch, _ := m.CurrentSelectedMatch()
 			modalContent := renderChannelModal(selMatch, m.channels, m.channelCursor, m.modalTab, m.livePulse, m.spinner.View(), m.noEmoji)
 			body = ModalBoxStyle.Render(modalContent)
 			footer = FooterHelpStyle.Render("h/l o ←/→: pestaña  •  j/k o ↑/↓: canal  •  enter: reproducir  •  esc: volver")

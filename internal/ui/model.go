@@ -225,3 +225,18 @@ func (m Model) ResumenMatches() []model.Match {
 
 	return pastMatches
 }
+
+// CurrentSelectedMatch returns the currently selected match based on the active tab and bounds checks.
+func (m Model) CurrentSelectedMatch() (model.Match, bool) {
+	if m.leagueTab == TabResumen {
+		pms := m.ResumenMatches()
+		if len(pms) > 0 && m.resumenCursor >= 0 && m.resumenCursor < len(pms) {
+			return pms[m.resumenCursor], true
+		}
+		return model.Match{}, false
+	}
+	if len(m.matches) > 0 && m.matchCursor >= 0 && m.matchCursor < len(m.matches) {
+		return m.matches[m.matchCursor], true
+	}
+	return model.Match{}, false
+}

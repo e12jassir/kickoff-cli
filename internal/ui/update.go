@@ -303,9 +303,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			league := m.CurrentLeague()
 			cmds = append(cmds, forceRefreshMatchesCmd(m.client, league.Key, true))
 
-			if m.state == StateChannelSelect && len(m.matches) > 0 && m.matchCursor < len(m.matches) {
-				selMatch := m.matches[m.matchCursor]
-				if selMatch.ID != "" && selMatch.Status.State == "in" {
+			if m.state == StateChannelSelect {
+				if selMatch, ok := m.CurrentSelectedMatch(); ok && selMatch.ID != "" && selMatch.Status.State == "in" {
 					cmds = append(cmds, forceFetchMatchStatsCmd(m.client, league.Key, selMatch.ID))
 				}
 			}
@@ -775,8 +774,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			case "enter":
 				if m.modalTab == 0 && len(m.channels) > 0 && m.channelCursor < len(m.channels) {
+					selectedMatch, ok := m.CurrentSelectedMatch()
+					if !ok {
+						return m, nil
+					}
 					selectedChannel := m.channels[m.channelCursor]
-					selectedMatch := m.matches[m.matchCursor]
 					m.state = StatePlaying
 					m.connecting = true
 					m.pulseStep = 0
