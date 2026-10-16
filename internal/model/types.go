@@ -88,15 +88,12 @@ type TeamLineup struct {
 	Formation string   `json:"formation"`
 	Starters  []Player `json:"starters"`
 	Bench     []Player `json:"bench"`
-	Coach     string   `json:"coach,omitempty"`
 }
 
 // MatchLineups holds tactical lineups for both home and away teams.
 type MatchLineups struct {
-	Home      TeamLineup `json:"home"`
-	Away      TeamLineup `json:"away"`
-	HomeCoach string     `json:"homeCoach,omitempty"`
-	AwayCoach string     `json:"awayCoach,omitempty"`
+	Home TeamLineup `json:"home"`
+	Away TeamLineup `json:"away"`
 }
 
 // StandingsGroup represents a named group or conference in tournament standings.
@@ -190,28 +187,6 @@ type Match struct {
 	CachedAt   time.Time     `json:"cachedAt,omitempty"`
 }
 
-// HomeTeamCoach returns the coach of the home team if available.
-func (m Match) HomeTeamCoach() string {
-	if m.Lineups != nil {
-		if m.Lineups.HomeCoach != "" {
-			return m.Lineups.HomeCoach
-		}
-		return m.Lineups.Home.Coach
-	}
-	return ""
-}
-
-// AwayTeamCoach returns the coach of the away team if available.
-func (m Match) AwayTeamCoach() string {
-	if m.Lineups != nil {
-		if m.Lineups.AwayCoach != "" {
-			return m.Lineups.AwayCoach
-		}
-		return m.Lineups.Away.Coach
-	}
-	return ""
-}
-
 // Channel represents an HLS stream signal for a match.
 type Channel struct {
 	DisplayName string `json:"displayName"`
@@ -281,8 +256,6 @@ type MatchDetails struct {
 	Lineups    *MatchLineups `json:"lineups"`
 	Referee    string        `json:"referee"`
 	Attendance int           `json:"attendance"`
-	HomeCoach  string        `json:"homeCoach,omitempty"`
-	AwayCoach  string        `json:"awayCoach,omitempty"`
 	IsOffline  bool          `json:"isOffline,omitempty"`
 	CachedAt   time.Time     `json:"cachedAt,omitempty"`
 }
