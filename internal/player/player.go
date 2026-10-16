@@ -65,13 +65,22 @@ func ResolveMPVBinary(custom string) string {
 	}
 	if exe, err := os.Executable(); err == nil {
 		dir := filepath.Dir(exe)
-		candidate := filepath.Join(dir, "mpv")
 		if runtime.GOOS == "windows" {
-			candidate += ".exe"
+			for _, candidate := range []string{"mpv.exe", "mpvnet.exe", "mpv"} {
+				target := filepath.Join(dir, candidate)
+				if _, err := os.Stat(target); err == nil {
+					return target
+				}
+			}
+		} else {
+			candidate := filepath.Join(dir, "mpv")
+			if _, err := os.Stat(candidate); err == nil {
+				return candidate
+			}
 		}
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate
-		}
+	}
+	if p, err := checkMPVInPath(); err == nil && p != "" {
+		return p
 	}
 	return "mpv"
 }
@@ -120,7 +129,7 @@ func BuildArgs(req model.PlayRequest, sockPath string) []string {
 
 	title := fmt.Sprintf("kickoff: %s (%s)", req.Match.Title, req.Channel.Name)
 
-	return []string{
+	args := []string{
 		"--fs",
 		"--force-window=immediate",
 		"--hwdec=auto-safe",
@@ -135,9 +144,12 @@ func BuildArgs(req model.PlayRequest, sockPath string) []string {
 		"--demuxer-readahead-secs=5",
 		fmt.Sprintf("--hls-bitrate=%s", bitrate),
 		"--network-timeout=20",
-		fmt.Sprintf("--input-ipc-server=%s", sockPath),
-		cleanURL,
 	}
+	if sockPath != "" {
+		args = append(args, fmt.Sprintf("--input-ipc-server=%s", sockPath))
+	}
+	args = append(args, cleanURL)
+	return args
 }
 
 // Stop terminates any currently supervised MPV instance and cleans up socket resources.
@@ -177,11 +189,15 @@ func (c *Controller) PlayStream(ctx context.Context, req model.PlayRequest) erro
 
 	bin := ResolveMPVBinary(c.mpvBinary)
 	if _, err := exec.LookPath(bin); err != nil {
-		c.mu.Unlock()
-		if runtime.GOOS == "windows" {
-			return fmt.Errorf("mpv no está instalado en tu sistema. Instálalo con 'winget install mpv.net' (PowerShell) o coloca mpv.exe junto a kickoff.exe")
+		if p, errPath := checkMPVInPath(); errPath == nil {
+			bin = p
+		} else {
+			c.mu.Unlock()
+			if runtime.GOOS == "windows" {
+				return fmt.Errorf("mpv is not installed on your system. Install it with 'winget install mpv.net' in PowerShell or place mpv.exe next to kickoff.exe")
+			}
+			return fmt.Errorf("mpv is not installed on your system. Install it with 'sudo pacman -S mpv' (Arch), 'sudo apt install mpv' (Ubuntu/Debian) or 'brew install mpv' (macOS) — https://mpv.io")
 		}
-		return fmt.Errorf("mpv no está instalado en tu sistema. Instálalo con 'sudo pacman -S mpv' (Arch), 'sudo apt install mpv' (Ubuntu/Debian) o 'brew install mpv' (macOS) — https://mpv.io")
 	}
 
 	_ = c.stopLocked()

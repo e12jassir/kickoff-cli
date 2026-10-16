@@ -110,25 +110,89 @@ func CheckForUpdate(ctx context.Context, repo, currentVersion string) (*ReleaseI
 	return &rel, isNewer, nil
 }
 
-// FindAssetURL locates the binary tarball URL corresponding to the current OS and architecture.
+// FindAssetURL locates the binary archive URL corresponding to the current OS and architecture.
+// It supports both versioned (kickoff_{version}_{os}_{arch}.tar.gz) and unversioned/releaser
+// (kickoff_{os}_{arch}.tar.gz) formats, standardizing on 'darwin' while retaining backward
+// compatibility for 'macos'.
 func FindAssetURL(rel *ReleaseInfo, goos, goarch string) (string, error) {
 	normOS := strings.ToLower(goos)
 	normArch := strings.ToLower(goarch)
 
-	matchesOS := func(name string) bool {
-		if normOS == "darwin" || normOS == "macos" {
-			return strings.Contains(name, "macos") || strings.Contains(name, "darwin")
+	hasOS := func(name string) (bool, bool) {
+		tokens := strings.FieldsFunc(name, func(r rune) bool {
+			return r == '_' || r == '-' || r == '.'
+		})
+		matchedDarwin := false
+		matchedMacos := false
+		for _, t := range tokens {
+			if normOS == "darwin" || normOS == "macos" {
+				if t == "darwin" {
+					matchedDarwin = true
+				}
+				if t == "macos" {
+					matchedMacos = true
+				}
+			} else if t == normOS {
+				return true, false
+			}
 		}
-		return strings.Contains(name, normOS)
+		if matchedDarwin {
+			return true, true
+		}
+		if matchedMacos {
+			return true, false
+		}
+		return false, false
 	}
 
-	// Match appropriate release archive for OS/Arch
+	hasArch := func(name string) bool {
+		tokens := strings.FieldsFunc(name, func(r rune) bool {
+			return r == '_' || r == '-' || r == '.'
+		})
+		for _, t := range tokens {
+			if t == normArch {
+				return true
+			}
+		}
+		return false
+	}
+
+	var fallbackURL string
 	for _, a := range rel.Assets {
 		name := strings.ToLower(a.Name)
-		validExt := strings.HasSuffix(name, ".tar.gz") || (normOS == "windows" && strings.HasSuffix(name, ".zip"))
-		if matchesOS(name) && strings.Contains(name, normArch) && validExt {
-			return a.BrowserDownloadURL, nil
+		isZip := strings.HasSuffix(name, ".zip")
+		isTarGz := strings.HasSuffix(name, ".tar.gz")
+
+		if !isZip && !isTarGz {
+			continue
 		}
+
+		matchedOS, isDarwinToken := hasOS(name)
+		if !matchedOS || !hasArch(name) {
+			continue
+		}
+
+		if normOS == "windows" {
+			if isZip {
+				return a.BrowserDownloadURL, nil
+			}
+			if isTarGz && fallbackURL == "" {
+				fallbackURL = a.BrowserDownloadURL
+			}
+		} else {
+			if isTarGz {
+				if (normOS == "darwin" || normOS == "macos") && isDarwinToken {
+					return a.BrowserDownloadURL, nil
+				}
+				if fallbackURL == "" {
+					fallbackURL = a.BrowserDownloadURL
+				}
+			}
+		}
+	}
+
+	if fallbackURL != "" {
+		return fallbackURL, nil
 	}
 
 	return "", fmt.Errorf("no release asset found for %s/%s", normOS, normArch)
@@ -189,23 +253,23 @@ func ExtractBinaryFromTarGz(r io.Reader) ([]byte, error) {
 
 // SelfUpdate performs an in-place atomic update of the currently executing kickoff binary.
 func SelfUpdate(ctx context.Context, repo, currentVersion string) error {
-	fmt.Printf("⚽ Comprobando actualizaciones para kickoff (versión actual: v%s)...\n", currentVersion)
+	fmt.Printf("⚽ Checking for kickoff updates (current version: v%s)...\n", currentVersion)
 
 	rel, newer, err := CheckForUpdate(ctx, repo, currentVersion)
 	if err != nil {
-		return fmt.Errorf("error al consultar GitHub: %w", err)
+		return fmt.Errorf("error querying GitHub: %w", err)
 	}
 
 	if !newer {
-		fmt.Printf("✓ kickoff ya está en la versión más reciente (%s). ¡Todo al día!\n", currentVersion)
+		fmt.Printf("✓ kickoff is already at the latest version (%s). All up to date!\n", currentVersion)
 		return nil
 	}
 
-	fmt.Printf("✨ ¡Nueva versión encontrada: %s! Descargando actualización...\n", rel.TagName)
+	fmt.Printf("✨ New version available: %s! Downloading update...\n", rel.TagName)
 
 	assetURL, err := FindAssetURL(rel, runtime.GOOS, runtime.GOARCH)
 	if err != nil {
-		return fmt.Errorf("no se encontró paquete precompilado para tu sistema (%s/%s): %w", runtime.GOOS, runtime.GOARCH, err)
+		return fmt.Errorf("no precompiled package found for your system (%s/%s): %w", runtime.GOOS, runtime.GOARCH, err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, assetURL, nil)
@@ -217,17 +281,17 @@ func SelfUpdate(ctx context.Context, repo, currentVersion string) error {
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("error al descargar paquete: %w", err)
+		return fmt.Errorf("error downloading package: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("servidor de descargas respondió con código %d", resp.StatusCode)
+		return fmt.Errorf("download server responded with HTTP %d", resp.StatusCode)
 	}
 
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("error al leer paquete descargado: %w", err)
+		return fmt.Errorf("error reading downloaded package: %w", err)
 	}
 
 	var binData []byte
@@ -237,34 +301,34 @@ func SelfUpdate(ctx context.Context, repo, currentVersion string) error {
 		binData, err = ExtractBinaryFromTarGz(bytes.NewReader(bodyBytes))
 	}
 	if err != nil {
-		return fmt.Errorf("error al descomprimir binario: %w", err)
+		return fmt.Errorf("error extracting binary: %w", err)
 	}
 
 	exePath, err := os.Executable()
 	if err != nil {
-		return fmt.Errorf("no se pudo determinar la ruta del ejecutable: %w", err)
+		return fmt.Errorf("could not determine executable path: %w", err)
 	}
 	exePath, err = filepath.EvalSymlinks(exePath)
 	if err != nil {
-		return fmt.Errorf("no se pudo resolver symlink del ejecutable: %w", err)
+		return fmt.Errorf("could not resolve symlink of executable: %w", err)
 	}
 
 	// Atomic replacement using temp file in the same directory
 	dir := filepath.Dir(exePath)
 	tmpFile, err := os.CreateTemp(dir, "kickoff-update-*")
 	if err != nil {
-		return fmt.Errorf("no se pudo crear archivo temporal en %s (¿permisos?): %w", dir, err)
+		return fmt.Errorf("could not create temporary file in %s (permissions?): %w", dir, err)
 	}
 	tmpName := tmpFile.Name()
 	defer os.Remove(tmpName)
 
 	if _, err := tmpFile.Write(binData); err != nil {
 		_ = tmpFile.Close()
-		return fmt.Errorf("error al escribir nuevo binario: %w", err)
+		return fmt.Errorf("error writing new binary: %w", err)
 	}
 	if err := tmpFile.Chmod(0o755); err != nil {
 		_ = tmpFile.Close()
-		return fmt.Errorf("error al otorgar permisos de ejecución: %w", err)
+		return fmt.Errorf("error granting execute permissions: %w", err)
 	}
 	_ = tmpFile.Close()
 
@@ -272,24 +336,23 @@ func SelfUpdate(ctx context.Context, repo, currentVersion string) error {
 	_ = os.Remove(oldPath)
 	if runtime.GOOS == "windows" {
 		if err := os.Rename(exePath, oldPath); err != nil {
-			return fmt.Errorf("no se pudo mover binario activo: %w", err)
+			return fmt.Errorf("could not move running binary: %w", err)
 		}
 	}
 	if err := os.Rename(tmpName, exePath); err != nil {
 		if runtime.GOOS == "windows" {
 			_ = os.Rename(oldPath, exePath) // Rollback
 		}
-		return fmt.Errorf("error al reemplazar binario en %s: %w", exePath, err)
+		return fmt.Errorf("error replacing binary at %s: %w", exePath, err)
 	}
 	if runtime.GOOS != "windows" {
 		_ = os.Remove(oldPath)
 	}
 
 	// Clean outdated cache files so newly installed version fetches fresh data
-	cacheBase := os.Getenv("XDG_CACHE_HOME")
-	if cacheBase == "" {
-		home, err := os.UserHomeDir()
-		if err == nil {
+	cacheBase, err := os.UserCacheDir()
+	if err != nil || cacheBase == "" {
+		if home, err := os.UserHomeDir(); err == nil {
 			cacheBase = filepath.Join(home, ".cache")
 		}
 	}
@@ -298,14 +361,14 @@ func SelfUpdate(ctx context.Context, repo, currentVersion string) error {
 		_ = os.RemoveAll(cacheDir)
 	}
 
-	fmt.Printf("🎉 ¡kickoff actualizado con éxito a la versión %s!\n", rel.TagName)
-	fmt.Printf("Ubicación del binario: %s\n", exePath)
+	fmt.Printf("🎉 kickoff successfully updated to version %s!\n", rel.TagName)
+	fmt.Printf("Binary location: %s\n", exePath)
 	return nil
 }
 
 // RunSetup diagnoses system dependencies, configurations, and environment prerequisites.
 func RunSetup() error {
-	fmt.Println("⚽ kickoff setup — Comprobando entorno y dependencias")
+	fmt.Println("⚽ kickoff setup — Checking environment and dependencies")
 	fmt.Println(strings.Repeat("─", 55))
 
 	var warnings []string
@@ -313,27 +376,45 @@ func RunSetup() error {
 	// 1. MPV binary
 	mpvBin := "mpv"
 	if exe, err := os.Executable(); err == nil {
-		candidate := filepath.Join(filepath.Dir(exe), "mpv")
+		dir := filepath.Dir(exe)
 		if runtime.GOOS == "windows" {
-			candidate += ".exe"
-		}
-		if _, err := os.Stat(candidate); err == nil {
-			mpvBin = candidate
+			for _, cand := range []string{"mpv.exe", "mpvnet.exe", "mpv"} {
+				candidate := filepath.Join(dir, cand)
+				if _, err := os.Stat(candidate); err == nil {
+					mpvBin = candidate
+					break
+				}
+			}
+		} else {
+			candidate := filepath.Join(dir, "mpv")
+			if _, err := os.Stat(candidate); err == nil {
+				mpvBin = candidate
+			}
 		}
 	}
 
 	mpvPath, err := exec.LookPath(mpvBin)
+	if err != nil && runtime.GOOS == "windows" {
+		for _, cand := range []string{"mpv.exe", "mpvnet.exe", "mpv"} {
+			if p, e := exec.LookPath(cand); e == nil {
+				mpvPath = p
+				err = nil
+				break
+			}
+		}
+	}
+
 	if err != nil {
-		fmt.Println("❌ mpv: NO ENCONTRADO")
+		fmt.Println("❌ mpv: NOT FOUND")
 		if runtime.GOOS == "windows" {
-			warnings = append(warnings, "mpv es obligatorio para reproducir partidos. Instálalo con 'winget install mpv.net' en PowerShell o coloca mpv.exe junto a kickoff.exe")
+			warnings = append(warnings, "mpv is required to play streams. Install it with 'winget install mpv.net' in PowerShell or place mpv.exe next to kickoff.exe")
 		} else {
-			warnings = append(warnings, "mpv es obligatorio para reproducir partidos. Instálalo con 'sudo pacman -S mpv' (Arch), 'sudo apt install mpv' (Ubuntu/Debian) o 'brew install mpv' (macOS)")
+			warnings = append(warnings, "mpv is required to play streams. Install it with 'sudo pacman -S mpv' (Arch), 'sudo apt install mpv' (Ubuntu/Debian) or 'brew install mpv' (macOS)")
 		}
 	} else {
 		out, _ := exec.Command(mpvPath, "--version").Output()
 		firstLine := strings.Split(string(out), "\n")[0]
-		if mpvBin != "mpv" {
+		if filepath.Dir(mpvPath) == filepath.Dir(os.Args[0]) {
 			fmt.Printf("✓ mpv (local portable): %s (%s)\n", mpvPath, firstLine)
 		} else {
 			fmt.Printf("✓ mpv: %s (%s)\n", mpvPath, firstLine)
@@ -344,7 +425,7 @@ func RunSetup() error {
 	if ffPath, err := exec.LookPath("ffprobe"); err == nil {
 		fmt.Printf("✓ ffprobe: %s\n", ffPath)
 	} else {
-		fmt.Println("ℹ️  ffprobe: No instalado (opcional)")
+		fmt.Println("ℹ️  ffprobe: Not installed (optional)")
 	}
 
 	// 3. Emoji fonts on Linux
@@ -353,19 +434,18 @@ func RunSetup() error {
 			out, _ := exec.Command(fcPath, ":", "family").Output()
 			outStr := strings.ToLower(string(out))
 			if strings.Contains(outStr, "emoji") || strings.Contains(outStr, "noto color") {
-				fmt.Println("✓ Fuentes de emojis: Disponibles en el sistema")
+				fmt.Println("✓ Emoji fonts: Available on system")
 			} else {
-				fmt.Println("⚠️  Fuentes de emojis: No detectadas")
-				warnings = append(warnings, "Instala fuentes de emojis (ej. 'sudo pacman -S noto-fonts-emoji' o 'sudo apt install fonts-noto-color-emoji') para visualizar banderas y balones en la TUI")
+				fmt.Println("⚠️  Emoji fonts: Not detected")
+				warnings = append(warnings, "Install emoji fonts (e.g. 'sudo pacman -S noto-fonts-emoji' or 'sudo apt install fonts-noto-color-emoji') to view flags and balls in the TUI, or run with --no-emoji")
 			}
 		}
 	}
 
 	// 4. Config Directory & channels.json
-	configBase := os.Getenv("XDG_CONFIG_HOME")
-	if configBase == "" {
-		home, err := os.UserHomeDir()
-		if err == nil {
+	configBase, err := os.UserConfigDir()
+	if err != nil || configBase == "" {
+		if home, err := os.UserHomeDir(); err == nil {
 			configBase = filepath.Join(home, ".config")
 		}
 	}
@@ -374,35 +454,34 @@ func RunSetup() error {
 		_ = os.MkdirAll(cfgDir, 0o755)
 		channelsCfg := filepath.Join(cfgDir, "channels.json")
 		if _, err := os.Stat(channelsCfg); err == nil {
-			fmt.Printf("✓ Configuración de canales: %s\n", channelsCfg)
+			fmt.Printf("✓ Channels configuration: %s\n", channelsCfg)
 		} else {
-			fmt.Printf("ℹ️  Configuración de canales: Predeterminada integrada (puedes crear %s si quieres canales personalizados)\n", channelsCfg)
+			fmt.Printf("ℹ️  Channels configuration: Built-in default (you can create %s for custom channels)\n", channelsCfg)
 		}
 	}
 
 	// 5. Cache Directory
-	cacheBase := os.Getenv("XDG_CACHE_HOME")
-	if cacheBase == "" {
-		home, err := os.UserHomeDir()
-		if err == nil {
+	cacheBase, err := os.UserCacheDir()
+	if err != nil || cacheBase == "" {
+		if home, err := os.UserHomeDir(); err == nil {
 			cacheBase = filepath.Join(home, ".cache")
 		}
 	}
 	if cacheBase != "" {
 		cacheDir := filepath.Join(cacheBase, "kickoff")
 		_ = os.MkdirAll(cacheDir, 0o755)
-		fmt.Printf("✓ Directorio de caché: %s\n", cacheDir)
+		fmt.Printf("✓ Cache directory: %s\n", cacheDir)
 	}
 
 	fmt.Println(strings.Repeat("─", 55))
 	if len(warnings) > 0 {
-		fmt.Println("⚠️  Atención:")
+		fmt.Println("⚠️  Warnings:")
 		for _, w := range warnings {
 			fmt.Printf("  • %s\n", w)
 		}
-		return errors.New("dependencias incompletas")
+		return errors.New("incomplete dependencies")
 	}
 
-	fmt.Println("🚀 ¡Todo listo! kickoff está configurado al 100%.")
+	fmt.Println("🚀 All set! kickoff is configured and ready.")
 	return nil
 }

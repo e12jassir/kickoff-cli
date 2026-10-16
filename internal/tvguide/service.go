@@ -97,8 +97,8 @@ func WithTargets(targets []ChannelTarget) Option {
 // NewService creates a new tvguide.Service and loads fresh cache from disk.
 // If cache is cold or expired and not running in unit test mode, it initiates a background refresh.
 func NewService(opts ...Option) *Service {
-	cacheBase := os.Getenv("XDG_CACHE_HOME")
-	if cacheBase == "" {
+	cacheBase, err := os.UserCacheDir()
+	if err != nil || cacheBase == "" {
 		home, err := os.UserHomeDir()
 		if err == nil {
 			cacheBase = filepath.Join(home, ".cache")

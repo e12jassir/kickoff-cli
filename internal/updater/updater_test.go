@@ -37,7 +37,7 @@ func TestFindAssetURL(t *testing.T) {
 		Assets: []Asset{
 			{Name: "kickoff_0.1.1_linux_amd64.tar.gz", BrowserDownloadURL: "https://example.com/linux_amd64.tar.gz"},
 			{Name: "kickoff_0.1.1_linux_arm64.tar.gz", BrowserDownloadURL: "https://example.com/linux_arm64.tar.gz"},
-			{Name: "kickoff_0.1.1_macos_arm64.tar.gz", BrowserDownloadURL: "https://example.com/macos_arm64.tar.gz"},
+			{Name: "kickoff_0.1.1_darwin_arm64.tar.gz", BrowserDownloadURL: "https://example.com/darwin_arm64.tar.gz"},
 			{Name: "kickoff_0.1.1_darwin_amd64.tar.gz", BrowserDownloadURL: "https://example.com/darwin_amd64.tar.gz"},
 			{Name: "kickoff_0.1.1_windows_amd64.zip", BrowserDownloadURL: "https://example.com/windows_amd64.zip"},
 			{Name: "checksums.txt", BrowserDownloadURL: "https://example.com/checksums.txt"},
@@ -49,14 +49,14 @@ func TestFindAssetURL(t *testing.T) {
 		t.Fatalf("expected linux/amd64 asset, got: %s (err: %v)", u, err)
 	}
 
-	uMacos, err := FindAssetURL(rel, "darwin", "arm64")
-	if err != nil || uMacos != "https://example.com/macos_arm64.tar.gz" {
-		t.Fatalf("expected macos_arm64 asset for darwin/arm64, got: %s (err: %v)", uMacos, err)
+	uDarwinArm, err := FindAssetURL(rel, "darwin", "arm64")
+	if err != nil || uDarwinArm != "https://example.com/darwin_arm64.tar.gz" {
+		t.Fatalf("expected darwin_arm64 asset for darwin/arm64, got: %s (err: %v)", uDarwinArm, err)
 	}
 
-	uDarwin, err := FindAssetURL(rel, "darwin", "amd64")
-	if err != nil || uDarwin != "https://example.com/darwin_amd64.tar.gz" {
-		t.Fatalf("expected darwin_amd64 asset for darwin/amd64, got: %s (err: %v)", uDarwin, err)
+	uDarwinAmd, err := FindAssetURL(rel, "darwin", "amd64")
+	if err != nil || uDarwinAmd != "https://example.com/darwin_amd64.tar.gz" {
+		t.Fatalf("expected darwin_amd64 asset for darwin/amd64, got: %s (err: %v)", uDarwinAmd, err)
 	}
 
 	uWin, err := FindAssetURL(rel, "windows", "amd64")
@@ -67,6 +67,43 @@ func TestFindAssetURL(t *testing.T) {
 	_, err = FindAssetURL(rel, "freebsd", "riscv64")
 	if err == nil {
 		t.Fatalf("expected error for unsupported platform, got nil")
+	}
+
+	// Test unversioned/releaser asset format
+	unversionedRel := &ReleaseInfo{
+		TagName: "v0.1.2",
+		Assets: []Asset{
+			{Name: "kickoff_linux_amd64.tar.gz", BrowserDownloadURL: "https://example.com/unversioned_linux_amd64.tar.gz"},
+			{Name: "kickoff_darwin_arm64.tar.gz", BrowserDownloadURL: "https://example.com/unversioned_darwin_arm64.tar.gz"},
+			{Name: "kickoff_windows_amd64.zip", BrowserDownloadURL: "https://example.com/unversioned_windows_amd64.zip"},
+		},
+	}
+
+	uUnvLinux, err := FindAssetURL(unversionedRel, "linux", "amd64")
+	if err != nil || uUnvLinux != "https://example.com/unversioned_linux_amd64.tar.gz" {
+		t.Fatalf("expected unversioned linux asset, got: %s (err: %v)", uUnvLinux, err)
+	}
+
+	uUnvDarwin, err := FindAssetURL(unversionedRel, "darwin", "arm64")
+	if err != nil || uUnvDarwin != "https://example.com/unversioned_darwin_arm64.tar.gz" {
+		t.Fatalf("expected unversioned darwin asset, got: %s (err: %v)", uUnvDarwin, err)
+	}
+
+	uUnvWin, err := FindAssetURL(unversionedRel, "windows", "amd64")
+	if err != nil || uUnvWin != "https://example.com/unversioned_windows_amd64.zip" {
+		t.Fatalf("expected unversioned windows asset, got: %s (err: %v)", uUnvWin, err)
+	}
+
+	// Test backward compatibility for legacy macos naming
+	legacyRel := &ReleaseInfo{
+		TagName: "v0.1.0",
+		Assets: []Asset{
+			{Name: "kickoff_0.1.0_macos_arm64.tar.gz", BrowserDownloadURL: "https://example.com/legacy_macos_arm64.tar.gz"},
+		},
+	}
+	uLegacy, err := FindAssetURL(legacyRel, "darwin", "arm64")
+	if err != nil || uLegacy != "https://example.com/legacy_macos_arm64.tar.gz" {
+		t.Fatalf("expected legacy macos asset fallback, got: %s (err: %v)", uLegacy, err)
 	}
 }
 

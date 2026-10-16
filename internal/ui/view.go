@@ -13,6 +13,9 @@ import (
 
 // View renders the terminal user interface according to model state.
 func (m Model) View() string {
+	if m.width < 60 || m.height < 15 {
+		return "Terminal window is too small (min 60x15). Please resize."
+	}
 	if m.state == StateMainMenu {
 		return renderMainMenu(m)
 	}
@@ -41,7 +44,9 @@ func renderMainMenu(m Model) string {
 		}
 
 		emoji := league.Emoji
-		if emoji == "" {
+		if m.noEmoji {
+			emoji = "-"
+		} else if emoji == "" {
 			emoji = "⚽"
 		}
 
@@ -64,10 +69,14 @@ func renderMainMenu(m Model) string {
 	var elements []string
 	elements = append(elements, logo, subtitle)
 	if m.updateAvailable != "" {
+		icon := "✨"
+		if m.noEmoji {
+			icon = "*"
+		}
 		banner := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#00FF88")).
 			Bold(true).
-			Render(fmt.Sprintf("✨ ¡Actualización disponible (%s)! Presiona [u] para actualizar", m.updateAvailable))
+			Render(fmt.Sprintf("%s ¡Actualización disponible (%s)! Presiona [u] para actualizar", icon, m.updateAvailable))
 		elements = append(elements, "", banner)
 	}
 	if m.statusMsg != "" {
@@ -93,9 +102,13 @@ func renderMainMenu(m Model) string {
 
 func renderBrowsing(m Model) string {
 	curr := m.CurrentLeague()
-	headerText := fmt.Sprintf("⚽ KICKOFF · %s %s", curr.Emoji, curr.Name)
-	if curr.Emoji == "" {
+	var headerText string
+	if m.noEmoji {
+		headerText = fmt.Sprintf("KICKOFF · %s", curr.Name)
+	} else if curr.Emoji == "" {
 		headerText = fmt.Sprintf("⚽ KICKOFF · %s", curr.Name)
+	} else {
+		headerText = fmt.Sprintf("⚽ KICKOFF · %s %s", curr.Emoji, curr.Name)
 	}
 	header := AppTitleStyle.Render(headerText)
 
@@ -116,13 +129,17 @@ func renderBrowsing(m Model) string {
 		if len(m.matches) > 0 && m.matchCursor < len(m.matches) {
 			selMatch = m.matches[m.matchCursor]
 		}
-		modalContent := renderChannelModal(selMatch, m.channels, m.channelCursor, m.modalTab, m.livePulse, m.spinner.View())
+		modalContent := renderChannelModal(selMatch, m.channels, m.channelCursor, m.modalTab, m.livePulse, m.spinner.View(), m.noEmoji)
 		body = ModalBoxStyle.Render(modalContent)
 		footer = FooterHelpStyle.Render("←/→/tab: pestaña  •  ↑/↓: canal  •  enter: reproducir  •  esc: volver")
 
 	default: // StateBrowsing, StatePlaying
 		if len(m.matches) == 0 {
-			emptyMsg := fmt.Sprintf("⚽ No hay partidos programados hoy para %s.", curr.Name)
+			emptyPrefix := "⚽ "
+			if m.noEmoji {
+				emptyPrefix = ""
+			}
+			emptyMsg := fmt.Sprintf("%sNo hay partidos programados hoy para %s.", emptyPrefix, curr.Name)
 			body = MatchBoxStyle.Render(EmptyStateStyle.Render(emptyMsg))
 		} else {
 			var lines []string
@@ -226,7 +243,8 @@ func renderMatchItem(match model.Match, isSelected bool, livePulse bool) []strin
 	return []string{line1, line2}
 }
 
-func renderChannelModal(match model.Match, channels []model.Channel, selectedIdx int, modalTab int, livePulse bool, spinnerStr string) string {
+func renderChannelModal(match model.Match, channels []model.Channel, selectedIdx int, modalTab int, livePulse bool, spinnerStr string, noEmojiOpt ...bool) string {
+	noEmoji := len(noEmojiOpt) > 0 && noEmojiOpt[0]
 	const modalContentWidth = 60
 	var modal strings.Builder
 
@@ -313,7 +331,11 @@ func renderChannelModal(match model.Match, channels []model.Channel, selectedIdx
 			finishedBadge := lipgloss.NewStyle().Width(modalContentWidth).Align(lipgloss.Center).Foreground(ColorMuted).Render("[ ⏹ Transmisión finalizada • No hay señales activas ]")
 			modal.WriteString(finishedBadge + "\n")
 		} else if len(channels) == 0 {
-			emptyNotice := lipgloss.NewStyle().Width(modalContentWidth).Align(lipgloss.Center).Foreground(ColorMuted).Render("[ ⚙️ Sin señales activas • Configura tus canales en ~/.config/kickoff/channels.json ]")
+			emptyNoticeText := "[ ⚙️ Sin señales activas • Configura tus canales en ~/.config/kickoff/channels.json ]"
+			if noEmoji {
+				emptyNoticeText = "[ Sin señales activas • Configura tus canales en ~/.config/kickoff/channels.json ]"
+			}
+			emptyNotice := lipgloss.NewStyle().Width(modalContentWidth).Align(lipgloss.Center).Foreground(ColorMuted).Render(emptyNoticeText)
 			modal.WriteString(emptyNotice + "\n")
 		} else {
 			modal.WriteString(ModalSectionHeader.Render("SEÑALES DE TRANSMISIÓN") + "\n\n")
@@ -362,7 +384,11 @@ func renderChannelModal(match model.Match, channels []model.Channel, selectedIdx
 		}
 
 		if match.Referee != "" {
-			modal.WriteString("\n" + lipgloss.NewStyle().Width(modalContentWidth).Align(lipgloss.Center).Foreground(ColorMuted).Render(fmt.Sprintf("👤 Árbitro: %s", match.Referee)) + "\n")
+			refereeText := fmt.Sprintf("👤 Árbitro: %s", match.Referee)
+			if noEmoji {
+				refereeText = fmt.Sprintf("Árbitro: %s", match.Referee)
+			}
+			modal.WriteString("\n" + lipgloss.NewStyle().Width(modalContentWidth).Align(lipgloss.Center).Foreground(ColorMuted).Render(refereeText) + "\n")
 		}
 
 	case 1:

@@ -51,6 +51,7 @@ type Model struct {
 
 	version         string
 	updateAvailable string
+	noEmoji         bool
 }
 
 // NewModel constructs a new UI model with defaults and dependencies.
@@ -83,12 +84,19 @@ func NewModel(client model.Client, catalog model.Resolver, player model.Controll
 		errorMsg:      "",
 		width:         80,
 		height:        24,
+		noEmoji:       false,
 	}
 }
 
 // WithVersion sets the app version on the model.
 func (m Model) WithVersion(v string) Model {
 	m.version = v
+	return m
+}
+
+// WithNoEmoji sets whether emoji characters are replaced with clean ASCII alternatives.
+func (m Model) WithNoEmoji(disabled bool) Model {
+	m.noEmoji = disabled
 	return m
 }
 

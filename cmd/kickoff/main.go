@@ -5,30 +5,68 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/e12jassir/kickoff-cli/internal/catalog"
 	"github.com/e12jassir/kickoff-cli/internal/espn"
 	"github.com/e12jassir/kickoff-cli/internal/model"
 	"github.com/e12jassir/kickoff-cli/internal/player"
 	"github.com/e12jassir/kickoff-cli/internal/ui"
 	"github.com/e12jassir/kickoff-cli/internal/updater"
+	"github.com/muesli/termenv"
 )
 
-var version = "0.1.2"
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
+func printVersion() {
+	fmt.Printf("kickoff version: %s (commit: %s, built at: %s)\n", version, commit, date)
+}
+
+func printHelp() {
+	vStr := version
+	if !strings.HasPrefix(vStr, "v") && vStr != "dev" {
+		vStr = "v" + vStr
+	}
+	fmt.Printf("kickoff %s — Terminal live football streaming & score tracker\n\n", vStr)
+	fmt.Println("Commands:")
+	fmt.Println("  kickoff                     Open interactive match explorer in terminal")
+	fmt.Println("  kickoff demo                Open terminal with simulated live matches (demo mode)")
+	fmt.Println("  kickoff init                Initialize channels.json with an example starter template")
+	fmt.Println("  kickoff config import <src> Import channels from local file or URL (JSON or M3U playlist)")
+	fmt.Println("  kickoff import <src>        Shortcut for 'kickoff config import'")
+	fmt.Println("  kickoff update              Update kickoff automatically to latest release")
+	fmt.Println("  kickoff setup               Diagnose and verify system dependencies (mpv, fonts)")
+	fmt.Println("  kickoff version             Print version information and exit")
+	fmt.Println("\nFlags:")
+	fmt.Println("  -demo                       Launch TUI in demo mode with simulated matches")
+	fmt.Println("  -no-emoji                   Disable emoji rendering and use clean ASCII alternatives")
+	fmt.Println("  -version, --version, -v     Print version information and exit")
+}
 
 func main() {
 	if exe, err := os.Executable(); err == nil {
 		_ = os.Remove(exe + ".old")
 	}
 
+	if os.Getenv("NO_COLOR") != "" {
+		lipgloss.SetColorProfile(termenv.Ascii)
+	}
+
 	runDemo := false
+	noEmoji := false
+
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "init":
 			initFlags := flag.NewFlagSet("init", flag.ExitOnError)
-			force := initFlags.Bool("force", false, "Sobrescribir archivo existente")
-			initFlags.BoolVar(force, "f", false, "Sobrescribir archivo existente (abreviado)")
+			force := initFlags.Bool("force", false, "Overwrite existing configuration file")
+			initFlags.BoolVar(force, "f", false, "Overwrite existing configuration file (shorthand)")
 			_ = initFlags.Parse(os.Args[2:])
 			if err := RunInit(*force); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -38,7 +76,7 @@ func main() {
 		case "config":
 			if len(os.Args) > 2 && os.Args[2] == "import" {
 				if len(os.Args) < 4 {
-					fmt.Fprintln(os.Stderr, "Uso: kickoff config import <url|path>")
+					fmt.Fprintln(os.Stderr, "Usage: kickoff config import <url|path>")
 					os.Exit(1)
 				}
 				if err := RunConfigImport(os.Args[3]); err != nil {
@@ -47,11 +85,11 @@ func main() {
 				}
 				os.Exit(0)
 			}
-			fmt.Fprintln(os.Stderr, "Comando desconocido. Usa 'kickoff config import <url|path>'")
+			fmt.Fprintln(os.Stderr, "Unknown command. Use 'kickoff config import <url|path>'")
 			os.Exit(1)
 		case "import":
 			if len(os.Args) < 3 {
-				fmt.Fprintln(os.Stderr, "Uso: kickoff import <url|path>")
+				fmt.Fprintln(os.Stderr, "Usage: kickoff import <url|path>")
 				os.Exit(1)
 			}
 			if err := RunConfigImport(os.Args[2]); err != nil {
@@ -72,31 +110,34 @@ func main() {
 			os.Exit(0)
 		case "demo":
 			runDemo = true
-		case "version":
-			fmt.Printf("kickoff v%s (Bubble Tea edition)\n", version)
+		case "version", "-v", "-version", "--version":
+			printVersion()
 			os.Exit(0)
 		case "help", "-h", "--help":
-			fmt.Printf("kickoff v%s — Terminal live football streaming & score tracker\n\n", version)
-			fmt.Println("Comandos:")
-			fmt.Println("  kickoff                     Abre el explorador interactivo de partidos en la terminal")
-			fmt.Println("  kickoff demo                Abre la terminal con partidos simulados en vivo (modo demo)")
-			fmt.Println("  kickoff init                Inicializa el archivo channels.json con una plantilla de ejemplo")
-			fmt.Println("  kickoff config import <src> Importa canales desde archivo local o URL (JSON o lista M3U)")
-			fmt.Println("  kickoff import <src>        Atajo para 'kickoff config import'")
-			fmt.Println("  kickoff update              Actualiza kickoff automáticamente a la última versión")
-			fmt.Println("  kickoff setup               Diagnostica y verifica dependencias del sistema (mpv, fuentes)")
-			fmt.Println("  kickoff version             Muestra la versión actual")
+			printHelp()
 			os.Exit(0)
 		}
 	}
 
-	demoFlag := flag.Bool("demo", false, "Abre la TUI en modo demo con partidos simulados en vivo")
+	demoFlag := flag.Bool("demo", false, "Open TUI in demo mode with simulated live matches")
+	noEmojiFlag := flag.Bool("no-emoji", false, "Disable emoji rendering and use clean ASCII alternatives")
 	versionFlag := flag.Bool("version", false, "Print version information and exit")
+	shortVersionFlag := flag.Bool("v", false, "Print version information and exit (shorthand)")
 	flag.Parse()
 
-	if *versionFlag {
-		fmt.Printf("kickoff v%s (Bubble Tea edition)\n", version)
+	if *versionFlag || *shortVersionFlag {
+		printVersion()
 		os.Exit(0)
+	}
+
+	if *noEmojiFlag {
+		noEmoji = true
+	}
+
+	for _, arg := range os.Args[1:] {
+		if arg == "--no-emoji" || arg == "-no-emoji" {
+			noEmoji = true
+		}
 	}
 
 	var client model.Client = espn.NewClient()
@@ -106,7 +147,7 @@ func main() {
 	cat := catalog.NewResolver()
 	play := player.NewController()
 
-	initialModel := ui.NewModel(client, cat, play).WithVersion(version)
+	initialModel := ui.NewModel(client, cat, play).WithVersion(version).WithNoEmoji(noEmoji)
 	program := tea.NewProgram(initialModel, tea.WithAltScreen())
 
 	if _, err := program.Run(); err != nil {

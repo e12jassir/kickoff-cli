@@ -241,15 +241,15 @@ func (c *Catalog) loadExternalConfig() {
 		cfgPath = os.Getenv("KICKOFF_CHANNELS_PATH")
 	}
 	if cfgPath == "" {
-		configBase := os.Getenv("XDG_CONFIG_HOME")
-		if configBase == "" {
-			home, err := os.UserHomeDir()
-			if err != nil {
-				return
+		configBase, err := os.UserConfigDir()
+		if err != nil || configBase == "" {
+			if home, err := os.UserHomeDir(); err == nil {
+				configBase = filepath.Join(home, ".config")
 			}
-			configBase = filepath.Join(home, ".config")
 		}
-		cfgPath = filepath.Join(configBase, "kickoff", "channels.json")
+		if configBase != "" {
+			cfgPath = filepath.Join(configBase, "kickoff", "channels.json")
+		}
 	}
 
 	data, err := os.ReadFile(cfgPath)

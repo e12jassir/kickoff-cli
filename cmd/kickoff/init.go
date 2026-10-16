@@ -52,15 +52,15 @@ const defaultChannelsTemplate = `{
 }
 `
 
-// getConfigDir determines the Kickoff config directory using standard paths
-// ($XDG_CONFIG_HOME/kickoff or ~/.config/kickoff).
+// getConfigDir determines the Kickoff config directory using os.UserConfigDir(),
+// falling back to ~/.config/kickoff on Linux if empty or unavailable.
 func getConfigDir() (string, error) {
-	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
-		return filepath.Join(xdg, "kickoff"), nil
+	if dir, err := os.UserConfigDir(); err == nil && dir != "" {
+		return filepath.Join(dir, "kickoff"), nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", fmt.Errorf("no se pudo determinar el directorio home del usuario: %w", err)
+		return "", fmt.Errorf("could not determine user home directory: %w", err)
 	}
 	return filepath.Join(home, ".config", "kickoff"), nil
 }
@@ -82,22 +82,22 @@ func RunInit(force bool) error {
 	}
 
 	if exists && !force {
-		fmt.Printf("El archivo de configuración ya existe en: %s\nUsa 'kickoff init --force' para sobrescribirlo.\n", targetFile)
+		fmt.Printf("Configuration file already exists at: %s\nUse 'kickoff init --force' to overwrite.\n", targetFile)
 		return nil
 	}
 
 	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
-		return fmt.Errorf("no se pudo crear el directorio de configuración %s: %w", cfgDir, err)
+		return fmt.Errorf("could not create config directory %s: %w", cfgDir, err)
 	}
 
 	if err := os.WriteFile(targetFile, []byte(defaultChannelsTemplate), 0o644); err != nil {
-		return fmt.Errorf("no se pudo escribir el archivo %s: %w", targetFile, err)
+		return fmt.Errorf("could not write file %s: %w", targetFile, err)
 	}
 
 	if exists {
-		fmt.Printf("Archivo channels.json sobrescrito exitosamente en: %s\n", targetFile)
+		fmt.Printf("File channels.json successfully overwritten at: %s\n", targetFile)
 	} else {
-		fmt.Printf("Archivo channels.json inicializado exitosamente en: %s\n", targetFile)
+		fmt.Printf("File channels.json successfully initialized at: %s\n", targetFile)
 	}
 
 	return nil

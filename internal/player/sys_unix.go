@@ -14,6 +14,11 @@ import (
 	"github.com/e12jassir/kickoff-cli/internal/model"
 )
 
+// checkMPVInPath searches for mpv in PATH on Unix.
+func checkMPVInPath() (string, error) {
+	return exec.LookPath("mpv")
+}
+
 func setProcessAttrs(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Setpgid: true,

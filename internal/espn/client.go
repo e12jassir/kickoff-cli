@@ -227,8 +227,8 @@ func WithNow(nowFunc func() time.Time) Option {
 }
 
 func NewClient(opts ...Option) *Client {
-	cacheBase := os.Getenv("XDG_CACHE_HOME")
-	if cacheBase == "" {
+	cacheBase, err := os.UserCacheDir()
+	if err != nil || cacheBase == "" {
 		home, err := os.UserHomeDir()
 		if err == nil {
 			cacheBase = filepath.Join(home, ".cache")

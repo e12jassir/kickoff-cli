@@ -917,3 +917,63 @@ func TestModel_ChannelModal_SanitizedAndAligned(t *testing.T) {
 		t.Errorf("expected recommended badge in modal")
 	}
 }
+
+func TestModel_WindowResize_TooSmall(t *testing.T) {
+	client := &mockClient{}
+	cat := &mockCatalog{}
+	p := &mockPlayer{}
+	m := NewModel(client, cat, p)
+
+	// Default size (80x24) should not trigger the warning
+	if strings.Contains(m.View(), "Terminal window is too small") {
+		t.Fatalf("did not expect warning at 80x24")
+	}
+
+	// Width too small (<60)
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 59, Height: 20})
+	m = updated.(Model)
+	expectedWarning := "Terminal window is too small (min 60x15). Please resize."
+	if m.View() != expectedWarning {
+		t.Errorf("expected %q, got %q", expectedWarning, m.View())
+	}
+
+	// Height too small (<15)
+	updated, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 14})
+	m = updated.(Model)
+	if m.View() != expectedWarning {
+		t.Errorf("expected %q, got %q", expectedWarning, m.View())
+	}
+
+	// Both too small
+	updated, _ = m.Update(tea.WindowSizeMsg{Width: 40, Height: 10})
+	m = updated.(Model)
+	if m.View() != expectedWarning {
+		t.Errorf("expected %q, got %q", expectedWarning, m.View())
+	}
+
+	// Restored to valid size (60x15)
+	updated, _ = m.Update(tea.WindowSizeMsg{Width: 60, Height: 15})
+	m = updated.(Model)
+	if strings.Contains(m.View(), "Terminal window is too small") {
+		t.Errorf("did not expect warning at 60x15")
+	}
+}
+
+func TestModel_NoEmoji(t *testing.T) {
+	client := &mockClient{}
+	cat := &mockCatalog{}
+	p := &mockPlayer{}
+
+	mDefault := NewModel(client, cat, p)
+	viewDefault := mDefault.View()
+	if !strings.Contains(viewDefault, "🏆") && !strings.Contains(viewDefault, "⚽") {
+		t.Errorf("expected emojis in default view")
+	}
+
+	mNoEmoji := NewModel(client, cat, p).WithNoEmoji(true)
+	viewNoEmoji := mNoEmoji.View()
+	if strings.Contains(viewNoEmoji, "🏆") {
+		t.Errorf("did not expect trophy emoji in no-emoji view:\n%s", viewNoEmoji)
+	}
+}
+

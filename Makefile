@@ -1,4 +1,6 @@
-VERSION ?= 0.1.2
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
+DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "unknown")
 BINARY_NAME=bin/kickoff
 SRC=./cmd/kickoff
 INSTALL_DIR=$(HOME)/.local/bin
@@ -10,7 +12,7 @@ all: build
 
 build:
 	@mkdir -p bin
-	go build -ldflags="-s -w -X main.version=$(VERSION)" -o $(BINARY_NAME) $(SRC)
+	go build -ldflags="-s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)" -o $(BINARY_NAME) $(SRC)
 
 setup-channels:
 	@mkdir -p $(CONFIG_DIR)
