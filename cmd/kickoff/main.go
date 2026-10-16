@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/e12jassir/kickoff/internal/catalog"
 	"github.com/e12jassir/kickoff/internal/espn"
+	"github.com/e12jassir/kickoff/internal/model"
 	"github.com/e12jassir/kickoff/internal/player"
 	"github.com/e12jassir/kickoff/internal/ui"
 	"github.com/e12jassir/kickoff/internal/updater"
@@ -21,6 +22,7 @@ func main() {
 		_ = os.Remove(exe + ".old")
 	}
 
+	runDemo := false
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "init":
@@ -68,6 +70,8 @@ func main() {
 				os.Exit(1)
 			}
 			os.Exit(0)
+		case "demo":
+			runDemo = true
 		case "version":
 			fmt.Printf("kickoff v%s (Bubble Tea edition)\n", version)
 			os.Exit(0)
@@ -75,6 +79,7 @@ func main() {
 			fmt.Printf("kickoff v%s — Terminal live football streaming & score tracker\n\n", version)
 			fmt.Println("Comandos:")
 			fmt.Println("  kickoff                     Abre el explorador interactivo de partidos en la terminal")
+			fmt.Println("  kickoff demo                Abre la terminal con partidos simulados en vivo (modo demo)")
 			fmt.Println("  kickoff init                Inicializa el archivo channels.json con una plantilla de ejemplo")
 			fmt.Println("  kickoff config import <src> Importa canales desde archivo local o URL (JSON o lista M3U)")
 			fmt.Println("  kickoff import <src>        Atajo para 'kickoff config import'")
@@ -85,6 +90,7 @@ func main() {
 		}
 	}
 
+	demoFlag := flag.Bool("demo", false, "Abre la TUI en modo demo con partidos simulados en vivo")
 	versionFlag := flag.Bool("version", false, "Print version information and exit")
 	flag.Parse()
 
@@ -93,7 +99,10 @@ func main() {
 		os.Exit(0)
 	}
 
-	client := espn.NewClient()
+	var client model.Client = espn.NewClient()
+	if *demoFlag || runDemo {
+		client = espn.NewDemoClient()
+	}
 	cat := catalog.NewResolver()
 	play := player.NewController()
 
