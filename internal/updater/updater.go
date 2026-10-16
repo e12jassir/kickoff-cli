@@ -41,6 +41,13 @@ type Asset struct {
 	Size               int64  `json:"size"`
 }
 
+func splitVersion(v string) (string, string) {
+	if idx := strings.IndexAny(v, "-+"); idx != -1 {
+		return v[:idx], v[idx:]
+	}
+	return v, ""
+}
+
 // CompareVersions returns:
 //
 //	 1 if v1 > v2
@@ -50,8 +57,21 @@ func CompareVersions(v1, v2 string) int {
 	clean1 := strings.TrimPrefix(strings.TrimSpace(v1), "v")
 	clean2 := strings.TrimPrefix(strings.TrimSpace(v2), "v")
 
-	parts1 := strings.Split(clean1, ".")
-	parts2 := strings.Split(clean2, ".")
+	if clean1 == clean2 {
+		return 0
+	}
+	if clean2 == "dev" {
+		return -1
+	}
+	if clean1 == "dev" {
+		return 1
+	}
+
+	base1, meta1 := splitVersion(clean1)
+	base2, meta2 := splitVersion(clean2)
+
+	parts1 := strings.Split(base1, ".")
+	parts2 := strings.Split(base2, ".")
 
 	maxLen := len(parts1)
 	if len(parts2) > maxLen {
@@ -73,6 +93,16 @@ func CompareVersions(v1, v2 string) int {
 			return -1
 		}
 	}
+
+	// When base versions are equal: a version with git metadata (e.g. "-7-gc4a2363")
+	// represents commits ahead of the base tag release.
+	if meta1 != "" && meta2 == "" {
+		return 1
+	}
+	if meta1 == "" && meta2 != "" {
+		return -1
+	}
+
 	return 0
 }
 
@@ -253,7 +283,8 @@ func ExtractBinaryFromTarGz(r io.Reader) ([]byte, error) {
 
 // SelfUpdate performs an in-place atomic update of the currently executing kickoff binary.
 func SelfUpdate(ctx context.Context, repo, currentVersion string) error {
-	fmt.Printf("⚽ Checking for kickoff updates (current version: v%s)...\n", currentVersion)
+	cleanVer := strings.TrimPrefix(currentVersion, "v")
+	fmt.Printf("⚽ Checking for kickoff updates (current version: v%s)...\n", cleanVer)
 
 	rel, newer, err := CheckForUpdate(ctx, repo, currentVersion)
 	if err != nil {
