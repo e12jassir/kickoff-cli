@@ -59,7 +59,6 @@ func main() {
 	}
 
 	runDemo := false
-	noEmoji := false
 
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
@@ -130,12 +129,12 @@ func main() {
 		os.Exit(0)
 	}
 
-	if *noEmojiFlag {
-		noEmoji = true
-	}
-
+	// flag.Parse stops at the first non-flag argument, so a trailing
+	// --no-emoji (e.g. `kickoff demo --no-emoji`) never reaches the flag.
+	// Honor the explicit token wherever it appears in the args.
+	noEmoji := *noEmojiFlag
 	for _, arg := range os.Args[1:] {
-		if arg == "--no-emoji" || arg == "-no-emoji" {
+		if arg == "-no-emoji" || arg == "--no-emoji" {
 			noEmoji = true
 		}
 	}
