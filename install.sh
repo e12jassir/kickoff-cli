@@ -3,11 +3,51 @@ set -e
 
 # kickoff-cli universal installer for Linux and macOS
 REPO="e12jassir/kickoff-cli"
-VERSION="0.1.2"
 INSTALL_DIR="$HOME/.local/bin"
+
+SPECIFIED_VERSION=""
+AUTO_YES=0
+
+# Parse command line options
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -v|--version)
+      if [ -n "$2" ] && [ "${2#-}" = "$2" ]; then
+        SPECIFIED_VERSION="$2"
+        shift 2
+      else
+        echo "❌ Error: $1 requires a version value (e.g., --version 0.1.2)" >&2
+        exit 1
+      fi
+      ;;
+    --version=*)
+      SPECIFIED_VERSION="${1#*=}"
+      shift
+      ;;
+    -y|--yes)
+      AUTO_YES=1
+      shift
+      ;;
+    -h|--help)
+      echo "Kickoff CLI Universal Installer"
+      echo "Usage: install.sh [options]"
+      echo ""
+      echo "Options:"
+      echo "  -v, --version <v>   Install a specific release version (e.g. 0.1.2 or v0.1.2)"
+      echo "  -y, --yes           Non-interactive installation (accept dependency prompts automatically)"
+      echo "  -h, --help          Show this help message"
+      exit 0
+      ;;
+    *)
+      echo "⚠️  Unknown option '$1' ignored." >&2
+      shift
+      ;;
+  esac
+done
 
 mkdir -p "$INSTALL_DIR"
 
+# Detect Operating System and Architecture
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 ARCH="$(uname -m)"
 
@@ -19,54 +59,79 @@ case "$ARCH" in
     ARCH="arm64"
     ;;
   *)
-    echo "❌ Unsupported architecture: $ARCH"
+    echo "❌ Unsupported architecture: $ARCH" >&2
     exit 1
     ;;
 esac
 
 case "$OS" in
   linux)
+    OS="linux"
     ;;
   darwin)
-    OS="macos"
+    OS="darwin"
     ;;
   *)
-    echo "❌ Unsupported operating system: $OS. For Windows, download kickoff.exe from releases."
+    echo "❌ Unsupported operating system: $OS. For Windows, use install.ps1 or download kickoff.exe from releases." >&2
     exit 1
     ;;
 esac
 
-echo "⚽ Installing kickoff-cli v${VERSION} for ${OS}/${ARCH}..."
+# Build download targets
+if [ -n "$SPECIFIED_VERSION" ]; then
+  CLEAN_VER="${SPECIFIED_VERSION#v}"
+  TAG="v${CLEAN_VER}"
+  PRIMARY_URL="https://github.com/${REPO}/releases/download/${TAG}/kickoff_${OS}_${ARCH}.tar.gz"
+  echo "⚽ Installing kickoff-cli ${TAG} for ${OS}/${ARCH}..."
+  CANDIDATE_URLS=(
+    "$PRIMARY_URL"
+    "https://github.com/${REPO}/releases/download/${TAG}/kickoff_${CLEAN_VER}_${OS}_${ARCH}.tar.gz"
+    "https://github.com/${REPO}/releases/download/${TAG}/kickoff_macos_${ARCH}.tar.gz"
+    "https://github.com/${REPO}/releases/download/${TAG}/kickoff_${CLEAN_VER}_macos_${ARCH}.tar.gz"
+  )
+else
+  PRIMARY_URL="https://github.com/${REPO}/releases/latest/download/kickoff_${OS}_${ARCH}.tar.gz"
+  echo "⚽ Installing kickoff-cli (latest) for ${OS}/${ARCH}..."
+  CANDIDATE_URLS=(
+    "$PRIMARY_URL"
+    "https://github.com/${REPO}/releases/latest/download/kickoff_macos_${ARCH}.tar.gz"
+    "https://github.com/${REPO}/releases/latest/download/kickoff_0.1.2_${OS}_${ARCH}.tar.gz"
+    "https://github.com/${REPO}/releases/latest/download/kickoff_0.1.2_macos_${ARCH}.tar.gz"
+  )
+fi
 
-TARBALL_URL="https://github.com/${REPO}/releases/download/v${VERSION}/kickoff_${VERSION}_${OS}_${ARCH}.tar.gz"
 TEMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TEMP_DIR"' EXIT
 
 DOWNLOADED=0
-if curl -fsSL -o "$TEMP_DIR/kickoff.tar.gz" "$TARBALL_URL" 2>/dev/null; then
-  tar -xzf "$TEMP_DIR/kickoff.tar.gz" -C "$TEMP_DIR"
-  if [ -f "$TEMP_DIR/kickoff" ]; then
-    install -m 755 "$TEMP_DIR/kickoff" "$INSTALL_DIR/kickoff"
-    DOWNLOADED=1
+for url in "${CANDIDATE_URLS[@]}"; do
+  if curl -fsSL -o "$TEMP_DIR/kickoff.tar.gz" "$url" 2>/dev/null; then
+    if tar -xzf "$TEMP_DIR/kickoff.tar.gz" -C "$TEMP_DIR" 2>/dev/null; then
+      if [ -f "$TEMP_DIR/kickoff" ]; then
+        install -m 755 "$TEMP_DIR/kickoff" "$INSTALL_DIR/kickoff"
+        DOWNLOADED=1
+        break
+      fi
+    fi
   fi
-fi
+done
 
 if [ "$DOWNLOADED" -eq 0 ]; then
-  echo "ℹ️  Release asset not found yet. Building from source via Git..."
+  echo "ℹ️  Release asset not found. Building from source via Git..."
   if ! command -v go >/dev/null 2>&1; then
-    echo "❌ Error: Go 1.24+ is required to build from source when precompiled assets are not found."
-    echo "   Install Go or download the release package from: https://github.com/${REPO}/releases"
+    echo "❌ Error: Go 1.24+ is required to build from source when precompiled assets are not found." >&2
+    echo "   Install Go or download release packages from: https://github.com/${REPO}/releases" >&2
     exit 1
   fi
   git clone --depth 1 "https://github.com/${REPO}.git" "$TEMP_DIR/repo"
   (cd "$TEMP_DIR/repo" && go build -ldflags="-s -w" -o "$INSTALL_DIR/kickoff" ./cmd/kickoff)
 fi
 
-echo "✅ kickoff instalado exitosamente en: $INSTALL_DIR/kickoff"
+echo "✅ kickoff installed successfully at: $INSTALL_DIR/kickoff"
 
-# Verify PATH
-if ! echo "$PATH" | grep -q "$INSTALL_DIR"; then
-  echo "⚠️  Nota: Asegúrate de tener $INSTALL_DIR en tu PATH:"
+# Verify PATH configuration
+if ! echo ":$PATH:" | grep -q ":$INSTALL_DIR:"; then
+  echo "⚠️  Note: Ensure $INSTALL_DIR is in your PATH:"
   echo "   export PATH=\"\$HOME/.local/bin:\$PATH\""
 fi
 
@@ -88,9 +153,35 @@ run_elevated() {
   fi
 }
 
+prompt_consent() {
+  local prompt_msg="$1"
+
+  if [ "$AUTO_YES" -eq 1 ]; then
+    return 0
+  fi
+
+  local answer=""
+  if [ -c /dev/tty ]; then
+    read -r -p "$prompt_msg " answer </dev/tty
+  elif [ -t 0 ]; then
+    read -r -p "$prompt_msg " answer
+  else
+    return 1
+  fi
+
+  case "$answer" in
+    [Yy]|[Yy][Ee][Ss])
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 has_emoji_font() {
-  if [ "$OS" = "darwin" ] || [ "$OS" = "macos" ]; then
-    return 0 # macOS has native Apple Color Emoji
+  if [ "$OS" = "darwin" ]; then
+    return 0 # macOS ships native Apple Color Emoji
   fi
   if command -v fc-list >/dev/null 2>&1; then
     if fc-list : family 2>/dev/null | grep -iq "emoji"; then
@@ -110,6 +201,23 @@ has_mpv() {
   command -v mpv >/dev/null 2>&1
 }
 
+print_manual_instructions() {
+  local pm="$1"
+  shift
+  local pkgs=("$@")
+
+  echo "   You can install missing dependencies manually:"
+  case "$pm" in
+    apt)    echo "   sudo apt-get update && sudo apt-get install -y ${pkgs[*]}" ;;
+    pacman) echo "   sudo pacman -S --needed ${pkgs[*]}" ;;
+    dnf)    echo "   sudo dnf install -y ${pkgs[*]}" ;;
+    zypper) echo "   sudo zypper install -y ${pkgs[*]}" ;;
+    apk)    echo "   sudo apk add ${pkgs[*]}" ;;
+    *)      echo "   Install packages: ${pkgs[*]}" ;;
+  esac
+  echo "   Note: Kickoff core score tracking works without mpv. mpv is only required for video playback."
+}
+
 ensure_dependencies() {
   local need_mpv=0
   local need_font=0
@@ -123,20 +231,27 @@ ensure_dependencies() {
   fi
 
   if [ "$need_mpv" -eq 0 ] && [ "$need_font" -eq 0 ]; then
-    echo "✨ Dependencias del sistema al día (mpv y fuentes emoji listas)."
+    echo "✨ System dependencies are up to date (mpv and emoji font ready)."
     return 0
   fi
 
   echo ""
-  echo "🔍 Detectando dependencias del sistema requeridas..."
+  echo "🔍 Checking system dependencies..."
 
-  if [ "$OS" = "darwin" ] || [ "$OS" = "macos" ]; then
+  if [ "$OS" = "darwin" ]; then
     if [ "$need_mpv" -eq 1 ]; then
       if command -v brew >/dev/null 2>&1; then
-        echo "📦 Instalando mpv con Homebrew..."
-        brew install mpv || echo "⚠️  No se pudo instalar mpv automáticamente. Ejecuta: brew install mpv"
+        if prompt_consent "mpv is missing. Install via Homebrew? [y/N]"; then
+          echo "📦 Installing mpv with Homebrew..."
+          brew install mpv || echo "⚠️  Could not install mpv automatically. Run: brew install mpv"
+        else
+          echo "⚠️  Skipped mpv installation."
+          echo "   You can install it manually: brew install mpv"
+          echo "   Note: Kickoff core score tracking works without mpv."
+        fi
       else
-        echo "⚠️  Homebrew no detectado. Instala mpv manualmente para reproducir señales: https://mpv.io"
+        echo "⚠️  Homebrew not found. Install mpv manually to enable video playback: https://mpv.io"
+        echo "   Note: Kickoff core score tracking works without mpv."
       fi
     fi
     return 0
@@ -206,9 +321,15 @@ ensure_dependencies() {
     return 0
   fi
 
-  echo "📦 Dependencias faltantes detectadas en ${distro}: ${pkgs_to_install[*]}"
-  echo "🚀 Instalando dependencias automáticamente..."
+  echo "📦 Missing dependencies detected on ${distro}: ${pkgs_to_install[*]}"
 
+  if ! prompt_consent "Install missing dependencies using sudo? [y/N]"; then
+    echo "⚠️  Skipping automatic dependency installation."
+    print_manual_instructions "$pkg_manager" "${pkgs_to_install[@]}"
+    return 0
+  fi
+
+  echo "🚀 Installing dependencies..."
   local success=0
   case "$pkg_manager" in
     apt)
@@ -237,25 +358,18 @@ ensure_dependencies() {
       fi
       ;;
     *)
-      echo "⚠️  Gestor de paquetes no reconocido para ${distro}."
+      echo "⚠️  Package manager not recognized for ${distro}."
       ;;
   esac
 
   if [ "$success" -eq 1 ]; then
-    echo "✅ Dependencias instaladas correctamente."
-    if [ "$need_font" -eq 1 ]; then
+    echo "✅ Dependencies installed successfully."
+    if [ "$need_font" -eq 1 ] && command -v fc-cache >/dev/null 2>&1; then
       fc-cache -f >/dev/null 2>&1 || true
     fi
   else
-    echo "⚠️  No se pudieron instalar automáticamente las dependencias (se requieren permisos de administrador)."
-    echo "   Puedes instalarlas manualmente según tu distribución:"
-    case "$pkg_manager" in
-      apt)    echo "   sudo apt install ${pkgs_to_install[*]}" ;;
-      pacman) echo "   sudo pacman -S ${pkgs_to_install[*]}" ;;
-      dnf)    echo "   sudo dnf install ${pkgs_to_install[*]}" ;;
-      zypper) echo "   sudo zypper install ${pkgs_to_install[*]}" ;;
-      *)      echo "   Instala: ${pkgs_to_install[*]}" ;;
-    esac
+    echo "⚠️  Could not install dependencies automatically."
+    print_manual_instructions "$pkg_manager" "${pkgs_to_install[@]}"
   fi
 }
 
@@ -263,9 +377,13 @@ ensure_dependencies
 
 if [ -n "$KICKOFF_SIGNALS_URL" ]; then
   echo ""
-  echo "📡 Importando pack de señales configurado..."
-  "$INSTALL_DIR/kickoff" config import "$KICKOFF_SIGNALS_URL" || true
+  echo "📡 Importing configured signals pack..."
+  if "$INSTALL_DIR/kickoff" --help 2>&1 | grep -q "config import"; then
+    "$INSTALL_DIR/kickoff" config import "$KICKOFF_SIGNALS_URL" || true
+  else
+    echo "⚠️  Note: This version of kickoff does not support 'config import'. Skipping signals import."
+  fi
 fi
 
 echo ""
-echo "⚽ ¡Listo! Ejecuta 'kickoff' para iniciar."
+echo "⚽ All set! Run 'kickoff' to get started."
