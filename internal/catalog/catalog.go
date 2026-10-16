@@ -72,6 +72,8 @@ type Option func(*Catalog)
 // WithTVGuide sets a custom tvguide.Service.
 func WithTVGuide(svc *tvguide.Service) Option {
 	return func(c *Catalog) {
+		c.mu.Lock()
+		defer c.mu.Unlock()
 		c.tvGuide = svc
 	}
 }
@@ -86,6 +88,8 @@ func WithConfigFile(path string) Option {
 // WithStreams sets in-memory stream endpoints (ideal for testing or dynamic injection).
 func WithStreams(streams map[string]string) Option {
 	return func(c *Catalog) {
+		c.mu.Lock()
+		defer c.mu.Unlock()
 		if c.userStreams == nil {
 			c.userStreams = make(map[string]string)
 		}
@@ -98,6 +102,8 @@ func WithStreams(streams map[string]string) Option {
 // WithM3UChannels sets in-memory M3U channels (ideal for testing or dynamic injection).
 func WithM3UChannels(channels []M3UChannel) Option {
 	return func(c *Catalog) {
+		c.mu.Lock()
+		defer c.mu.Unlock()
 		c.m3uChannels = append(c.m3uChannels, channels...)
 	}
 }
@@ -122,6 +128,11 @@ type customMatchRule struct {
 }
 
 // New creates a new Catalog resolver and starts background health checks on stream signals.
+//
+// Options are applied exactly once, before the external config file is read, because
+// loadExternalConfig depends on the path set by WithConfigFile. Precedence rule:
+// programmatic options always win over channels.json, so loadExternalConfig only
+// fills in stream keys that are not already present in memory.
 func New(opts ...Option) *Catalog {
 	c := &Catalog{
 		streamAlive:     make(map[string]bool),
@@ -133,10 +144,17 @@ func New(opts ...Option) *Catalog {
 		opt(c)
 	}
 	c.loadExternalConfig()
-	for _, opt := range opts {
-		opt(c)
+	// Capture the env-configured US stream globals before the probe goroutine starts,
+	// so the goroutine never reads package-level mutable state concurrently with
+	// runtime overrides (e.g. tests that set StreamCBSSportsNetwork/StreamCBSGolazo).
+	envStreams := make([]string, 0, 2)
+	if StreamCBSSportsNetwork != "" {
+		envStreams = append(envStreams, StreamCBSSportsNetwork)
 	}
-	go c.probeAllStreamsBackground()
+	if StreamCBSGolazo != "" {
+		envStreams = append(envStreams, StreamCBSGolazo)
+	}
+	go c.probeAllStreamsBackground(envStreams)
 	return c
 }
 
@@ -163,7 +181,7 @@ func (c *Catalog) StreamEndpoint(key string) (string, bool) {
 	return u, true
 }
 
-func (c *Catalog) probeAllStreamsBackground() {
+func (c *Catalog) probeAllStreamsBackground(envStreams []string) {
 	var urls []string
 
 	c.mu.RLock()
@@ -175,12 +193,7 @@ func (c *Catalog) probeAllStreamsBackground() {
 	c.mu.RUnlock()
 
 	urls = append(urls, StreamRealMadrid, StreamTeledeporte)
-	if StreamCBSSportsNetwork != "" {
-		urls = append(urls, StreamCBSSportsNetwork)
-	}
-	if StreamCBSGolazo != "" {
-		urls = append(urls, StreamCBSGolazo)
-	}
+	urls = append(urls, envStreams...)
 
 	client := &http.Client{Timeout: 2500 * time.Millisecond}
 	var wg sync.WaitGroup
@@ -262,8 +275,15 @@ func (c *Catalog) loadExternalConfig() {
 		return
 	}
 
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	for k, v := range ext.Streams {
 		cleanK := strings.ToLower(strings.TrimSpace(k))
+		// Precedence rule: programmatic streams (WithStreams) win over channels.json.
+		if _, exists := c.userStreams[cleanK]; exists {
+			continue
+		}
 		if cleanU, err := SanitizeURL(v); err == nil {
 			c.userStreams[cleanK] = cleanU
 		}
@@ -334,31 +354,6 @@ func m3uToChannel(m3u M3UChannel, recommended bool) model.Channel {
 	}
 }
 
-func espnProfile(name, rawURL string) []model.Channel {
-	cleanURL, err := SanitizeURL(rawURL)
-	if err != nil || cleanURL == "" {
-		return nil
-	}
-	return []model.Channel{
-		{
-			DisplayName: name,
-			Name:        name,
-			URL:         cleanURL,
-			Resolution:  "720p",
-			BitrateMode: "min",
-			Recommended: true,
-		},
-		{
-			DisplayName: name,
-			Name:        name,
-			URL:         cleanURL,
-			Resolution:  "1080p",
-			BitrateMode: "max",
-			Recommended: false,
-		},
-	}
-}
-
 func makeDualProfile(label, rawURL string, recommended bool) []model.Channel {
 	cleanURL, err := SanitizeURL(rawURL)
 	if err != nil || cleanURL == "" {
@@ -399,125 +394,135 @@ func makeSingleChannel(label, rawURL, res, bitrate string, recommended bool) (mo
 	}, true
 }
 
+// officialEndpointRule maps a set of lower-cased broadcast substrings to a
+// configured stream endpoint. Rules are order-sensitive: the first rule whose
+// needle matches wins, so specific channels must precede generic ones
+// (e.g. "ESPN 7" before "espn").
+type officialEndpointRule struct {
+	needles     []string
+	endpointKey string
+	label       string
+	// dual emits a 720p/min plus a 1080p/max profile; otherwise a single 1080p/max channel.
+	dual bool
+}
+
+var officialEndpointRules = []officialEndpointRule{
+	{[]string{"espn 7", "espn7"}, "espn7", "ESPN 7 HD", true},
+	{[]string{"espn 6", "espn6"}, "espn6", "ESPN 6 HD", true},
+	{[]string{"espn 5", "espn5"}, "espn5", "ESPN 5 HD", true},
+	{[]string{"espn 4", "espn4"}, "espn4", "ESPN 4 HD", true},
+	{[]string{"espn 3", "espn3"}, "espn3", "ESPN 3 HD", true},
+	{[]string{"espn 2", "espn2", "espn deportes"}, "espn2", "ESPN 2 HD", true},
+	{[]string{"espn extra"}, "espn_extra", "ESPN Extra", true},
+	{[]string{"espn"}, "espn1", "ESPN 1 HD", true},
+	{[]string{"fox sports 3", "fs3"}, "fox3", "Fox Sports 3", true},
+	{[]string{"fox sports 2", "fs2"}, "fox2", "Fox Sports 2", true},
+	{[]string{"fox sports 1", "fs1", "fox deportes", "fox sports", "fox"}, "fox1", "Fox Sports 1 HD", false},
+	{[]string{"tyc"}, "tyc", "TyC Sports HD", false},
+}
+
+// containsAny reports whether s contains any of the given needles.
+func containsAny(s string, needles ...string) bool {
+	for _, n := range needles {
+		if strings.Contains(s, n) {
+			return true
+		}
+	}
+	return false
+}
+
+// appendSingleEndpoint appends a single 1080p/max channel when the endpoint key resolves.
+func (c *Catalog) appendSingleEndpoint(result *[]model.Channel, key, label string, recommended bool) {
+	if u, ok := c.StreamEndpoint(key); ok {
+		if ch, valid := makeSingleChannel(label, u, "1080p", "max", recommended); valid {
+			*result = append(*result, ch)
+		}
+	}
+}
+
+// appendDualEndpoint appends a 720p/min plus 1080p/max profile when the endpoint key resolves.
+func (c *Catalog) appendDualEndpoint(result *[]model.Channel, key, label string) {
+	if u, ok := c.StreamEndpoint(key); ok {
+		*result = append(*result, makeDualProfile(label, u, len(*result) == 0)...)
+	}
+}
+
+// appendSingleFromURL appends a single 1080p/max channel built from a raw URL.
+func (c *Catalog) appendSingleFromURL(result *[]model.Channel, rawURL, label string, recommended bool) {
+	if ch, valid := makeSingleChannel(label, rawURL, "1080p", "max", recommended); valid {
+		*result = append(*result, ch)
+	}
+}
+
+// applyOfficialEndpointRule applies the first matching rule from officialEndpointRules
+// and reports whether the broadcast was handled. A matched rule always consumes the
+// broadcast, even when its endpoint is not configured, preserving first-match-wins order.
+func (c *Catalog) applyOfficialEndpointRule(bl string, result *[]model.Channel) bool {
+	for _, rule := range officialEndpointRules {
+		if !containsAny(bl, rule.needles...) {
+			continue
+		}
+		if rule.dual {
+			c.appendDualEndpoint(result, rule.endpointKey, rule.label)
+		} else {
+			c.appendSingleEndpoint(result, rule.endpointKey, rule.label, len(*result) == 0)
+		}
+		return true
+	}
+	return false
+}
 
 func (c *Catalog) resolveFromOfficialBroadcasts(broadcasts []string) []model.Channel {
 	var result []model.Channel
 	for _, b := range broadcasts {
 		bl := strings.ToLower(strings.TrimSpace(b))
-		switch {
-		case strings.Contains(bl, "caracol") || strings.Contains(bl, "gol caracol"):
-			if u, ok := c.StreamEndpoint("caracol"); ok {
-				if ch, valid := makeSingleChannel("Caracol TV HD", u, "1080p", "max", len(result) == 0); valid {
-					result = append(result, ch)
-				}
-			}
-			if u, ok := c.StreamEndpoint("caracol_hd2"); ok {
-				if ch, valid := makeSingleChannel("Caracol HD2", u, "1080p", "max", false); valid {
-					result = append(result, ch)
-				}
-			}
-		case strings.Contains(bl, "rcn") || strings.Contains(bl, "canal rcn") || strings.Contains(bl, "deportes rcn"):
-			if u, ok := c.StreamEndpoint("rcn"); ok {
-				if ch, valid := makeSingleChannel("Canal RCN HD", u, "1080p", "max", len(result) == 0); valid {
-					result = append(result, ch)
-				}
-			}
-			if u, ok := c.StreamEndpoint("rcn_hd2"); ok {
-				if ch, valid := makeSingleChannel("RCN HD2", u, "1080p", "max", false); valid {
-					result = append(result, ch)
-				}
-			}
-		case strings.Contains(bl, "win") || strings.Contains(bl, "win sports") || strings.Contains(bl, "win+"):
-			if u, ok := c.StreamEndpoint("win_plus"); ok {
-				if ch, valid := makeSingleChannel("Win+ Fútbol", u, "1080p", "max", len(result) == 0); valid {
-					result = append(result, ch)
-				}
-			}
-			if u, ok := c.StreamEndpoint("win"); ok {
-				if ch, valid := makeSingleChannel("Win Sports HD", u, "1080p", "max", false); valid {
-					result = append(result, ch)
-				}
-			}
-		case strings.Contains(bl, "espn 7") || strings.Contains(bl, "espn7"):
-			if u, ok := c.StreamEndpoint("espn7"); ok {
-				result = append(result, makeDualProfile("ESPN 7 HD", u, len(result) == 0)...)
-			}
-		case strings.Contains(bl, "espn 6") || strings.Contains(bl, "espn6"):
-			if u, ok := c.StreamEndpoint("espn6"); ok {
-				result = append(result, makeDualProfile("ESPN 6 HD", u, len(result) == 0)...)
-			}
-		case strings.Contains(bl, "espn 5") || strings.Contains(bl, "espn5"):
-			if u, ok := c.StreamEndpoint("espn5"); ok {
-				result = append(result, makeDualProfile("ESPN 5 HD", u, len(result) == 0)...)
-			}
-		case strings.Contains(bl, "espn 4") || strings.Contains(bl, "espn4"):
-			if u, ok := c.StreamEndpoint("espn4"); ok {
-				result = append(result, makeDualProfile("ESPN 4 HD", u, len(result) == 0)...)
-			}
-		case strings.Contains(bl, "espn 3") || strings.Contains(bl, "espn3"):
-			if u, ok := c.StreamEndpoint("espn3"); ok {
-				result = append(result, makeDualProfile("ESPN 3 HD", u, len(result) == 0)...)
-			}
-		case strings.Contains(bl, "espn 2") || strings.Contains(bl, "espn2") || strings.Contains(bl, "espn deportes"):
-			if u, ok := c.StreamEndpoint("espn2"); ok {
-				result = append(result, makeDualProfile("ESPN 2 HD", u, len(result) == 0)...)
-			}
-		case strings.Contains(bl, "espn extra"):
-			if u, ok := c.StreamEndpoint("espn_extra"); ok {
-				result = append(result, makeDualProfile("ESPN Extra", u, len(result) == 0)...)
-			}
-		case strings.Contains(bl, "espn"):
-			if u, ok := c.StreamEndpoint("espn1"); ok {
-				result = append(result, makeDualProfile("ESPN 1 HD", u, len(result) == 0)...)
-			}
-		case strings.Contains(bl, "fox sports 3") || strings.Contains(bl, "fs3"):
-			if u, ok := c.StreamEndpoint("fox3"); ok {
-				result = append(result, makeDualProfile("Fox Sports 3", u, len(result) == 0)...)
-			}
-		case strings.Contains(bl, "fox sports 2") || strings.Contains(bl, "fs2"):
-			if u, ok := c.StreamEndpoint("fox2"); ok {
-				result = append(result, makeDualProfile("Fox Sports 2", u, len(result) == 0)...)
-			}
-		case strings.Contains(bl, "fox sports 1") || strings.Contains(bl, "fs1") || strings.Contains(bl, "fox deportes") || strings.Contains(bl, "fox sports") || strings.Contains(bl, "fox"):
-			if u, ok := c.StreamEndpoint("fox1"); ok {
-				if ch, valid := makeSingleChannel("Fox Sports 1 HD", u, "1080p", "max", len(result) == 0); valid {
-					result = append(result, ch)
-				}
-			}
-		case strings.Contains(bl, "tyc"):
-			if u, ok := c.StreamEndpoint("tyc"); ok {
-				if ch, valid := makeSingleChannel("TyC Sports HD", u, "1080p", "max", len(result) == 0); valid {
-					result = append(result, ch)
-				}
-			}
-		case strings.Contains(bl, "real madrid") || strings.Contains(bl, "rmtv"):
+
+		// Compound national broadcasters emit a primary plus a secondary channel.
+		if containsAny(bl, "caracol", "gol caracol") {
+			c.appendSingleEndpoint(&result, "caracol", "Caracol TV HD", len(result) == 0)
+			c.appendSingleEndpoint(&result, "caracol_hd2", "Caracol HD2", false)
+			continue
+		}
+		if containsAny(bl, "rcn", "canal rcn", "deportes rcn") {
+			c.appendSingleEndpoint(&result, "rcn", "Canal RCN HD", len(result) == 0)
+			c.appendSingleEndpoint(&result, "rcn_hd2", "RCN HD2", false)
+			continue
+		}
+		if containsAny(bl, "win", "win sports", "win+") {
+			c.appendSingleEndpoint(&result, "win_plus", "Win+ Fútbol", len(result) == 0)
+			c.appendSingleEndpoint(&result, "win", "Win Sports HD", false)
+			continue
+		}
+
+		// Simple endpoint rules, evaluated in declaration order (first match wins).
+		if c.applyOfficialEndpointRule(bl, &result) {
+			continue
+		}
+
+		// Free-to-air fallbacks and env-configured US streams.
+		if containsAny(bl, "real madrid", "rmtv") {
 			u, ok := c.StreamEndpoint("realmadrid")
 			if !ok {
 				u = StreamRealMadrid
 			}
-			if ch, valid := makeSingleChannel("Real Madrid TV", u, "1080p", "max", len(result) == 0); valid {
-				result = append(result, ch)
-			}
-		case strings.Contains(bl, "teledeporte") || strings.Contains(bl, "rtve"):
+			c.appendSingleFromURL(&result, u, "Real Madrid TV", len(result) == 0)
+			continue
+		}
+		if containsAny(bl, "teledeporte", "rtve") {
 			u, ok := c.StreamEndpoint("teledeporte")
 			if !ok {
 				u = StreamTeledeporte
 			}
-			if ch, valid := makeSingleChannel("Teledeporte HD", u, "1080p", "max", len(result) == 0); valid {
-				result = append(result, ch)
-			}
-		case strings.Contains(bl, "cbssn") || strings.Contains(bl, "cbs sports network") || strings.Contains(bl, "cbs sports"):
-			if StreamCBSSportsNetwork != "" {
-				if ch, valid := makeSingleChannel("CBS Sports Network", StreamCBSSportsNetwork, "1080p", "max", len(result) == 0); valid {
-					result = append(result, ch)
-				}
-			}
-		case strings.Contains(bl, "paramount") || strings.Contains(bl, "golazo") || strings.Contains(bl, "cbs sports golazo"):
-			if StreamCBSGolazo != "" {
-				if ch, valid := makeSingleChannel("CBS Sports Golazo Network", StreamCBSGolazo, "1080p", "max", len(result) == 0); valid {
-					result = append(result, ch)
-				}
-			}
+			c.appendSingleFromURL(&result, u, "Teledeporte HD", len(result) == 0)
+			continue
+		}
+		if containsAny(bl, "cbssn", "cbs sports network", "cbs sports") {
+			c.appendSingleFromURL(&result, StreamCBSSportsNetwork, "CBS Sports Network", len(result) == 0)
+			continue
+		}
+		if containsAny(bl, "paramount", "golazo", "cbs sports golazo") {
+			c.appendSingleFromURL(&result, StreamCBSGolazo, "CBS Sports Golazo Network", len(result) == 0)
+			continue
 		}
 	}
 	return result
@@ -561,19 +566,32 @@ func (c *Catalog) espnBySlot(slot int) (name, url string, ok bool) {
 	if slot < 0 || slot >= len(slots) {
 		return "", "", false
 	}
-	u, found := c.StreamEndpoint(slots[slot].streamK)
-	if !found || u == "" {
-		c.mu.RLock()
-		m3uList := c.m3uChannels
-		c.mu.RUnlock()
-		if len(m3uList) > 0 {
-			if m3u, ok := MatchM3UChannel(slots[slot].name, m3uList); ok {
-				return slots[slot].name, m3u.URL, true
-			}
-		}
+	u, found := c.endpointOrM3U(slots[slot].streamK, slots[slot].name)
+	if !found {
 		return "", "", false
 	}
 	return slots[slot].name, u, true
+}
+
+// m3uSnapshot returns the current M3U channel slice under the read lock.
+func (c *Catalog) m3uSnapshot() []M3UChannel {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.m3uChannels
+}
+
+// endpointOrM3U resolves a channel URL by configured endpoint key, falling back to a
+// best-effort M3U playlist match by channel name. The M3U fallback exists because users
+// may supply playlists instead of per-key endpoints; without it those channels would be
+// unresolvable even when present in the playlist.
+func (c *Catalog) endpointOrM3U(key, m3uName string) (string, bool) {
+	if u, ok := c.StreamEndpoint(key); ok {
+		return u, true
+	}
+	if m3u, found := MatchM3UChannel(m3uName, c.m3uSnapshot()); found {
+		return m3u.URL, true
+	}
+	return "", false
 }
 
 func (c *Catalog) buildChannelsForTarget(target tvguide.ChannelTarget) []model.Channel {
@@ -606,13 +624,8 @@ func (c *Catalog) buildChannelsForTarget(target tvguide.ChannelTarget) []model.C
 	}
 
 	if streamURL == "" {
-		c.mu.RLock()
-		m3uList := c.m3uChannels
-		c.mu.RUnlock()
-		if len(m3uList) > 0 {
-			if m3u, ok := MatchM3UChannel(target.Name, m3uList); ok {
-				streamURL = m3u.URL
-			}
+		if m3u, ok := MatchM3UChannel(target.Name, c.m3uSnapshot()); ok {
+			streamURL = m3u.URL
 		}
 	}
 
@@ -623,7 +636,7 @@ func (c *Catalog) buildChannelsForTarget(target tvguide.ChannelTarget) []model.C
 
 	switch {
 	case strings.HasPrefix(target.Name, "ESPN"):
-		return espnProfile(target.Name, cleanURL)
+		return makeDualProfile(target.Name, cleanURL, true)
 	case strings.HasPrefix(target.Name, "Fox"):
 		return makeDualProfile(target.Name, cleanURL, true)
 	case target.Name == "Win+ Fútbol":
@@ -690,22 +703,29 @@ func (c *Catalog) GetChannels(match model.Match) []model.Channel {
 	}
 	leagueKey := normalizeLeagueKey(match.LeagueKey)
 
+	// Snapshot shared, mutable resolver state under the read lock. Reading into
+	// locals keeps the lock held only briefly and avoids re-entrant RLock while
+	// helper functions (which take their own RLock) are called below.
+	c.mu.RLock()
+	customRules := c.customRules
+	leagueOverrides := c.leagueOverrides
+	tvGuide := c.tvGuide
+	c.mu.RUnlock()
+
 	// 1. Check user custom rules & overrides from ~/.config/kickoff/channels.json
-	for _, rule := range c.customRules {
+	for _, rule := range customRules {
 		if (rule.league == "" || rule.league == leagueKey) && rule.pattern.MatchString(title) {
 			return rule.channels
 		}
 	}
-	if override, ok := c.leagueOverrides[leagueKey]; ok && len(override) > 0 {
+	if override, ok := leagueOverrides[leagueKey]; ok && len(override) > 0 {
 		return override
 	}
 
 	// 2. Official broadcasters reported by ESPN metadata for this specific match (verified truth).
 	if len(match.Broadcasts) > 0 {
 		candidates := c.resolveFromOfficialBroadcasts(match.Broadcasts)
-		c.mu.RLock()
-		m3uList := c.m3uChannels
-		c.mu.RUnlock()
+		m3uList := c.m3uSnapshot()
 		if len(m3uList) > 0 {
 			for _, b := range match.Broadcasts {
 				if m3u, found := MatchM3UChannel(b, m3uList); found {
@@ -724,8 +744,8 @@ func (c *Catalog) GetChannels(match model.Match) []model.Channel {
 	}
 
 	// 3. TV Guide Crawler resolution
-	if c.tvGuide != nil {
-		if target, found := c.tvGuide.ResolveMatch(match); found {
+	if tvGuide != nil {
+		if target, found := tvGuide.ResolveMatch(match); found {
 			candidates := c.buildChannelsForTarget(target)
 			if len(candidates) > 0 {
 				return c.filterAndDeduplicate(candidates)
@@ -738,81 +758,29 @@ func (c *Catalog) GetChannels(match model.Match) []model.Channel {
 
 	switch leagueKey {
 	case "colombia":
-		winPlusURL, hasWinPlus := c.StreamEndpoint("win_plus")
-		if !hasWinPlus {
-			c.mu.RLock()
-			m3uList := c.m3uChannels
-			c.mu.RUnlock()
-			if m3u, ok := MatchM3UChannel("Win+ Fútbol", m3uList); ok {
-				winPlusURL = m3u.URL
-				hasWinPlus = true
-			}
-		}
-		if hasWinPlus {
-			if ch, valid := makeSingleChannel("Win+ Fútbol", winPlusURL, "1080p", "max", len(candidates) == 0); valid {
+		if u, ok := c.endpointOrM3U("win_plus", "Win+ Fútbol"); ok {
+			if ch, valid := makeSingleChannel("Win+ Fútbol", u, "1080p", "max", len(candidates) == 0); valid {
 				candidates = append(candidates, ch)
 			}
 		}
-
-		winURL, hasWin := c.StreamEndpoint("win")
-		if !hasWin {
-			c.mu.RLock()
-			m3uList := c.m3uChannels
-			c.mu.RUnlock()
-			if m3u, ok := MatchM3UChannel("Win Sports", m3uList); ok {
-				winURL = m3u.URL
-				hasWin = true
-			}
-		}
-		if hasWin {
-			if ch, valid := makeSingleChannel("Win Sports HD", winURL, "1080p", "max", false); valid {
+		if u, ok := c.endpointOrM3U("win", "Win Sports"); ok {
+			if ch, valid := makeSingleChannel("Win Sports HD", u, "1080p", "max", false); valid {
 				candidates = append(candidates, ch)
 			}
 		}
-
-		caracolURL, hasCaracol := c.StreamEndpoint("caracol")
-		if !hasCaracol {
-			c.mu.RLock()
-			m3uList := c.m3uChannels
-			c.mu.RUnlock()
-			if m3u, ok := MatchM3UChannel("Caracol TV", m3uList); ok {
-				caracolURL = m3u.URL
-				hasCaracol = true
-			}
-		}
-		if hasCaracol {
-			if ch, valid := makeSingleChannel("Caracol TV HD", caracolURL, "1080p", "max", false); valid {
+		if u, ok := c.endpointOrM3U("caracol", "Caracol TV"); ok {
+			if ch, valid := makeSingleChannel("Caracol TV HD", u, "1080p", "max", false); valid {
 				candidates = append(candidates, ch)
 			}
 		}
-
-		rcnURL, hasRCN := c.StreamEndpoint("rcn")
-		if !hasRCN {
-			c.mu.RLock()
-			m3uList := c.m3uChannels
-			c.mu.RUnlock()
-			if m3u, ok := MatchM3UChannel("Canal RCN", m3uList); ok {
-				rcnURL = m3u.URL
-				hasRCN = true
-			}
-		}
-		if hasRCN {
-			if ch, valid := makeSingleChannel("Canal RCN HD", rcnURL, "1080p", "max", false); valid {
+		if u, ok := c.endpointOrM3U("rcn", "Canal RCN"); ok {
+			if ch, valid := makeSingleChannel("Canal RCN HD", u, "1080p", "max", false); valid {
 				candidates = append(candidates, ch)
 			}
 		}
 
 	case "argentina":
-		tycURL, hasTyC := c.StreamEndpoint("tyc")
-		if !hasTyC {
-			c.mu.RLock()
-			m3uList := c.m3uChannels
-			c.mu.RUnlock()
-			if m3u, ok := MatchM3UChannel("TyC Sports", m3uList); ok {
-				tycURL = m3u.URL
-				hasTyC = true
-			}
-		}
+		tycURL, hasTyC := c.endpointOrM3U("tyc", "TyC Sports")
 		if match.SlotIndex == 0 {
 			if hasTyC {
 				if ch, valid := makeSingleChannel("TyC Sports HD", tycURL, "1080p", "max", true); valid {

@@ -588,3 +588,36 @@ func TestCatalog_ExternalConfig_LeagueAliases(t *testing.T) {
 		})
 	}
 }
+
+// TestNew_AppliesOptionsExactlyOnce guards against New applying opts twice, which
+// duplicated every injected M3U channel via WithM3UChannels' append.
+func TestNew_AppliesOptionsExactlyOnce(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "channels.json")
+	cfgContent := `{"streams": {"espn1": "http://config.invalid/espn1.m3u8"}}`
+	if err := os.WriteFile(cfgPath, []byte(cfgContent), 0o600); err != nil {
+		t.Fatalf("failed to write test config: %v", err)
+	}
+
+	injected := []M3UChannel{
+		{Name: "Injected A", URL: "http://example.invalid/injected-a.m3u8"},
+		{Name: "Injected B", URL: "http://example.invalid/injected-b.m3u8"},
+	}
+
+	cat := New(
+		WithConfigFile(cfgPath),
+		WithStreams(map[string]string{"espn1": "http://programmatic.invalid/espn1.m3u8"}),
+		WithM3UChannels(injected),
+	)
+
+	cat.mu.RLock()
+	storedChannels := len(cat.m3uChannels)
+	espn1 := cat.userStreams["espn1"]
+	cat.mu.RUnlock()
+
+	if storedChannels != len(injected) {
+		t.Fatalf("WithM3UChannels must be applied exactly once: expected %d stored channels, got %d", len(injected), storedChannels)
+	}
+	if espn1 != "http://programmatic.invalid/espn1.m3u8" {
+		t.Fatalf("programmatic streams must take precedence over channels.json: got %q", espn1)
+	}
+}
