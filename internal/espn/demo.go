@@ -157,7 +157,6 @@ func (d *DemoClient) FetchMatchDetails(ctx context.Context, leagueKey, eventID s
 					{Jersey: "9", DisplayName: "R. Lewandowski", Position: "FW", IsStarter: true},
 					{Jersey: "11", DisplayName: "Raphinha", Position: "FW", IsStarter: true},
 				},
-				Coach: "Hansi Flick",
 			},
 			Away: model.TeamLineup{
 				Formation: "4-2-3-1",
@@ -174,13 +173,8 @@ func (d *DemoClient) FetchMatchDetails(ctx context.Context, leagueKey, eventID s
 					{Jersey: "7", DisplayName: "Vinícius Jr", Position: "FW", IsStarter: true},
 					{Jersey: "9", DisplayName: "K. Mbappé", Position: "FW", IsStarter: true},
 				},
-				Coach: "Carlo Ancelotti",
 			},
-			HomeCoach: "Hansi Flick",
-			AwayCoach: "Carlo Ancelotti",
 		},
-		HomeCoach: "Hansi Flick",
-		AwayCoach: "Carlo Ancelotti",
 	}, nil
 }
 
