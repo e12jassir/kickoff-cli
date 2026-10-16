@@ -907,15 +907,18 @@ func TestModel_Modal_CursorGatingAndFallbacks(t *testing.T) {
 		t.Errorf("expected channelCursor 1 on down key in Tab 0, got %d", m.channelCursor)
 	}
 
-	// Switch to Tab 1 (Estadísticas) - stats are nil -> verify loading text
+	// Switch to Tab 1 (Estadísticas) - match is unstarted ("pre") -> verify empty state notice
 	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m = newM.(Model)
 	if m.modalTab != 1 {
 		t.Fatalf("expected modalTab 1")
 	}
 	viewTab1 := m.View()
-	if !strings.Contains(viewTab1, "Consultando estadísticas del partido...") {
-		t.Errorf("expected stats loading text, got:\n%s", viewTab1)
+	if !strings.Contains(viewTab1, "[ Estadísticas no disponibles para este encuentro ]") {
+		t.Errorf("expected empty stats notice, got:\n%s", viewTab1)
+	}
+	if strings.Contains(viewTab1, "Consultando estadísticas del partido...") {
+		t.Errorf("expected no loading spinner for unstarted pre-match, got:\n%s", viewTab1)
 	}
 
 	// When on Tab 1, pressing down/up ('j'/'k') should NOT change channelCursor
@@ -979,7 +982,7 @@ func TestModel_ChannelModal_SanitizedAndAligned(t *testing.T) {
 		Status:    model.MatchStatus{State: "in", Description: "1T 25'"},
 	}
 
-	out := renderChannelModal(match, channels, 0, 0, false, "")
+	out := renderChannelModal(match, channels, 0, 0, false, "", false)
 
 	// 1. Must NOT contain bullet indentations "·" preceding channel names
 	if strings.Contains(out, "· Win+ Fútbol") || strings.Contains(out, "· Win Sports") {
@@ -1578,6 +1581,435 @@ func TestCurrentSelectedMatch(t *testing.T) {
 	_, ok = m.CurrentSelectedMatch()
 	if ok {
 		t.Errorf("expected ok=false for out of bounds resumenCursor")
+	}
+}
+
+func TestModel_Tab1_EmptyStats_PreMatch(t *testing.T) {
+	cli := &mockClient{}
+	cat := &mockCatalog{}
+	pla := &mockPlayer{}
+
+	m := NewModel(cli, cat, pla)
+
+	// Enter league and load pre-match
+	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newM.(Model)
+	newM, _ = m.Update(matchesLoadedMsg{
+		leagueKey: m.CurrentLeague().Key,
+		matches: []model.Match{
+			{
+				ID:        "m-pre",
+				Title:     "Real Madrid vs Barcelona",
+				HomeTeam:  model.Competitor{DisplayName: "Real Madrid"},
+				AwayTeam:  model.Competitor{DisplayName: "Barcelona"},
+				Status:    model.MatchStatus{State: "pre", Description: "Por jugar"},
+				LeagueKey: m.CurrentLeague().Key,
+			},
+		},
+	})
+	m = newM.(Model)
+
+	// Switch to TabPartidos and enter match modal
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m = newM.(Model)
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newM.(Model)
+
+	if m.state != StateChannelSelect {
+		t.Fatalf("expected StateChannelSelect, got %d", m.state)
+	}
+
+	// Switch to Tab 1 (Estadísticas)
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m = newM.(Model)
+	if m.modalTab != 1 {
+		t.Fatalf("expected modalTab 1, got %d", m.modalTab)
+	}
+
+	view := m.View()
+	expectedNotice := "[ Estadísticas no disponibles para este encuentro ]"
+	if !strings.Contains(view, expectedNotice) {
+		t.Errorf("expected clean empty notice %q in pre-match Tab 1, got:\n%s", expectedNotice, view)
+	}
+	if strings.Contains(view, "Consultando estadísticas del partido...") {
+		t.Errorf("expected no loading spinner for unstarted pre-match, got:\n%s", view)
+	}
+}
+
+func TestModel_Tab1_LoadingSpinner_Then_EmptyStats_LiveMatch(t *testing.T) {
+	cli := &mockClient{}
+	cat := &mockCatalog{}
+	pla := &mockPlayer{}
+
+	m := NewModel(cli, cat, pla)
+
+	// Enter league and load live match
+	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newM.(Model)
+	newM, _ = m.Update(matchesLoadedMsg{
+		leagueKey: m.CurrentLeague().Key,
+		matches: []model.Match{
+			{
+				ID:        "m-live-1",
+				Title:     "Arsenal vs Chelsea",
+				HomeTeam:  model.Competitor{DisplayName: "Arsenal"},
+				AwayTeam:  model.Competitor{DisplayName: "Chelsea"},
+				Status:    model.MatchStatus{State: "in", Description: "1T 15'"},
+				LeagueKey: m.CurrentLeague().Key,
+			},
+		},
+	})
+	m = newM.(Model)
+
+	// Switch to TabPartidos and enter modal
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m = newM.(Model)
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newM.(Model)
+
+	// Switch to Tab 1 (Estadísticas) before details have loaded
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m = newM.(Model)
+
+	if m.IsDetailsLoaded("m-live-1") {
+		t.Fatalf("expected detailsLoaded to be false initially")
+	}
+
+	viewBefore := m.View()
+	if !strings.Contains(viewBefore, "Consultando estadísticas del partido...") {
+		t.Errorf("expected loading spinner while details are pending, got:\n%s", viewBefore)
+	}
+	if strings.Contains(viewBefore, "[ Estadísticas no disponibles para este encuentro ]") {
+		t.Errorf("did not expect empty notice while loading, got:\n%s", viewBefore)
+	}
+
+	// Deliver matchStatsLoadedMsg with nil stats (ESPN returned no boxscore)
+	newM, _ = m.Update(matchStatsLoadedMsg{
+		matchID: "m-live-1",
+		stats:   nil,
+	})
+	m = newM.(Model)
+
+	if !m.IsDetailsLoaded("m-live-1") {
+		t.Fatalf("expected detailsLoaded to be true after matchStatsLoadedMsg")
+	}
+
+	viewAfter := m.View()
+	expectedNotice := "[ Estadísticas no disponibles para este encuentro ]"
+	if !strings.Contains(viewAfter, expectedNotice) {
+		t.Errorf("expected clean empty notice %q after details loaded with nil stats, got:\n%s", expectedNotice, viewAfter)
+	}
+	if strings.Contains(viewAfter, "Consultando estadísticas del partido...") {
+		t.Errorf("expected loading spinner to be dismissed after details loaded, got:\n%s", viewAfter)
+	}
+}
+
+func TestModel_Tab1_PopulatedStats_LiveMatch(t *testing.T) {
+	cli := &mockClient{}
+	cat := &mockCatalog{}
+	pla := &mockPlayer{}
+
+	m := NewModel(cli, cat, pla)
+
+	// Enter league and load live match
+	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newM.(Model)
+	newM, _ = m.Update(matchesLoadedMsg{
+		leagueKey: m.CurrentLeague().Key,
+		matches: []model.Match{
+			{
+				ID:        "m-live-2",
+				Title:     "Liverpool vs City",
+				HomeTeam:  model.Competitor{DisplayName: "Liverpool"},
+				AwayTeam:  model.Competitor{DisplayName: "City"},
+				Status:    model.MatchStatus{State: "in", Description: "2T 65'"},
+				LeagueKey: m.CurrentLeague().Key,
+			},
+		},
+	})
+	m = newM.(Model)
+
+	// Switch to TabPartidos and enter modal
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m = newM.(Model)
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newM.(Model)
+
+	// Deliver populated stats
+	newM, _ = m.Update(matchStatsLoadedMsg{
+		matchID: "m-live-2",
+		stats: &model.MatchStats{
+			HomePossession:  "55%",
+			AwayPossession:  "45%",
+			HomeShots:       "14",
+			AwayShots:       "9",
+			HomeShotsOnGoal: "6",
+			AwayShotsOnGoal: "3",
+			HomePasses:      "420",
+			AwayPasses:      "380",
+			HomeFouls:       "8",
+			AwayFouls:       "11",
+		},
+	})
+	m = newM.(Model)
+
+	// Switch to Tab 1 (Estadísticas)
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m = newM.(Model)
+
+	view := m.View()
+	if !strings.Contains(view, "Posesión") || !strings.Contains(view, "55%") || !strings.Contains(view, "45%") {
+		t.Errorf("expected possession statistics, got:\n%s", view)
+	}
+	if !strings.Contains(view, "14 (6)") || !strings.Contains(view, "9 (3)") {
+		t.Errorf("expected shots statistics, got:\n%s", view)
+	}
+	if strings.Contains(view, "[ Estadísticas no disponibles para este encuentro ]") {
+		t.Errorf("did not expect empty notice when stats are present, got:\n%s", view)
+	}
+	if strings.Contains(view, "Consultando estadísticas del partido...") {
+		t.Errorf("did not expect loading spinner when stats are present, got:\n%s", view)
+	}
+}
+
+func TestModel_Tab1_PostMatch_NoStats_ShowsEmptyNotice(t *testing.T) {
+	cli := &mockClient{}
+	cat := &mockCatalog{}
+	pla := &mockPlayer{}
+
+	m := NewModel(cli, cat, pla)
+
+	// Enter league and load completed match
+	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newM.(Model)
+	newM, _ = m.Update(matchesLoadedMsg{
+		leagueKey: m.CurrentLeague().Key,
+		matches: []model.Match{
+			{
+				ID:        "m-post-1",
+				Title:     "Milan vs Inter",
+				HomeTeam:  model.Competitor{DisplayName: "Milan", Score: "1"},
+				AwayTeam:  model.Competitor{DisplayName: "Inter", Score: "2"},
+				Status:    model.MatchStatus{State: "post", Completed: true, Description: "Final"},
+				LeagueKey: m.CurrentLeague().Key,
+			},
+		},
+	})
+	m = newM.(Model)
+
+	// Modal from TabResumen
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newM.(Model)
+
+	// Deliver detailsLoaded with nil stats
+	newM, _ = m.Update(matchStatsLoadedMsg{
+		matchID: "m-post-1",
+		stats:   nil,
+	})
+	m = newM.(Model)
+
+	// Switch to Tab 1 (Estadísticas)
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m = newM.(Model)
+
+	view := m.View()
+	expectedNotice := "[ Estadísticas no disponibles para este encuentro ]"
+	if !strings.Contains(view, expectedNotice) {
+		t.Errorf("expected clean empty notice %q for completed match with no stats, got:\n%s", expectedNotice, view)
+	}
+}
+
+func TestModel_Modal_AnchoredBySelectedMatchID_OnAutoSync(t *testing.T) {
+	cli := &mockClient{}
+	cat := &mockCatalog{
+		channels: []model.Channel{
+			{Name: "Signal 1", DisplayName: "Signal 1", URL: "http://example.com/live.m3u8"},
+		},
+	}
+	pla := &mockPlayer{}
+
+	m := NewModel(cli, cat, pla)
+
+	// Enter league and load 2 matches: m-live (active) and m-pre (active)
+	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newM.(Model)
+	newM, _ = m.Update(matchesLoadedMsg{
+		leagueKey: m.CurrentLeague().Key,
+		matches: []model.Match{
+			{
+				ID:        "m-live",
+				Title:     "Arsenal vs Chelsea",
+				HomeTeam:  model.Competitor{DisplayName: "Arsenal", Score: "1"},
+				AwayTeam:  model.Competitor{DisplayName: "Chelsea", Score: "0"},
+				Status:    model.MatchStatus{State: "in", Description: "2T 89'"},
+				LeagueKey: m.CurrentLeague().Key,
+			},
+			{
+				ID:        "m-pre",
+				Title:     "Liverpool vs City",
+				HomeTeam:  model.Competitor{DisplayName: "Liverpool"},
+				AwayTeam:  model.Competitor{DisplayName: "City"},
+				Status:    model.MatchStatus{State: "pre", Description: "Por jugar"},
+				LeagueKey: m.CurrentLeague().Key,
+			},
+		},
+	})
+	m = newM.(Model)
+
+	// Switch to TabPartidos and select m-live (cursor 0)
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m = newM.(Model)
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newM.(Model)
+
+	if m.state != StateChannelSelect {
+		t.Fatalf("expected StateChannelSelect, got %d", m.state)
+	}
+	if m.SelectedMatchID() != "m-live" {
+		t.Fatalf("expected SelectedMatchID 'm-live', got %q", m.SelectedMatchID())
+	}
+	selMatch, ok := m.CurrentSelectedMatch()
+	if !ok || selMatch.ID != "m-live" {
+		t.Fatalf("expected CurrentSelectedMatch to be 'm-live', got id=%q, ok=%v", selMatch.ID, ok)
+	}
+
+	// While modal is open, autoSync refreshes matches silently:
+	// m-live finishes and moves to pastMatches!
+	newM, _ = m.Update(matchesLoadedMsg{
+		leagueKey: m.CurrentLeague().Key,
+		isSilent:  true,
+		matches: []model.Match{
+			{
+				ID:        "m-live",
+				Title:     "Arsenal vs Chelsea",
+				HomeTeam:  model.Competitor{DisplayName: "Arsenal", Score: "1"},
+				AwayTeam:  model.Competitor{DisplayName: "Chelsea", Score: "0"},
+				Status:    model.MatchStatus{State: "post", Completed: true, Description: "Final"},
+				LeagueKey: m.CurrentLeague().Key,
+			},
+			{
+				ID:        "m-pre",
+				Title:     "Liverpool vs City",
+				HomeTeam:  model.Competitor{DisplayName: "Liverpool"},
+				AwayTeam:  model.Competitor{DisplayName: "City"},
+				Status:    model.MatchStatus{State: "pre", Description: "Por jugar"},
+				LeagueKey: m.CurrentLeague().Key,
+			},
+		},
+	})
+	m = newM.(Model)
+
+	// Verify matches structure: m.matches has only m-pre, m.pastMatches has m-live
+	if len(m.matches) != 1 || m.matches[0].ID != "m-pre" {
+		t.Errorf("expected m.matches to have only 'm-pre', got %v", m.matches)
+	}
+	if len(m.pastMatches) != 1 || m.pastMatches[0].ID != "m-live" {
+		t.Errorf("expected m.pastMatches to have 'm-live', got %v", m.pastMatches)
+	}
+
+	// Crucial check: modal in StateChannelSelect MUST still be anchored to m-live!
+	if m.SelectedMatchID() != "m-live" {
+		t.Errorf("expected SelectedMatchID to remain 'm-live', got %q", m.SelectedMatchID())
+	}
+	selMatchAfter, ok := m.CurrentSelectedMatch()
+	if !ok || selMatchAfter.ID != "m-live" {
+		t.Fatalf("expected CurrentSelectedMatch to remain anchored to 'm-live', got id=%q, ok=%v", selMatchAfter.ID, ok)
+	}
+	if selMatchAfter.Status.State != "post" {
+		t.Errorf("expected updated state 'post', got %q", selMatchAfter.Status.State)
+	}
+
+	// The view in StateChannelSelect should render Arsenal vs Chelsea (m-live), not Liverpool vs City!
+	modalView := m.View()
+	if !strings.Contains(modalView, "Arsenal") || !strings.Contains(modalView, "Chelsea") {
+		t.Errorf("expected modal to show Arsenal vs Chelsea, got:\n%s", modalView)
+	}
+	if strings.Contains(modalView, "Liverpool") {
+		t.Errorf("modal shifted incorrectly to Liverpool, got:\n%s", modalView)
+	}
+
+	// Dismiss modal with Esc
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = newM.(Model)
+	if m.state != StateBrowsing {
+		t.Fatalf("expected StateBrowsing after Esc, got %d", m.state)
+	}
+	if m.SelectedMatchID() != "" {
+		t.Errorf("expected SelectedMatchID cleared after Esc, got %q", m.SelectedMatchID())
+	}
+}
+
+func TestModel_Esc_WhenPlaying_StopsPlayer(t *testing.T) {
+	cli := &mockClient{}
+	cat := &mockCatalog{}
+	pla := &mockPlayer{}
+
+	m := NewModel(cli, cat, pla)
+
+	// Case 1: Esc while connecting in StatePlaying
+	m.state = StatePlaying
+	m.connecting = true
+	m.streamFeed = "Test Stream"
+
+	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = newM.(Model)
+
+	if m.state != StateMainMenu {
+		t.Errorf("expected state StateMainMenu after Esc while connecting, got %d", m.state)
+	}
+	if m.connecting {
+		t.Errorf("expected connecting to be false after Esc")
+	}
+	if !pla.stopped {
+		t.Errorf("expected player.Stop() to be called on Esc while connecting")
+	}
+
+	// Case 2: Esc while actively playing in StatePlaying
+	pla.stopped = false
+	m.state = StatePlaying
+	m.connecting = false
+
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = newM.(Model)
+
+	if m.state != StateMainMenu {
+		t.Errorf("expected state StateMainMenu after Esc while playing, got %d", m.state)
+	}
+	if !pla.stopped {
+		t.Errorf("expected player.Stop() to be called on Esc while playing")
+	}
+
+	// Case 3: Backspace also stops playback and returns to MainMenu
+	pla.stopped = false
+	m.state = StatePlaying
+
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	m = newM.(Model)
+
+	if m.state != StateMainMenu {
+		t.Errorf("expected state StateMainMenu after Backspace while playing, got %d", m.state)
+	}
+	if !pla.stopped {
+		t.Errorf("expected player.Stop() to be called on Backspace while playing")
+	}
+}
+
+func TestModel_Esc_WhenLoading_StopsPlayer(t *testing.T) {
+	cli := &mockClient{}
+	cat := &mockCatalog{}
+	pla := &mockPlayer{}
+
+	m := NewModel(cli, cat, pla)
+	m.state = StateLoading
+
+	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = newM.(Model)
+
+	if m.state != StateMainMenu {
+		t.Errorf("expected state StateMainMenu after Esc while loading, got %d", m.state)
+	}
+	if !pla.stopped {
+		t.Errorf("expected player.Stop() to be called on Esc while loading")
 	}
 }
 

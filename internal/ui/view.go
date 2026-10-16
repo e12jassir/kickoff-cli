@@ -247,7 +247,7 @@ func renderBrowsing(m Model) string {
 
 		case StateChannelSelect:
 			selMatch, _ := m.CurrentSelectedMatch()
-			modalContent := renderChannelModal(selMatch, m.channels, m.channelCursor, m.modalTab, m.livePulse, m.spinner.View(), m.noEmoji)
+			modalContent := renderChannelModal(selMatch, m.channels, m.channelCursor, m.modalTab, m.livePulse, m.spinner.View(), m.IsDetailsLoaded(selMatch.ID), m.noEmoji)
 			body = ModalBoxStyle.Render(modalContent)
 			footer = FooterHelpStyle.Render("h/l o ←/→: pestaña  •  j/k o ↑/↓: canal  •  enter: reproducir  •  esc: volver")
 
@@ -711,7 +711,7 @@ func renderMatchItem(match model.Match, isSelected bool, livePulse bool) []strin
 	return []string{line1, line2}
 }
 
-func renderChannelModal(match model.Match, channels []model.Channel, selectedIdx int, modalTab int, livePulse bool, spinnerStr string, noEmojiOpt ...bool) string {
+func renderChannelModal(match model.Match, channels []model.Channel, selectedIdx int, modalTab int, livePulse bool, spinnerStr string, detailsLoaded bool, noEmojiOpt ...bool) string {
 	noEmoji := len(noEmojiOpt) > 0 && noEmojiOpt[0]
 	const modalContentWidth = 60
 	var modal strings.Builder
@@ -861,12 +861,18 @@ func renderChannelModal(match model.Match, channels []model.Channel, selectedIdx
 
 	case 1:
 		// Tab 1: Estadísticas
-		if match.Stats == nil {
-			loadingText := "Consultando estadísticas del partido..."
-			if spinnerStr != "" {
-				loadingText = fmt.Sprintf("%s  Consultando estadísticas del partido...", spinnerStr)
+		if isStatsEmpty(match.Stats) {
+			isPre := strings.ToLower(strings.TrimSpace(match.Status.State)) == "pre"
+			if isPre || detailsLoaded || match.ID == "" {
+				emptyText := "[ Estadísticas no disponibles para este encuentro ]"
+				modal.WriteString(lipgloss.NewStyle().Width(modalContentWidth).Align(lipgloss.Center).Foreground(ColorMuted).Render(emptyText) + "\n")
+			} else {
+				loadingText := "Consultando estadísticas del partido..."
+				if spinnerStr != "" {
+					loadingText = fmt.Sprintf("%s  Consultando estadísticas del partido...", spinnerStr)
+				}
+				modal.WriteString(lipgloss.NewStyle().Width(modalContentWidth).Align(lipgloss.Center).Foreground(ColorMuted).Render(loadingText) + "\n")
 			}
-			modal.WriteString(lipgloss.NewStyle().Width(modalContentWidth).Align(lipgloss.Center).Foreground(ColorMuted).Render(loadingText) + "\n")
 		} else {
 			barLine := renderPossessionBar(match.Stats.HomePossession, match.Stats.AwayPossession, modalContentWidth)
 			modal.WriteString(barLine + "\n")
@@ -1176,4 +1182,15 @@ func renderTimeline(events []model.MatchEvent, homeTeamID string, modalContentWi
 		}
 	}
 	return b.String()
+}
+
+func isStatsEmpty(stats *model.MatchStats) bool {
+	if stats == nil {
+		return true
+	}
+	return stats.HomePossession == "" && stats.AwayPossession == "" &&
+		stats.HomeShots == "" && stats.AwayShots == "" &&
+		stats.HomePasses == "" && stats.AwayPasses == "" &&
+		stats.HomeCorners == "" && stats.AwayCorners == "" &&
+		stats.HomeFouls == "" && stats.AwayFouls == ""
 }

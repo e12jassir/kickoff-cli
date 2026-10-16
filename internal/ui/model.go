@@ -51,10 +51,12 @@ type Model struct {
 	categoryIndices map[string][]int // category name -> indices into m.leagues
 	expandedCats    map[string]bool  // category name -> whether it is expanded
 
-	matches       []model.Match
-	pastMatches   []model.Match
-	matchCursor   int
-	resumenCursor int
+	matches         []model.Match
+	pastMatches     []model.Match
+	matchCursor     int
+	resumenCursor   int
+	selectedMatchID string
+	detailsLoaded   map[string]bool
 
 	standings     *model.LeagueStandings
 	standingsErr  error
@@ -133,8 +135,11 @@ func NewModel(client model.Client, catalog model.Resolver, player model.Controll
 		activeTab:       0,
 		leagueTab:       TabResumen,
 		matches:         nil,
+		pastMatches:     nil,
 		matchCursor:     0,
 		resumenCursor:   0,
+		selectedMatchID: "",
+		detailsLoaded:   make(map[string]bool),
 		channels:        nil,
 		channelCursor:   0,
 		modalTab:        0,
@@ -226,8 +231,44 @@ func (m Model) ResumenMatches() []model.Match {
 	return pastMatches
 }
 
-// CurrentSelectedMatch returns the currently selected match based on the active tab and bounds checks.
+// SelectedMatchID returns the currently anchored match ID in modal or playback.
+func (m Model) SelectedMatchID() string {
+	return m.selectedMatchID
+}
+
+// IsDetailsLoaded returns whether detailed stats/lineups have finished loading for the given match ID.
+func (m Model) IsDetailsLoaded(matchID string) bool {
+	if m.detailsLoaded == nil {
+		return false
+	}
+	return m.detailsLoaded[matchID]
+}
+
+// WithDetailsLoaded marks match details as loaded for the specified match IDs.
+func (m Model) WithDetailsLoaded(matchIDs ...string) Model {
+	if m.detailsLoaded == nil {
+		m.detailsLoaded = make(map[string]bool)
+	}
+	for _, id := range matchIDs {
+		m.detailsLoaded[id] = true
+	}
+	return m
+}
+
+// CurrentSelectedMatch returns the currently selected match based on active modal anchor, tab, and bounds checks.
 func (m Model) CurrentSelectedMatch() (model.Match, bool) {
+	if (m.state == StateChannelSelect || m.state == StatePlaying) && m.selectedMatchID != "" {
+		for _, mt := range m.matches {
+			if mt.ID == m.selectedMatchID {
+				return mt, true
+			}
+		}
+		for _, mt := range m.pastMatches {
+			if mt.ID == m.selectedMatchID {
+				return mt, true
+			}
+		}
+	}
 	if m.leagueTab == TabResumen {
 		pms := m.ResumenMatches()
 		if len(pms) > 0 && m.resumenCursor >= 0 && m.resumenCursor < len(pms) {

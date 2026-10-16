@@ -323,7 +323,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.statusMsg = ""
 			} else {
 				var prevSelectedID string
-				if len(m.matches) > 0 && m.matchCursor >= 0 && m.matchCursor < len(m.matches) {
+				if (m.state == StateChannelSelect || m.state == StatePlaying) && m.selectedMatchID != "" {
+					prevSelectedID = m.selectedMatchID
+				} else if m.leagueTab == TabResumen {
+					pms := m.ResumenMatches()
+					if len(pms) > 0 && m.resumenCursor >= 0 && m.resumenCursor < len(pms) {
+						prevSelectedID = pms[m.resumenCursor].ID
+					}
+				} else if len(m.matches) > 0 && m.matchCursor >= 0 && m.matchCursor < len(m.matches) {
 					prevSelectedID = m.matches[m.matchCursor].ID
 				}
 
@@ -335,24 +342,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return msg.matches[i].StartTime.Before(msg.matches[j].StartTime)
 				})
 
-				if len(m.matches) > 0 {
-					statsMap := make(map[string]*model.MatchStats)
-					lineupsMap := make(map[string]*model.MatchLineups)
-					for _, prev := range m.matches {
-						if prev.Stats != nil {
-							statsMap[prev.ID] = prev.Stats
-						}
-						if prev.Lineups != nil {
-							lineupsMap[prev.ID] = prev.Lineups
-						}
+				statsMap := make(map[string]*model.MatchStats)
+				lineupsMap := make(map[string]*model.MatchLineups)
+				for _, prev := range m.matches {
+					if prev.Stats != nil {
+						statsMap[prev.ID] = prev.Stats
 					}
-					for i := range msg.matches {
-						if s, ok := statsMap[msg.matches[i].ID]; ok {
-							msg.matches[i].Stats = s
-						}
-						if l, ok := lineupsMap[msg.matches[i].ID]; ok {
-							msg.matches[i].Lineups = l
-						}
+					if prev.Lineups != nil {
+						lineupsMap[prev.ID] = prev.Lineups
+					}
+				}
+				for _, prev := range m.pastMatches {
+					if prev.Stats != nil {
+						statsMap[prev.ID] = prev.Stats
+					}
+					if prev.Lineups != nil {
+						lineupsMap[prev.ID] = prev.Lineups
+					}
+				}
+				for i := range msg.matches {
+					if s, ok := statsMap[msg.matches[i].ID]; ok {
+						msg.matches[i].Stats = s
+					}
+					if l, ok := lineupsMap[msg.matches[i].ID]; ok {
+						msg.matches[i].Lineups = l
 					}
 				}
 
@@ -384,8 +397,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					} else if m.matchCursor >= len(m.matches) && len(m.matches) > 0 {
 						m.matchCursor = len(m.matches) - 1
 					}
-				} else {
+
+					pms := m.ResumenMatches()
+					foundResumenIdx := -1
+					for i, mt := range pms {
+						if mt.ID == prevSelectedID {
+							foundResumenIdx = i
+							break
+						}
+					}
+					if foundResumenIdx != -1 {
+						m.resumenCursor = foundResumenIdx
+					} else if m.resumenCursor >= len(pms) && len(pms) > 0 {
+						m.resumenCursor = len(pms) - 1
+					}
+				} else if !msg.isSilent {
 					m.matchCursor = 0
+					m.resumenCursor = 0
 				}
 				m.errorMsg = ""
 			}
@@ -393,6 +421,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case matchStatsLoadedMsg:
+		if m.detailsLoaded == nil {
+			m.detailsLoaded = make(map[string]bool)
+		}
+		if msg.matchID != "" {
+			m.detailsLoaded[msg.matchID] = true
+		}
 		for i := range m.matches {
 			if m.matches[i].ID == msg.matchID {
 				m.matches[i].Stats = msg.stats
@@ -604,6 +638,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.pastMatches = nil
 					m.matchCursor = 0
 					m.resumenCursor = 0
+					m.selectedMatchID = ""
+					m.detailsLoaded = make(map[string]bool)
 					m.standings = nil
 					m.statistics = nil
 					m.channels = nil
@@ -701,11 +737,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					pms := m.ResumenMatches()
 					if len(pms) > 0 && m.resumenCursor < len(pms) {
 						selectedMatch := pms[m.resumenCursor]
+						m.selectedMatchID = selectedMatch.ID
 						m.channels = m.catalog.GetChannels(selectedMatch)
 						m.channelCursor = 0
 						m.modalTab = 0
 						m.state = StateChannelSelect
-						if (selectedMatch.Stats == nil || selectedMatch.Lineups == nil) && selectedMatch.ID != "" {
+						if (selectedMatch.Stats == nil || selectedMatch.Lineups == nil) && selectedMatch.ID != "" && !m.detailsLoaded[selectedMatch.ID] {
 							return m, fetchMatchStatsCmd(m.client, m.CurrentLeague().Key, selectedMatch.ID)
 						}
 						return m, nil
@@ -713,17 +750,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else if m.leagueTab == TabPartidos {
 					if len(m.matches) > 0 && m.matchCursor < len(m.matches) {
 						selectedMatch := m.matches[m.matchCursor]
+						m.selectedMatchID = selectedMatch.ID
 						m.channels = m.catalog.GetChannels(selectedMatch)
 						m.channelCursor = 0
 						m.modalTab = 0
 						m.state = StateChannelSelect
-						if (selectedMatch.Stats == nil || selectedMatch.Lineups == nil) && selectedMatch.ID != "" {
+						if (selectedMatch.Stats == nil || selectedMatch.Lineups == nil) && selectedMatch.ID != "" && !m.detailsLoaded[selectedMatch.ID] {
 							return m, fetchMatchStatsCmd(m.client, m.CurrentLeague().Key, selectedMatch.ID)
 						}
 						return m, nil
 					}
 				}
 			case "esc", "backspace":
+				if m.player != nil {
+					_ = m.player.Stop()
+				}
+				m.playbackID++
+				m.connecting = false
+				m.selectedMatchID = ""
 				m.state = StateMainMenu
 				m.matches = nil
 				m.pastMatches = nil
@@ -739,6 +783,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case "r":
 				m.state = StateLoading
+				m.selectedMatchID = ""
+				m.detailsLoaded = make(map[string]bool)
 				league := m.CurrentLeague()
 				m.loadingMsg = "Recargando datos (" + league.Name + ")..."
 				m.errorMsg = ""
@@ -807,6 +853,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			case "esc", "backspace":
 				m.state = StateBrowsing
+				m.selectedMatchID = ""
 				m.channels = nil
 				m.channelCursor = 0
 				m.modalTab = 0
@@ -816,9 +863,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case StateLoading, StateError:
 			switch key {
 			case "esc", "backspace", "h":
+				if m.player != nil {
+					_ = m.player.Stop()
+				}
+				m.playbackID++
+				m.connecting = false
+				m.selectedMatchID = ""
 				m.state = StateMainMenu
 				m.matches = nil
+				m.pastMatches = nil
 				m.matchCursor = 0
+				m.resumenCursor = 0
 				m.standings = nil
 				m.statistics = nil
 				m.channels = nil
