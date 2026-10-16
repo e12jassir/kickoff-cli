@@ -46,30 +46,17 @@ var (
 			Width(56)
 
 	CategoryHeaderStyle = lipgloss.NewStyle().
-			Foreground(ColorCategory).
-			Bold(true)
+				Foreground(ColorCategory).
+				Bold(true)
 
 	MenuItemNormal = lipgloss.NewStyle().
 			Foreground(ColorTextMuted)
 
 	MenuItemSelected = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(ColorHighlight)
+				Bold(true).
+				Foreground(ColorHighlight)
 
 	// League Tabs
-	ActiveTabStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(ColorHighlight).
-			Padding(0, 1).
-			MarginRight(1)
-
-	InactiveTabStyle = lipgloss.NewStyle().
-				Foreground(ColorMuted).
-				Padding(0, 1).
-				MarginRight(1)
-
-	TabsRowStyle = lipgloss.NewStyle().
-			MarginBottom(1)
 
 	// Match Cards & Lists
 	MatchBoxStyle = lipgloss.NewStyle().
@@ -77,20 +64,6 @@ var (
 			BorderForeground(ColorBorder).
 			Padding(1, 2).
 			Width(62)
-
-	MatchCardNormal = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(ColorBorder).
-			Padding(0, 1).
-			Width(62).
-			MarginBottom(1)
-
-	MatchCardSelected = lipgloss.NewStyle().
-				Border(lipgloss.RoundedBorder()).
-				BorderForeground(ColorBorderSelected).
-				Padding(0, 1).
-				Width(62).
-				MarginBottom(1)
 
 	MatchTimeStyle = lipgloss.NewStyle().
 			Foreground(ColorMuted).
@@ -120,10 +93,6 @@ var (
 			Foreground(lipgloss.Color("#7F1D1D")).
 			Bold(true)
 
-	StatusLiveStyle = lipgloss.NewStyle().
-			Foreground(ColorError).
-			Bold(true)
-
 	StatusPostStyle = lipgloss.NewStyle().
 			Foreground(ColorMuted)
 
@@ -142,19 +111,14 @@ var (
 			Width(66)
 
 	ActiveTabPillStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(ColorHighlight).
-			Background(ColorBorder).
-			Padding(0, 1)
+				Bold(true).
+				Foreground(ColorHighlight).
+				Background(ColorBorder).
+				Padding(0, 1)
 
 	InactiveTabPillStyle = lipgloss.NewStyle().
-			Foreground(ColorMuted).
-			Padding(0, 1)
-
-	ModalTitleStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(ColorHighlight).
-			MarginBottom(1)
+				Foreground(ColorMuted).
+				Padding(0, 1)
 
 	ModalSectionHeader = lipgloss.NewStyle().
 				Foreground(ColorCategory).
@@ -198,13 +162,9 @@ var (
 			Foreground(ColorMuted).
 			MarginTop(1)
 
-	FooterKeyStyle = lipgloss.NewStyle().
-			Foreground(ColorText).
-			Bold(true)
-
 	OfflineBadgeStyle = lipgloss.NewStyle().
-			Foreground(ColorAccent).
-			Bold(true)
+				Foreground(ColorAccent).
+				Bold(true)
 
 	LiveBadgeStyle = lipgloss.NewStyle().
 			Foreground(ColorCategory)
@@ -217,11 +177,11 @@ var (
 			Padding(0, 1)
 
 	LeagueTabInactive = lipgloss.NewStyle().
-			Foreground(ColorMuted).
-			Padding(0, 1)
+				Foreground(ColorMuted).
+				Padding(0, 1)
 
 	// Connecting stream animation style
 	ConnectingPulseStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#38BDF8")).
-			Bold(true)
+				Foreground(lipgloss.Color("#38BDF8")).
+				Bold(true)
 )

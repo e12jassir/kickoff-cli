@@ -1006,36 +1006,6 @@ func renderChannelModal(match model.Match, channels []model.Channel, selectedIdx
 	return modal.String()
 }
 
-// renderSmoothBar creates a fractional bar fill using 1/8th blocks (▏▎▍▌▋▊▉█).
-func renderSmoothBar(fraction float64, totalSlots int) string {
-	if fraction <= 0 {
-		return strings.Repeat(" ", totalSlots)
-	}
-	if fraction >= 1 {
-		return strings.Repeat("█", totalSlots)
-	}
-	totalUnits := fraction * float64(totalSlots*8)
-	fullBlocks := int(totalUnits) / 8
-	rem := int(totalUnits) % 8
-
-	var b strings.Builder
-	if fullBlocks > totalSlots {
-		fullBlocks = totalSlots
-	}
-	b.WriteString(strings.Repeat("█", fullBlocks))
-
-	if fullBlocks < totalSlots && rem > 0 {
-		fractions := []string{"", "▏", "▎", "▍", "▌", "▋", "▊", "▉"}
-		b.WriteString(fractions[rem])
-		fullBlocks++
-	}
-	remaining := totalSlots - fullBlocks
-	if remaining > 0 {
-		b.WriteString(strings.Repeat(" ", remaining))
-	}
-	return b.String()
-}
-
 func renderPossessionBar(homeStr, awayStr string, totalWidth int) string {
 	parseVal := func(s string) float64 {
 		s = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(s), "%"))
@@ -1063,7 +1033,7 @@ func renderPossessionBar(homeStr, awayStr string, totalWidth int) string {
 	} else if hFraction > 0.95 && aVal > 0 {
 		hFraction = 0.95
 	}
-	
+
 	totalUnits := int(math.Round(hFraction * float64(barSlots*8)))
 	fullBlocks := totalUnits / 8
 	rem := totalUnits % 8
@@ -1096,36 +1066,15 @@ func renderPossessionBar(homeStr, awayStr string, totalWidth int) string {
 	return lipgloss.NewStyle().Width(totalWidth).Align(lipgloss.Center).Render(barRow)
 }
 
-func formatModalEvent(ev model.MatchEvent) string {
-	clock := strings.TrimSpace(ev.Clock)
-	clockStr := ""
-	if clock != "" {
-		clockStr = " " + clock
-	}
-
-	pName := strings.TrimSpace(ev.PlayerName)
-	if pName == "" {
-		pName = "Jugador"
-	}
-
-	if ev.IsRedCard {
-		return fmt.Sprintf("🟥 %s%s", pName, clockStr)
-	}
-	if ev.IsYellow {
-		return fmt.Sprintf("🟨 %s%s", pName, clockStr)
-	}
-
-	tag := ""
-	if ev.IsOwnGoal {
-		tag = " (AG)"
-	} else if ev.IsPenalty {
-		tag = " (pen.)"
-	}
-
-	return fmt.Sprintf("⚽ %s%s%s", pName, tag, clockStr)
-}
-
+// truncateModalText shortens s to at most maxLen runes.
+//
+// When truncation is required, the last visible rune is replaced by an
+// ellipsis "…", so the result keeps exactly maxLen runes. A non-positive
+// maxLen returns an empty string instead of panicking on a negative slice.
 func truncateModalText(s string, maxLen int) string {
+	if maxLen <= 0 {
+		return ""
+	}
 	r := []rune(s)
 	if len(r) > maxLen {
 		return string(r[:maxLen-1]) + "…"

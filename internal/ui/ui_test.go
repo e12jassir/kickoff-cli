@@ -1386,27 +1386,18 @@ func TestModel_ConnectingStream_PulseAnimation(t *testing.T) {
 	}
 }
 
-func TestModel_SmoothBar_Fractions(t *testing.T) {
-	// Test renderSmoothBar block characters
-	bar0 := renderSmoothBar(0.0, 10)
-	if strings.Contains(bar0, "█") {
-		t.Errorf("expected empty bar for 0.0 fraction")
+func TestTruncateModalText_EdgeCases(t *testing.T) {
+	// maxLen <= 0 must return an empty string instead of panicking.
+	if got := truncateModalText("hello", 0); got != "" {
+		t.Errorf("maxLen=0: want empty string, got %q", got)
+	}
+	if got := truncateModalText("hello", -1); got != "" {
+		t.Errorf("maxLen=-1: want empty string, got %q", got)
 	}
 
-	barHalf := renderSmoothBar(0.5, 10)
-	if !strings.HasPrefix(barHalf, "█████") {
-		t.Errorf("expected 5 full blocks for 0.5 fraction in 10 slots, got %q", barHalf)
-	}
-
-	barFull := renderSmoothBar(1.0, 10)
-	if barFull != "██████████" {
-		t.Errorf("expected 10 full blocks for 1.0 fraction, got %q", barFull)
-	}
-
-	// Test renderPossessionBar contains styled brackets and numbers
-	posView := renderPossessionBar("65%", "35%", 60)
-	if !strings.Contains(posView, "65%") || !strings.Contains(posView, "35%") {
-		t.Errorf("expected possession numbers in posView, got:\n%s", posView)
+	// maxLen=1 truncates to a single ellipsis rune.
+	if got := truncateModalText("hello", 1); got != "…" {
+		t.Errorf("maxLen=1: want %q, got %q", "…", got)
 	}
 }
 
@@ -1521,5 +1512,3 @@ func TestModel_TabResumen_SymmetricalCards_Scroll_And_NvimNav(t *testing.T) {
 		t.Fatalf("expected TabResumen after 'h', got %d", m.leagueTab)
 	}
 }
-
-
