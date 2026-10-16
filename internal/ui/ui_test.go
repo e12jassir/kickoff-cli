@@ -796,12 +796,17 @@ func TestModel_Match_Events_And_Stats_Modal(t *testing.T) {
 		t.Errorf("expected formations badge in Tab 2, got:\n%s", viewTab2)
 	}
 
-	// Verify starters with jerseys and position abbreviations
-	if !strings.Contains(viewTab2, "1  M. ter Stegen (GK)") || !strings.Contains(viewTab2, "1  T. Courtois (GK)") {
-		t.Errorf("expected goalkeeper starters in Tab 2, got:\n%s", viewTab2)
+	// Verify tactical pitch starters with jerseys and short names for home team
+	if !strings.Contains(viewTab2, "#1 STEG") || !strings.Contains(viewTab2, "#9 LEW") {
+		t.Errorf("expected tactical pitch starters in Tab 2, got:\n%s", viewTab2)
 	}
-	if !strings.Contains(viewTab2, "R. Lewandowski (FW)") || !strings.Contains(viewTab2, "Vinícius Jr (FW)") {
-		t.Errorf("expected forward starters in Tab 2")
+
+	// Toggle team in Tab 2 to Away team (Real Madrid)
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = newM.(Model)
+	viewTab2Away := m.View()
+	if !strings.Contains(viewTab2Away, "#1 COUR") || !strings.Contains(viewTab2Away, "#7 VINI") {
+		t.Errorf("expected away tactical pitch starters in Tab 2, got:\n%s", viewTab2Away)
 	}
 
 	// --- 4. DIRECT NUMERIC TAB SWITCHING ---

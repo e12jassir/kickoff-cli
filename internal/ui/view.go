@@ -247,9 +247,15 @@ func renderBrowsing(m Model) string {
 
 		case StateChannelSelect:
 			selMatch, _ := m.CurrentSelectedMatch()
-			modalContent := renderChannelModal(selMatch, m.channels, m.channelCursor, m.modalTab, m.livePulse, m.spinner.View(), m.IsDetailsLoaded(selMatch.ID), m.noEmoji)
-			body = ModalBoxStyle.Render(modalContent)
-			footer = FooterHelpStyle.Render("h/l o ←/→: pestaña  •  j/k o ↑/↓: canal  •  enter: reproducir  •  esc: volver")
+			modalBox := ModalBoxStyle
+			modalWidth := 60
+			if m.modalTab == 2 && m.width >= 80 {
+				modalWidth = 74
+				modalBox = modalBox.Width(modalWidth + 6)
+			}
+			modalContent := renderChannelModal(selMatch, m.channels, m.channelCursor, m.modalTab, m.livePulse, m.spinner.View(), m.IsDetailsLoaded(selMatch.ID), m.noEmoji, m.lineupTeam, modalWidth)
+			body = modalBox.Render(modalContent)
+			footer = FooterHelpStyle.Render("h/l o ←/→: pestaña/equipo  •  j/k o ↑/↓: canal  •  enter: reproducir  •  esc: volver")
 
 		default: // StateBrowsing, StatePlaying
 			switch m.leagueTab {
@@ -711,9 +717,26 @@ func renderMatchItem(match model.Match, isSelected bool, livePulse bool) []strin
 	return []string{line1, line2}
 }
 
-func renderChannelModal(match model.Match, channels []model.Channel, selectedIdx int, modalTab int, livePulse bool, spinnerStr string, detailsLoaded bool, noEmojiOpt ...bool) string {
-	noEmoji := len(noEmojiOpt) > 0 && noEmojiOpt[0]
-	const modalContentWidth = 60
+func renderChannelModal(match model.Match, channels []model.Channel, selectedIdx int, modalTab int, livePulse bool, spinnerStr string, detailsLoaded bool, optArgs ...any) string {
+	noEmoji := false
+	lineupTeam := 0
+	modalContentWidth := 60
+
+	if len(optArgs) > 0 {
+		if b, ok := optArgs[0].(bool); ok {
+			noEmoji = b
+		}
+	}
+	if len(optArgs) > 1 {
+		if t, ok := optArgs[1].(int); ok {
+			lineupTeam = t
+		}
+	}
+	if len(optArgs) > 2 {
+		if w, ok := optArgs[2].(int); ok && w > 0 {
+			modalContentWidth = w
+		}
+	}
 	var modal strings.Builder
 
 	homeName := match.HomeTeam.DisplayName
@@ -906,67 +929,15 @@ func renderChannelModal(match model.Match, channels []model.Channel, selectedIdx
 
 	case 2:
 		// Tab 2: Alineaciones
-		if match.Lineups == nil || (len(match.Lineups.Home.Starters) == 0 && len(match.Lineups.Away.Starters) == 0) {
-			notice := "Alineaciones no disponibles aún para este encuentro."
-			modal.WriteString(lipgloss.NewStyle().Width(modalContentWidth).Align(lipgloss.Center).Foreground(ColorMuted).Italic(true).Render(notice) + "\n")
-		} else {
-			homeFormationText := homeName
-			if match.Lineups.Home.Formation != "" {
-				homeFormationText = fmt.Sprintf("%s (%s)", homeName, match.Lineups.Home.Formation)
-			}
-			awayFormationText := awayName
-			if match.Lineups.Away.Formation != "" {
-				awayFormationText = fmt.Sprintf("%s (%s)", awayName, match.Lineups.Away.Formation)
-			}
-
-			headerLeft := lipgloss.NewStyle().Width(28).Align(lipgloss.Left).Foreground(ColorHighlight).Bold(true).Render(truncateModalText(homeFormationText, 28))
-			headerRight := lipgloss.NewStyle().Width(28).Align(lipgloss.Left).Foreground(ColorHighlight).Bold(true).Render(truncateModalText(awayFormationText, 28))
-			modal.WriteString(fmt.Sprintf("%s    %s\n\n", headerLeft, headerRight))
-
-			homeStarters := match.Lineups.Home.Starters
-			awayStarters := match.Lineups.Away.Starters
-			maxStarters := len(homeStarters)
-			if len(awayStarters) > maxStarters {
-				maxStarters = len(awayStarters)
-			}
-			if maxStarters > 11 {
-				maxStarters = 11
-			}
-
-			formatPlayerItem := func(p model.Player) string {
-				jerseyStr := "   "
-				if p.Jersey != "" {
-					jerseyStr = fmt.Sprintf("%-2s ", p.Jersey)
-				}
-				posStr := ""
-				if p.Position != "" {
-					posStr = fmt.Sprintf(" (%s)", p.Position)
-				}
-				nameStr := p.DisplayName
-				if nameStr == "" {
-					nameStr = "Jugador"
-				}
-				return fmt.Sprintf("%s%s%s", jerseyStr, nameStr, posStr)
-			}
-
-			colLeft := lipgloss.NewStyle().Width(28).Align(lipgloss.Left).Foreground(ColorTextMuted)
-			colRight := lipgloss.NewStyle().Width(28).Align(lipgloss.Left).Foreground(ColorTextMuted)
-
-			for i := 0; i < maxStarters; i++ {
-				hText := ""
-				if i < len(homeStarters) {
-					hText = formatPlayerItem(homeStarters[i])
-				}
-				aText := ""
-				if i < len(awayStarters) {
-					aText = formatPlayerItem(awayStarters[i])
-				}
-				modal.WriteString(fmt.Sprintf("%s    %s\n", colLeft.Render(truncateModalText(hText, 28)), colRight.Render(truncateModalText(aText, 28))))
-			}
-		}
+		modal.WriteString(RenderTacticalPitch(match, lineupTeam, modalContentWidth, noEmoji) + "\n")
 	}
 
 	return modal.String()
+}
+
+// renderModalContent renders the tactical pitch modal tab content.
+func renderModalContent(match model.Match, lineupTeam int, modalContentWidth int, noEmoji bool) string {
+	return RenderTacticalPitch(match, lineupTeam, modalContentWidth, noEmoji)
 }
 
 func renderPossessionBar(homeStr, awayStr string, totalWidth int) string {

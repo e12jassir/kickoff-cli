@@ -741,6 +741,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.channels = m.catalog.GetChannels(selectedMatch)
 						m.channelCursor = 0
 						m.modalTab = 0
+						m.lineupTeam = 0
 						m.state = StateChannelSelect
 						if (selectedMatch.Stats == nil || selectedMatch.Lineups == nil) && selectedMatch.ID != "" && !m.detailsLoaded[selectedMatch.ID] {
 							return m, fetchMatchStatsCmd(m.client, m.CurrentLeague().Key, selectedMatch.ID)
@@ -754,6 +755,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.channels = m.catalog.GetChannels(selectedMatch)
 						m.channelCursor = 0
 						m.modalTab = 0
+						m.lineupTeam = 0
 						m.state = StateChannelSelect
 						if (selectedMatch.Stats == nil || selectedMatch.Lineups == nil) && selectedMatch.ID != "" && !m.detailsLoaded[selectedMatch.ID] {
 							return m, fetchMatchStatsCmd(m.client, m.CurrentLeague().Key, selectedMatch.ID)
@@ -778,6 +780,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.channels = nil
 				m.channelCursor = 0
 				m.modalTab = 0
+				m.lineupTeam = 0
 				m.statusMsg = ""
 				m.errorMsg = ""
 				return m, nil
@@ -799,8 +802,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case StateChannelSelect:
 			switch key {
 			case "left", "h":
+				if m.modalTab == 2 {
+					m.ToggleLineupTeam()
+					return m, nil
+				}
 				m.modalTab = (m.modalTab - 1 + 3) % 3
-			case "right", "l", "tab":
+			case "right", "l":
+				if m.modalTab == 2 {
+					m.ToggleLineupTeam()
+					return m, nil
+				}
+				m.modalTab = (m.modalTab + 1) % 3
+			case "tab":
+				if m.modalTab == 2 {
+					m.ToggleLineupTeam()
+					return m, nil
+				}
 				m.modalTab = (m.modalTab + 1) % 3
 			case "shift+tab":
 				m.modalTab = (m.modalTab - 1 + 3) % 3
@@ -857,6 +874,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.channels = nil
 				m.channelCursor = 0
 				m.modalTab = 0
+				m.lineupTeam = 0
 				return m, nil
 			}
 
@@ -879,6 +897,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.channels = nil
 				m.channelCursor = 0
 				m.modalTab = 0
+				m.lineupTeam = 0
 				m.statusMsg = ""
 				m.errorMsg = ""
 				return m, nil
