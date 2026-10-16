@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -355,7 +356,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 
-				m.matches = msg.matches
+				todayStr := time.Now().Format("2006-01-02")
+				var activeMatches []model.Match
+				var pastMatches []model.Match
+
+				for _, match := range msg.matches {
+					isToday := !match.StartTime.IsZero() && match.StartTime.Format("2006-01-02") == todayStr
+					isOldFinished := !match.StartTime.IsZero() && !isToday && match.StartTime.Before(time.Now()) && (match.Status.Completed || strings.ToLower(match.Status.State) == "post")
+
+					if isOldFinished {
+						pastMatches = append(pastMatches, match)
+					} else {
+						activeMatches = append(activeMatches, match)
+					}
+				}
+
+				if len(activeMatches) > 0 {
+					m.matches = activeMatches
+					m.pastMatches = pastMatches
+				} else {
+					m.matches = pastMatches
+					m.pastMatches = pastMatches
+				}
 
 				if msg.isSilent && prevSelectedID != "" {
 					foundIdx := -1
@@ -575,6 +597,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.leagueTab = TabPartidos
 					m.state = StateLoading
 					m.matches = nil
+					m.pastMatches = nil
 					m.matchCursor = 0
 					m.standings = nil
 					m.statistics = nil

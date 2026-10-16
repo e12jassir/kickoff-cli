@@ -790,7 +790,34 @@ func (c *Client) FetchMatches(ctx context.Context, leagueKey string) ([]model.Ma
 		}
 	}
 
-	// Fallback: If no matches are scheduled for today, provide the matches from the active/nearest round
+	// Check if allParsedMatches contains any future or live matches:
+	hasActiveInDefault := false
+	for _, m := range allParsedMatches {
+		if m.Status.State == "in" || m.Status.State == "pre" {
+			hasActiveInDefault = true
+			break
+		}
+	}
+
+	// If the default scoreboard only returned past finished matches, probe for the next upcoming matchday!
+	if len(matches) == 0 && !hasActiveInDefault && len(allParsedMatches) > 0 {
+		upcomingEvents := c.fetchUpcomingScoreboardEvents(ctx, leagueCode, now)
+		for _, ev := range upcomingEvents {
+			if ev.Date == "" || len(ev.Competitions) == 0 {
+				continue
+			}
+			matchTime, err := parseESPNTime(ev.Date)
+			if err != nil {
+				continue
+			}
+			localMatchTime := matchTime.In(c.loc)
+			m, ok := parseEvent(ev, matchTime, localMatchTime)
+			if ok {
+				allParsedMatches = append(allParsedMatches, m)
+			}
+		}
+	}
+
 	if len(matches) == 0 && len(allParsedMatches) > 0 {
 		matches = allParsedMatches
 	}
@@ -816,6 +843,84 @@ func (c *Client) FetchMatches(ctx context.Context, leagueKey string) ([]model.Ma
 
 	c.setCache(leagueKey, matches)
 	return matches, nil
+}
+
+// fetchUpcomingScoreboardEvents probes dates 1-14 days into the future to find the next active matchday.
+func (c *Client) fetchUpcomingScoreboardEvents(ctx context.Context, leagueCode string, now time.Time) []rawEvent {
+	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	type probeRes struct {
+		dayOffset int
+		events    []rawEvent
+	}
+
+	resChan := make(chan probeRes, 14)
+	var wg sync.WaitGroup
+
+	client := c.httpClient
+	if client == nil {
+		client = http.DefaultClient
+	}
+
+	for d := 1; d <= 14; d++ {
+		wg.Add(1)
+		go func(offset int) {
+			defer wg.Done()
+			select {
+			case <-probeCtx.Done():
+				return
+			default:
+			}
+
+			dateStr := now.AddDate(0, 0, offset).Format("20060102")
+			endpoint := fmt.Sprintf("%s/%s/scoreboard?dates=%s", c.baseURL, leagueCode, dateStr)
+			if strings.Contains(c.baseURL, "espn.com") {
+				endpoint += "&region=co&lang=es"
+			}
+
+			req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, endpoint, nil)
+			if err != nil {
+				return
+			}
+			req.Header.Set("User-Agent", userAgent)
+
+			resp, err := client.Do(req)
+			if err != nil {
+				return
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				return
+			}
+
+			var raw rawResponse
+			if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+				return
+			}
+
+			if len(raw.Events) > 0 {
+				resChan <- probeRes{dayOffset: offset, events: raw.Events}
+			}
+		}(d)
+	}
+
+	wg.Wait()
+	close(resChan)
+
+	var earliest probeRes
+	earliest.dayOffset = 999
+	for r := range resChan {
+		if r.dayOffset < earliest.dayOffset {
+			earliest = r
+		}
+	}
+
+	if earliest.dayOffset <= 14 {
+		return earliest.events
+	}
+	return nil
 }
 
 func parseESPNTime(s string) (time.Time, error) {

@@ -51,6 +51,7 @@ type Model struct {
 	expandedCats    map[string]bool // category name -> whether it is expanded
 
 	matches     []model.Match
+	pastMatches []model.Match
 	matchCursor int
 
 	standings     *model.LeagueStandings

@@ -296,7 +296,7 @@ func renderTabPartidos(m Model, curr model.League) string {
 		if m.noEmoji {
 			emptyPrefix = ""
 		}
-		emptyMsg := fmt.Sprintf("%sNo hay partidos disponibles para %s.", emptyPrefix, curr.Name)
+		emptyMsg := fmt.Sprintf("%sNo hay próximos partidos programados para %s.", emptyPrefix, curr.Name)
 		return MatchBoxStyle.Render(EmptyStateStyle.Render(emptyMsg))
 	}
 
@@ -311,7 +311,11 @@ func renderTabPartidos(m Model, curr model.League) string {
 
 	headerText := fmt.Sprintf("PARTIDOS DE HOY (%d)", len(m.matches))
 	if !isTodayMatchday {
-		headerText = fmt.Sprintf("PARTIDOS DE LA JORNADA / RECIENTES (%d)", len(m.matches))
+		firstDate := ""
+		if len(m.matches) > 0 && !m.matches[0].StartTime.IsZero() {
+			firstDate = fmt.Sprintf(" · %s", m.matches[0].StartTime.Format("02/01"))
+		}
+		headerText = fmt.Sprintf("PRÓXIMOS PARTIDOS%s (%d)", firstDate, len(m.matches))
 	}
 
 	var lines []string
@@ -347,11 +351,16 @@ func renderTabResumen(m Model, curr model.League) string {
 
 	// 2. Past Match Results (FT)
 	var pastMatches []model.Match
-	var upcomingMatches []model.Match
+	pastMatches = append(pastMatches, m.pastMatches...)
 	for _, mt := range m.matches {
 		if mt.Status.Completed || strings.ToLower(mt.Status.State) == "post" {
 			pastMatches = append(pastMatches, mt)
-		} else if strings.ToLower(mt.Status.State) == "pre" {
+		}
+	}
+
+	var upcomingMatches []model.Match
+	for _, mt := range m.matches {
+		if strings.ToLower(mt.Status.State) == "pre" {
 			upcomingMatches = append(upcomingMatches, mt)
 		}
 	}
@@ -508,6 +517,10 @@ func renderMatchItem(match model.Match, isSelected bool, livePulse bool) []strin
 	timeStr := match.TimeStr
 	if timeStr == "" {
 		timeStr = "--:--"
+	}
+	todayStr := time.Now().Format("2006-01-02")
+	if !match.StartTime.IsZero() && match.StartTime.Format("2006-01-02") != todayStr {
+		timeStr = fmt.Sprintf("[%s] %s", match.StartTime.Format("02/01"), timeStr)
 	}
 
 	homeName := match.HomeTeam.DisplayName

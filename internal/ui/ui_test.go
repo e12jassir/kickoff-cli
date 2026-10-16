@@ -457,7 +457,7 @@ func TestModel_EmptyMatches_And_Error(t *testing.T) {
 	m = newM.(Model)
 
 	viewStr := m.View()
-	if !strings.Contains(viewStr, "No hay partidos disponibles") {
+	if !strings.Contains(viewStr, "No hay próximos partidos programados") {
 		t.Errorf("expected empty state message, got:\n%s", viewStr)
 	}
 
@@ -1190,8 +1190,8 @@ func TestModel_LeagueTabs_NavigationAndRendering(t *testing.T) {
 	// Verify Tab 2 (Partidos) is default when browsing
 	m.leagueTab = TabPartidos
 	viewPartidos := m.View()
-	if !strings.Contains(viewPartidos, "PARTIDOS DE HOY") && !strings.Contains(viewPartidos, "PARTIDOS DE LA JORNADA") {
-		t.Errorf("expected 'PARTIDOS DE HOY' or 'PARTIDOS DE LA JORNADA' in TabPartidos view, got:\n%s", viewPartidos)
+	if !strings.Contains(viewPartidos, "PARTIDOS DE HOY") && !strings.Contains(viewPartidos, "PRÓXIMOS PARTIDOS") {
+		t.Errorf("expected 'PARTIDOS DE HOY' or 'PRÓXIMOS PARTIDOS' in TabPartidos view, got:\n%s", viewPartidos)
 	}
 
 	// Press '1' -> Tab 1 (Resumen)
