@@ -15,8 +15,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/e12jassir/kickoff/internal/catalog"
-	"github.com/e12jassir/kickoff/internal/model"
+	"github.com/e12jassir/kickoff-cli/internal/catalog"
+	"github.com/e12jassir/kickoff-cli/internal/model"
 )
 
 const (

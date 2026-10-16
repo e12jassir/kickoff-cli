@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/e12jassir/kickoff/internal/model"
+	"github.com/e12jassir/kickoff-cli/internal/model"
 )
 
 func TestParseM3U_Success(t *testing.T) {

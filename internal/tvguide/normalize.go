@@ -6,7 +6,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/e12jassir/kickoff/internal/model"
+	"github.com/e12jassir/kickoff-cli/internal/model"
 	"golang.org/x/text/runes"
 	"golang.org/x/text/transform"
 	"golang.org/x/text/unicode/norm"

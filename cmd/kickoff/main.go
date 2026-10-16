@@ -7,12 +7,12 @@ import (
 	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/e12jassir/kickoff/internal/catalog"
-	"github.com/e12jassir/kickoff/internal/espn"
-	"github.com/e12jassir/kickoff/internal/model"
-	"github.com/e12jassir/kickoff/internal/player"
-	"github.com/e12jassir/kickoff/internal/ui"
-	"github.com/e12jassir/kickoff/internal/updater"
+	"github.com/e12jassir/kickoff-cli/internal/catalog"
+	"github.com/e12jassir/kickoff-cli/internal/espn"
+	"github.com/e12jassir/kickoff-cli/internal/model"
+	"github.com/e12jassir/kickoff-cli/internal/player"
+	"github.com/e12jassir/kickoff-cli/internal/ui"
+	"github.com/e12jassir/kickoff-cli/internal/updater"
 )
 
 var version = "0.1.2"

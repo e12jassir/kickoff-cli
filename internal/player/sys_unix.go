@@ -11,7 +11,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/e12jassir/kickoff/internal/model"
+	"github.com/e12jassir/kickoff-cli/internal/model"
 )
 
 func setProcessAttrs(cmd *exec.Cmd) {

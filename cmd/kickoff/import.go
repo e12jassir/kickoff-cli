@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/e12jassir/kickoff/internal/catalog"
+	"github.com/e12jassir/kickoff-cli/internal/catalog"
 )
 
 const LegalDisclaimer = `Notice: Kickoff does not host, provide, or distribute media streams.

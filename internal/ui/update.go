@@ -9,8 +9,8 @@ import (
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/e12jassir/kickoff/internal/model"
-	"github.com/e12jassir/kickoff/internal/updater"
+	"github.com/e12jassir/kickoff-cli/internal/model"
+	"github.com/e12jassir/kickoff-cli/internal/updater"
 )
 
 // Async messages for Bubble Tea event loop.

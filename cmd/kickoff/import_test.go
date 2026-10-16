@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/e12jassir/kickoff/internal/catalog"
+	"github.com/e12jassir/kickoff-cli/internal/catalog"
 )
 
 func TestRunConfigImport_JSONLocalFile(t *testing.T) {

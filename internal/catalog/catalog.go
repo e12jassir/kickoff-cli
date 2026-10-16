@@ -14,8 +14,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/e12jassir/kickoff/internal/model"
-	"github.com/e12jassir/kickoff/internal/tvguide"
+	"github.com/e12jassir/kickoff-cli/internal/model"
+	"github.com/e12jassir/kickoff-cli/internal/tvguide"
 )
 
 // Public free-to-air (FTA) channels with legal webcasts.

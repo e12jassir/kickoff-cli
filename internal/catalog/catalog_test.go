@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/e12jassir/kickoff/internal/model"
-	"github.com/e12jassir/kickoff/internal/tvguide"
+	"github.com/e12jassir/kickoff-cli/internal/model"
+	"github.com/e12jassir/kickoff-cli/internal/tvguide"
 )
 
 // mockTestStreams provides dummy endpoints for testing without distributing copyrighted URLs.

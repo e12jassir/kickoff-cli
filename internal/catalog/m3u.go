@@ -9,7 +9,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/e12jassir/kickoff/internal/tvguide"
+	"github.com/e12jassir/kickoff-cli/internal/tvguide"
 )
 
 // M3UChannel represents a single parsed channel from an M3U / M3U8 playlist.

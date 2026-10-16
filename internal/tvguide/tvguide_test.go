@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/e12jassir/kickoff/internal/model"
+	"github.com/e12jassir/kickoff-cli/internal/model"
 )
 
 const mockESPN1HTML = `<!DOCTYPE html>
