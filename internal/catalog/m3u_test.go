@@ -259,4 +259,3 @@ func TestCatalog_M3UIntegration(t *testing.T) {
 		t.Errorf("expected 'Caracol TV HD', got %q", colChs[0].Name)
 	}
 }
-

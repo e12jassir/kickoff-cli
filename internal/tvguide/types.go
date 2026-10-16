@@ -7,7 +7,6 @@ import (
 	"github.com/e12jassir/kickoff-cli/internal/model"
 )
 
-
 // ChannelTarget maps a standard broadcast channel name to its Gatotv URL slug and stream URL.
 type ChannelTarget struct {
 	Name      string `json:"name"`

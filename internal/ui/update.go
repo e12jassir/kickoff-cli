@@ -34,6 +34,7 @@ func checkUpdateCmd(currentVersion string) tea.Cmd {
 		return nil
 	}
 }
+
 type matchesLoadedMsg struct {
 	leagueKey string
 	matches   []model.Match

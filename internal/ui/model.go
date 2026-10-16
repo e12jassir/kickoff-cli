@@ -47,9 +47,9 @@ type Model struct {
 	// Accordion menu state
 	categories      []string
 	categoryCursor  int
-	categoryMode    bool            // true: cursor moves between categories; false: cursor moves between leagues of expanded category
+	categoryMode    bool             // true: cursor moves between categories; false: cursor moves between leagues of expanded category
 	categoryIndices map[string][]int // category name -> indices into m.leagues
-	expandedCats    map[string]bool // category name -> whether it is expanded
+	expandedCats    map[string]bool  // category name -> whether it is expanded
 
 	matches       []model.Match
 	pastMatches   []model.Match
