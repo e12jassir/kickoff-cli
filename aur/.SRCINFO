@@ -14,9 +14,9 @@ pkgbase = kickoff-bin
 	conflicts = kickoff
 	conflicts = kickoff-cli
 	conflicts = kickoff-cli-bin
-	source_x86_64 = kickoff-bin-0.1.2-x86_64.tar.gz::https://github.com/e12jassir/kickoff-cli/releases/download/v0.1.2/kickoff_linux_amd64.tar.gz
-	sha256sums_x86_64 = SKIP
-	source_aarch64 = kickoff-bin-0.1.2-aarch64.tar.gz::https://github.com/e12jassir/kickoff-cli/releases/download/v0.1.2/kickoff_linux_arm64.tar.gz
+	source_x86_64 = kickoff-bin-0.1.2-x86_64.tar.gz::https://github.com/e12jassir/kickoff-cli/releases/download/v0.1.2/kickoff_0.1.2_linux_amd64.tar.gz
+	sha256sums_x86_64 = 6ca91e3b4c72137818b3f1e13a12728b49f8e4557b5bbc7c9a815c23904e898b
+	source_aarch64 = kickoff-bin-0.1.2-aarch64.tar.gz::https://github.com/e12jassir/kickoff-cli/releases/download/v0.1.2/kickoff_0.1.2_linux_arm64.tar.gz
 	sha256sums_aarch64 = SKIP
 
 pkgname = kickoff-bin

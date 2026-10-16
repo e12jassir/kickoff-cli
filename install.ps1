@@ -76,13 +76,81 @@ if (-not [string]::IsNullOrWhiteSpace($Version)) {
     )
 }
 
+# Compute the lowercase SHA-256 hex digest of a file.
+function Get-Sha256 {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+    (Get-FileHash -Path $Path -Algorithm SHA256).Hash.ToLower()
+}
+
+# Verify a downloaded asset against the release checksums.txt that sits next to it.
+# The checksums file is fetched from the SAME base path as the chosen asset.
+# Fails closed (throws) on mismatch or missing checksums, unless KICKOFF_SKIP_CHECKSUM=1.
+function Assert-AssetChecksum {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$AssetUrl
+    )
+
+    $baseName = $AssetUrl.Substring($AssetUrl.LastIndexOf('/') + 1)
+    $checksumsUrl = $AssetUrl.Substring(0, $AssetUrl.LastIndexOf('/')) + '/checksums.txt'
+    $checksumsPath = Join-Path (Split-Path -Path $FilePath) 'checksums.txt'
+    $skipChecksum = ($env:KICKOFF_SKIP_CHECKSUM -eq '1')
+
+    try {
+        Invoke-WebRequest -Uri $checksumsUrl -OutFile $checksumsPath -UseBasicParsing
+    } catch {
+        Write-Warning "Could not download checksums.txt from: $checksumsUrl"
+        if ($skipChecksum) {
+            Write-Warning "KICKOFF_SKIP_CHECKSUM=1 is set: skipping integrity verification (proceeding WITHOUT checksum validation)."
+            return
+        }
+        throw "Unable to verify the integrity of the downloaded asset (checksums.txt unavailable). To bypass this check, set `$env:KICKOFF_SKIP_CHECKSUM=1 and retry."
+    }
+
+    $expected = $null
+    foreach ($line in Get-Content -Path $checksumsPath) {
+        if ([string]::IsNullOrWhiteSpace($line)) { continue }
+        $parts = $line -split '\s+', 2
+        if ($parts.Count -lt 2) { continue }
+        $name = $parts[1].TrimStart('*')
+        if ($name -eq $baseName) {
+            $expected = $parts[0].ToLower()
+            break
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($expected)) {
+        Write-Warning "No checksum entry found for '$baseName' in checksums.txt."
+        if ($skipChecksum) {
+            Write-Warning "KICKOFF_SKIP_CHECKSUM=1 is set: proceeding WITHOUT a checksum for this asset."
+            return
+        }
+        throw "Refusing to install '$baseName' without a matching checksum entry. To bypass this check, set `$env:KICKOFF_SKIP_CHECKSUM=1 and retry."
+    }
+
+    $actual = Get-Sha256 -Path $FilePath
+    if ($actual -ne $expected) {
+        throw "Checksum mismatch for '$baseName'!`n  expected: $expected`n  actual:   $actual`nThe downloaded file is corrupted or has been tampered with. Aborting."
+    }
+
+    Write-Host "[OK] Checksum verified: $baseName"
+}
+
 try {
     $downloaded = $false
+    $chosenUrl = $null
     foreach ($url in $downloadUrls) {
         try {
             Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing
             if (Test-Path -Path $zipPath) {
                 $downloaded = $true
+                $chosenUrl = $url
                 break
             }
         } catch {
@@ -93,6 +161,9 @@ try {
     if (-not $downloaded) {
         throw "Failed to download Kickoff release asset. Check https://github.com/$Repo/releases for available builds."
     }
+
+    # Verify integrity before extracting or installing (fails closed on mismatch).
+    Assert-AssetChecksum -FilePath $zipPath -AssetUrl $chosenUrl
 
     Expand-Archive -Path $zipPath -DestinationPath $extractPath -Force
 

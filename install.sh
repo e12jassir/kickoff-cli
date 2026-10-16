@@ -103,9 +103,90 @@ fi
 TEMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TEMP_DIR"' EXIT
 
+# ==============================================================================
+# Download Integrity Verification
+# ==============================================================================
+
+# Compute the SHA-256 digest of a file using whatever tool is available:
+# sha256sum (Linux) or shasum -a 256 (macOS).
+sha256_of() {
+  local file="$1"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$file" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$file" | awk '{print $1}'
+  else
+    return 1
+  fi
+}
+
+# Verify a downloaded asset against the release checksums.txt that sits next to it.
+# The checksums file is fetched from the SAME base path as the chosen asset.
+# Returns: 0 = verified, 1 = fatal (do not install), 2 = skipped via explicit opt-out.
+verify_checksum() {
+  local file="$1"
+  local url="$2"
+  local base checksums_url checksums_file expected actual
+
+  base="$(basename "$url")"
+  checksums_url="$(dirname "$url")/checksums.txt"
+  checksums_file="$TEMP_DIR/checksums.txt"
+
+  if ! curl -fsSL -o "$checksums_file" "$checksums_url" 2>/dev/null; then
+    echo "⚠️  Warning: could not download checksums.txt from: $checksums_url" >&2
+    if [ "${KICKOFF_SKIP_CHECKSUM:-0}" = "1" ]; then
+      echo "⚠️  KICKOFF_SKIP_CHECKSUM=1 is set: skipping integrity verification (proceeding WITHOUT checksum validation)." >&2
+      return 2
+    fi
+    echo "❌ Error: unable to verify the integrity of the downloaded asset (checksums.txt unavailable)." >&2
+    echo "   Refusing to install an unverified binary. Re-run with KICKOFF_SKIP_CHECKSUM=1 to bypass this check." >&2
+    return 1
+  fi
+
+  expected="$(awk -v name="$base" '{ n=$2; sub(/^\*/, "", n); if (n == name) { print $1; exit } }' "$checksums_file")"
+  if [ -z "$expected" ]; then
+    echo "⚠️  Warning: no checksum entry found for '$base' in checksums.txt." >&2
+    if [ "${KICKOFF_SKIP_CHECKSUM:-0}" = "1" ]; then
+      echo "⚠️  KICKOFF_SKIP_CHECKSUM=1 is set: proceeding WITHOUT a checksum for this asset." >&2
+      return 2
+    fi
+    echo "❌ Error: refusing to install '$base' without a matching checksum entry." >&2
+    echo "   Re-run with KICKOFF_SKIP_CHECKSUM=1 to bypass this check." >&2
+    return 1
+  fi
+
+  if ! actual="$(sha256_of "$file")"; then
+    echo "⚠️  Warning: no SHA-256 tool found on this system (need 'sha256sum' or 'shasum')." >&2
+    if [ "${KICKOFF_SKIP_CHECKSUM:-0}" = "1" ]; then
+      echo "⚠️  KICKOFF_SKIP_CHECKSUM=1 is set: proceeding WITHOUT checksum verification." >&2
+      return 2
+    fi
+    echo "❌ Error: cannot compute SHA-256 to verify the download." >&2
+    echo "   Install 'coreutils' (sha256sum) or 'shasum'. Re-run with KICKOFF_SKIP_CHECKSUM=1 to bypass." >&2
+    return 1
+  fi
+
+  if [ "$actual" != "$expected" ]; then
+    echo "❌ Error: checksum mismatch for '$base'!" >&2
+    echo "   expected: $expected" >&2
+    echo "   actual:   $actual" >&2
+    echo "   The downloaded file is corrupted or has been tampered with. Aborting." >&2
+    return 1
+  fi
+
+  echo "✅ Checksum verified: $base"
+  return 0
+}
+
 DOWNLOADED=0
 for url in "${CANDIDATE_URLS[@]}"; do
   if curl -fsSL -o "$TEMP_DIR/kickoff.tar.gz" "$url" 2>/dev/null; then
+    VERIFY_RC=0
+    verify_checksum "$TEMP_DIR/kickoff.tar.gz" "$url" || VERIFY_RC=$?
+    if [ "$VERIFY_RC" -eq 1 ]; then
+      echo "❌ Integrity verification failed for: $url" >&2
+      exit 1
+    fi
     if tar -xzf "$TEMP_DIR/kickoff.tar.gz" -C "$TEMP_DIR" 2>/dev/null; then
       if [ -f "$TEMP_DIR/kickoff" ]; then
         install -m 755 "$TEMP_DIR/kickoff" "$INSTALL_DIR/kickoff"

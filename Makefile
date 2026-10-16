@@ -6,7 +6,7 @@ SRC=./cmd/kickoff
 INSTALL_DIR=$(HOME)/.local/bin
 CONFIG_DIR=$(HOME)/.config/kickoff
 
-.PHONY: all build install test clean setup-channels
+.PHONY: all build install test coverage vet lint clean setup-channels
 
 all: build
 
@@ -28,7 +28,22 @@ install: build setup-channels
 	@echo "kickoff instalado exitosamente en $(INSTALL_DIR)"
 
 test:
-	go test -v ./...
+	go test -race -count=1 ./...
+
+coverage:
+	go test -coverprofile=coverage.out ./...
+	go tool cover -func=coverage.out
+
+vet:
+	go vet ./...
+
+# Requires golangci-lint to be installed (https://golangci-lint.run).
+lint:
+	@command -v golangci-lint >/dev/null 2>&1 || { \
+		echo "golangci-lint is not installed. See https://golangci-lint.run/welcome/install/"; \
+		exit 1; \
+	}
+	golangci-lint run
 
 clean:
 	@rm -rf bin

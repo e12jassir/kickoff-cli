@@ -2,6 +2,7 @@ bin/
 *.exe
 .DS_Store
 *.log
+coverage.out
 
 # Local strategy docs and agent artifacts
 .atl/

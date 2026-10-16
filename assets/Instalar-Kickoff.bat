@@ -26,29 +26,47 @@ if %errorlevel% equ 0 (
     if exist "%SCRIPT_DIR%mpv.exe" (
         echo [OK] mpv.exe portable encontrado en la carpeta.
     ) else (
-        where winget >nul 2>nul
-        if !errorlevel! equ 0 (
-            echo [!] Instalando reproductor con winget...
-            echo     (Esto puede tardar unos segundos, relajate...)
-            winget install mpv.net --accept-package-agreements --accept-source-agreements
-        ) else (
-            echo [!] winget no esta presente en tu Windows.
-            echo [!] Descargando mpv.exe portable directamente...
-            powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-              "$url = 'https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/20261014/mpv-x86_64-20261014-git-ec38361c56.7z'; " ^
-              "$zipPath = Join-Path '%SCRIPT_DIR%' 'mpv_temp.7z'; " ^
-              "Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing; "
-        )
+        echo [!] mpv no encontrado. Resolviendo el ultimo build portable oficial (x86_64)...
+        powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+          "$ErrorActionPreference = 'Stop'; " ^
+          "$dir = '%SCRIPT_DIR%'; " ^
+          "$dest = Join-Path $dir 'mpv_temp.7z'; " ^
+          "try { " ^
+          "  $rel = Invoke-RestMethod -Uri 'https://api.github.com/repos/shinchiro/mpv-winbuild-cmake/releases/latest' -Headers @{ 'User-Agent' = 'kickoff-cli-installer' } -UseBasicParsing; " ^
+          "  $candidates = $rel.assets | Where-Object { $_.name -match 'x86_64' -and $_.name -match '\.7z$' }; " ^
+          "  $asset = $candidates | Where-Object { $_.name -notmatch 'v3' } | Select-Object -First 1; " ^
+          "  if (-not $asset) { $asset = $candidates | Select-Object -First 1 }; " ^
+          "  if (-not $asset) { throw 'No se encontro un asset x86_64 (.7z) en el ultimo release.' }; " ^
+          "  Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $dest -UseBasicParsing; " ^
+          "  Write-Host ('[OK] Build portable descargado: ' + $asset.name); " ^
+          "  $sevenZip = (Get-Command 7z.exe -ErrorAction SilentlyContinue).Source; " ^
+          "  if (-not $sevenZip) { $p7 = Join-Path $env:ProgramFiles '7-Zip\7z.exe'; if (Test-Path $p7) { $sevenZip = $p7 } }; " ^
+          "  if (-not $sevenZip) { Write-Host '[!] 7-Zip no disponible: no se puede extraer mpv_temp.7z.'; exit 2 }; " ^
+          "  & $sevenZip x $dest ('-o' + $dir) '-y' | Out-Null; " ^
+          "  if (Test-Path (Join-Path $dir 'mpv.exe')) { Write-Host '[OK] mpv.exe extraido correctamente.'; exit 0 } else { Write-Host '[!] La extraccion termino sin encontrar mpv.exe.'; exit 3 } " ^
+          "} catch { Write-Host ('[!] No se pudo descargar el build portable: ' + $_.Exception.Message); exit 1 }"
 
-        where mpv >nul 2>nul
         if !errorlevel! equ 0 (
             echo [OK] mpv instalado con exito.
         ) else (
-            if exist "%SCRIPT_DIR%mpv.exe" (
-                echo [OK] mpv.exe configurado en la carpeta local.
+            where winget >nul 2>nul
+            if !errorlevel! equ 0 (
+                echo [!] Fallback: instalando mpv.net con winget...
+                echo     (Esto puede tardar unos segundos, relajate...)
+                winget install mpv.net --accept-package-agreements --accept-source-agreements
+            )
+
+            where mpv >nul 2>nul
+            if !errorlevel! equ 0 (
+                echo [OK] mpv instalado con exito.
             ) else (
-                echo [AVISO] Podras ver todos los resultados, fixtures y alineaciones.
-                echo         Para ver el video en vivo, coloca mpv.exe en esta misma carpeta.
+                if exist "%SCRIPT_DIR%mpv.exe" (
+                    echo [OK] mpv.exe configurado en la carpeta local.
+                ) else (
+                    echo [AVISO] Podras ver todos los resultados, fixtures y alineaciones.
+                    echo         Para ver el video en vivo, instala mpv desde https://mpv.io
+                    echo         o coloca mpv.exe en esta misma carpeta.
+                )
             )
         )
     )

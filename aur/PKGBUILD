@@ -12,9 +12,10 @@ optdepends=(
 )
 provides=('kickoff' 'kickoff-cli' 'kickoff-cli-bin')
 conflicts=('kickoff' 'kickoff-cli' 'kickoff-cli-bin')
-source_x86_64=("$pkgname-$pkgver-x86_64.tar.gz::$url/releases/download/v$pkgver/kickoff_linux_amd64.tar.gz")
-source_aarch64=("$pkgname-$pkgver-aarch64.tar.gz::$url/releases/download/v$pkgver/kickoff_linux_arm64.tar.gz")
-sha256sums_x86_64=('SKIP')
+source_x86_64=("$pkgname-$pkgver-x86_64.tar.gz::$url/releases/download/v$pkgver/kickoff_${pkgver}_linux_amd64.tar.gz")
+source_aarch64=("$pkgname-$pkgver-aarch64.tar.gz::$url/releases/download/v$pkgver/kickoff_${pkgver}_linux_arm64.tar.gz")
+sha256sums_x86_64=('6ca91e3b4c72137818b3f1e13a12728b49f8e4557b5bbc7c9a815c23904e898b')
+# TODO: run 'updpkgsums' after the next release (no Linux aarch64 asset was published for v0.1.2)
 sha256sums_aarch64=('SKIP')
 
 package() {
