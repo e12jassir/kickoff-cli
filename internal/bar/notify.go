@@ -29,23 +29,38 @@ func FormatGoalNotification(match model.Match, homeScore, awayScore string, even
 		away = "Visitante"
 	}
 
-	title := fmt.Sprintf("⚽ ¡GOL! %s %s - %s %s", home, homeScore, awayScore, away)
+	scoreLine := fmt.Sprintf("%s %s - %s %s", home, homeScore, awayScore, away)
 
-	var body string
+	var title string
+	var assistLine string
+
 	if event != nil && event.PlayerName != "" {
 		clock := event.Clock
 		if clock == "" {
 			clock = "LIVE"
 		}
-		detail := ""
+
 		if event.IsPenalty {
-			detail = " (pen.)"
+			title = fmt.Sprintf("¡GOL de %s! (pen. %s)", event.PlayerName, clock)
+			assistLine = "Asistencia: Penal"
 		} else if event.IsOwnGoal {
-			detail = " (a.g.)"
+			title = fmt.Sprintf("¡GOL en propia puerta de %s! (%s)", event.PlayerName, clock)
+			assistLine = "Asistencia: Autogol"
+		} else {
+			title = fmt.Sprintf("¡GOL de %s! (%s)", event.PlayerName, clock)
+			if event.AssistName != "" {
+				assistLine = fmt.Sprintf("Asistencia: %s", event.AssistName)
+			} else {
+				assistLine = "Asistencia: Sin asistencia"
+			}
 		}
-		body = fmt.Sprintf("%s%s (%s)", event.PlayerName, detail, clock)
 	} else {
-		body = fmt.Sprintf("%s vs %s", home, away)
+		title = fmt.Sprintf("¡GOL! %s", scoreLine)
+	}
+
+	body := scoreLine
+	if assistLine != "" {
+		body = fmt.Sprintf("%s\n%s", scoreLine, assistLine)
 	}
 
 	return title, body

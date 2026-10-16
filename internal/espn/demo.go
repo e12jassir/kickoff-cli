@@ -29,7 +29,7 @@ func (d *DemoClient) FetchMatches(ctx context.Context, leagueKey string) ([]mode
 	now := time.Now()
 	homeScore := "2"
 	events := []model.MatchEvent{
-		{Type: "goal", PlayerName: "R. Lewandowski", Clock: "24'", ClockValue: 24 * 60, TeamID: "home-1", IsScoring: true},
+		{Type: "goal", PlayerName: "R. Lewandowski", AssistName: "Pedri", Clock: "24'", ClockValue: 24 * 60, TeamID: "home-1", IsScoring: true},
 		{Type: "card_yellow", PlayerName: "Gavi", Clock: "41'", ClockValue: 41 * 60, TeamID: "home-1", IsYellow: true},
 		{Type: "penalty", PlayerName: "K. Mbappé", Clock: "54'", ClockValue: 54 * 60, TeamID: "away-1", IsScoring: true, IsPenalty: true},
 		{Type: "card_red", PlayerName: "A. Rüdiger", Clock: "63'", ClockValue: 63 * 60, TeamID: "away-1", IsRedCard: true},
@@ -40,6 +40,7 @@ func (d *DemoClient) FetchMatches(ctx context.Context, leagueKey string) ([]mode
 		events = append(events, model.MatchEvent{
 			Type:       "goal",
 			PlayerName: "Lamine Yamal",
+			AssistName: "Raphinha",
 			Clock:      "69'",
 			ClockValue: 69 * 60,
 			TeamID:     "home-1",

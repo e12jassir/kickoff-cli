@@ -562,25 +562,52 @@ func TestFormatGoalNotification(t *testing.T) {
 	m := sampleLiveMatch()
 	ev := &model.MatchEvent{
 		PlayerName: "Vinícius Jr.",
+		AssistName: "Jude Bellingham",
 		Clock:      "72'",
 		IsScoring:  true,
-		IsPenalty:  true,
 	}
 
 	title, body := FormatGoalNotification(m, "2", "1", ev)
-	if !strings.Contains(title, "Real Madrid 2 - 1 Barcelona") {
-		t.Errorf("unexpected notification title: %q", title)
+	if strings.Contains(title, "⚽") {
+		t.Errorf("title should not contain emojis, got: %q", title)
 	}
-	if !strings.Contains(body, "Vinícius Jr.") || !strings.Contains(body, "pen.") || !strings.Contains(body, "72'") {
-		t.Errorf("unexpected notification body: %q", body)
+	if !strings.Contains(title, "Vinícius Jr.") || !strings.Contains(title, "72'") {
+		t.Errorf("title should contain goal scorer and clock, got: %q", title)
+	}
+	if !strings.Contains(body, "Real Madrid 2 - 1 Barcelona") {
+		t.Errorf("body should contain match score, got: %q", body)
+	}
+	if !strings.Contains(body, "Asistencia: Jude Bellingham") {
+		t.Errorf("body should contain assist provider, got: %q", body)
+	}
+
+	// Penalty goal
+	evPen := &model.MatchEvent{
+		PlayerName: "Kylian Mbappé",
+		Clock:      "88'",
+		IsScoring:  true,
+		IsPenalty:  true,
+	}
+	titlePen, bodyPen := FormatGoalNotification(m, "3", "1", evPen)
+	if strings.Contains(titlePen, "⚽") {
+		t.Errorf("penalty title should not contain emojis, got: %q", titlePen)
+	}
+	if !strings.Contains(titlePen, "Kylian Mbappé") || !strings.Contains(titlePen, "pen.") {
+		t.Errorf("penalty title should contain pen. indication, got: %q", titlePen)
+	}
+	if !strings.Contains(bodyPen, "Asistencia: Penal") {
+		t.Errorf("penalty body should indicate penalty, got: %q", bodyPen)
 	}
 
 	// Without event
 	titleNoEv, bodyNoEv := FormatGoalNotification(m, "2", "1", nil)
+	if strings.Contains(titleNoEv, "⚽") {
+		t.Errorf("no-event title should not contain emojis, got: %q", titleNoEv)
+	}
 	if !strings.Contains(titleNoEv, "¡GOL!") {
 		t.Errorf("unexpected title without event: %q", titleNoEv)
 	}
-	if !strings.Contains(bodyNoEv, "Real Madrid vs Barcelona") {
+	if !strings.Contains(bodyNoEv, "Real Madrid 2 - 1 Barcelona") {
 		t.Errorf("unexpected body without event: %q", bodyNoEv)
 	}
 }

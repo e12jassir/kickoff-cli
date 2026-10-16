@@ -790,11 +790,19 @@ func (c *Client) FetchMatches(ctx context.Context, leagueKey string) ([]model.Ma
 			}
 
 			pName := "Jugador"
+			var aName string
 			if len(d.AthletesInvolved) > 0 {
 				if d.AthletesInvolved[0].DisplayName != "" {
 					pName = d.AthletesInvolved[0].DisplayName
 				} else if d.AthletesInvolved[0].ShortName != "" {
 					pName = d.AthletesInvolved[0].ShortName
+				}
+				if len(d.AthletesInvolved) > 1 {
+					if d.AthletesInvolved[1].DisplayName != "" {
+						aName = d.AthletesInvolved[1].DisplayName
+					} else if d.AthletesInvolved[1].ShortName != "" {
+						aName = d.AthletesInvolved[1].ShortName
+					}
 				}
 			}
 
@@ -833,6 +841,7 @@ func (c *Client) FetchMatches(ctx context.Context, leagueKey string) ([]model.Ma
 				ClockValue:  clockSec,
 				TeamID:      teamID,
 				PlayerName:  pName,
+				AssistName:  aName,
 				IsScoring:   d.ScoringPlay,
 				IsPenalty:   d.PenaltyKick,
 				IsOwnGoal:   d.OwnGoal,

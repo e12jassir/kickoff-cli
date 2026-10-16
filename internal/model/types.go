@@ -68,6 +68,7 @@ type MatchEvent struct {
 	ClockValue  float64 `json:"clockValue"`
 	TeamID      string  `json:"teamId"`
 	PlayerName  string  `json:"playerName"`
+	AssistName  string  `json:"assistName,omitempty"`
 	IsScoring   bool    `json:"isScoring"`
 	IsPenalty   bool    `json:"isPenalty"`
 	IsOwnGoal   bool    `json:"isOwnGoal"`
