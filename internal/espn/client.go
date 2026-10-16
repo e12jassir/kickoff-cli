@@ -592,25 +592,10 @@ func (c *Client) FetchMatches(ctx context.Context, leagueKey string) ([]model.Ma
 	now := c.now().In(c.loc)
 	todayStr := now.Format("2006-01-02")
 
-	matches := make([]model.Match, 0, len(raw.Events))
-	for _, ev := range raw.Events {
-		if ev.Date == "" || len(ev.Competitions) == 0 {
-			continue
-		}
-
-		matchTime, err := parseESPNTime(ev.Date)
-		if err != nil {
-			continue
-		}
-
-		localMatchTime := matchTime.In(c.loc)
-		if localMatchTime.Format("2006-01-02") != todayStr {
-			continue
-		}
-
+	parseEvent := func(ev rawEvent, matchTime time.Time, localMatchTime time.Time) (model.Match, bool) {
 		comp := ev.Competitions[0]
 		if len(comp.Competitors) == 0 {
-			continue
+			return model.Match{}, false
 		}
 
 		var homeComp, awayComp model.Competitor
@@ -777,8 +762,37 @@ func (c *Client) FetchMatches(ctx context.Context, leagueKey string) ([]model.Ma
 			Attendance: comp.Attendance,
 			Broadcasts: broadcasts,
 		}
+		return match, true
+	}
 
-		matches = append(matches, match)
+	matches := make([]model.Match, 0, len(raw.Events))
+	allParsedMatches := make([]model.Match, 0, len(raw.Events))
+
+	for _, ev := range raw.Events {
+		if ev.Date == "" || len(ev.Competitions) == 0 {
+			continue
+		}
+
+		matchTime, err := parseESPNTime(ev.Date)
+		if err != nil {
+			continue
+		}
+
+		localMatchTime := matchTime.In(c.loc)
+		m, ok := parseEvent(ev, matchTime, localMatchTime)
+		if !ok {
+			continue
+		}
+		allParsedMatches = append(allParsedMatches, m)
+
+		if localMatchTime.Format("2006-01-02") == todayStr {
+			matches = append(matches, m)
+		}
+	}
+
+	// Fallback: If no matches are scheduled for today, provide the matches from the active/nearest round
+	if len(matches) == 0 && len(allParsedMatches) > 0 {
+		matches = allParsedMatches
 	}
 
 	sort.Slice(matches, func(i, j int) bool {

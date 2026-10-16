@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/e12jassir/kickoff-cli/internal/model"
@@ -27,37 +28,17 @@ func (m Model) View() string {
 
 func renderStartup(m Model) string {
 	logo := AsciiLogoStyle.Render(AsciiLogo)
-	subtitle := SubtitleStyle.Render("Terminal Live Football • Initializing Engine")
+	subtitle := SubtitleStyle.Render("Terminal Live Football • Cargando Competiciones...")
 
-	// Bouncing ball progress bar: 30 chars wide
-	const barWidth = 30
-	ballPos := (m.startupProgress * (barWidth - 1)) / 100
-	if ballPos >= barWidth {
-		ballPos = barWidth - 1
-	}
-
-	var track strings.Builder
-	for i := 0; i < barWidth; i++ {
-		if i == ballPos {
-			if m.noEmoji {
-				track.WriteString("O")
-			} else {
-				track.WriteString("⚽")
-			}
-		} else {
-			track.WriteString("─")
-		}
-	}
-
-	progressText := fmt.Sprintf("[%s] %d%%", track.String(), m.startupProgress)
-	progressStyled := lipgloss.NewStyle().Foreground(ColorHighlight).Bold(true).Render(progressText)
-	hint := FooterHelpStyle.Render("Press any key to skip warmup...")
+	loader := fmt.Sprintf("%s Cargando Kickoff...", m.spinner.View())
+	loaderStyled := lipgloss.NewStyle().Foreground(ColorHighlight).Bold(true).Render(loader)
+	hint := FooterHelpStyle.Render("Presiona cualquier tecla para continuar...")
 
 	content := lipgloss.JoinVertical(lipgloss.Center,
 		logo,
 		subtitle,
 		"",
-		progressStyled,
+		loaderStyled,
 		"",
 		hint,
 	)
@@ -78,40 +59,70 @@ func renderMainMenu(m Model) string {
 	subtitle := SubtitleStyle.Render("Terminal Live Football")
 
 	var lines []string
-	var lastCategory string
-	for i, league := range m.leagues {
-		cat := strings.ToUpper(league.Category)
-		if cat != "" && cat != lastCategory {
-			if len(lines) > 0 {
-				lines = append(lines, "")
-			}
-			lines = append(lines, CategoryHeaderStyle.Render(cat))
-			lastCategory = cat
-		}
 
-		prefix := "   "
-		if i == m.leagueCursor {
-			prefix = " › "
-		}
+	for catIdx, cat := range m.categories {
+		indices := m.categoryIndices[cat]
+		isExpanded := m.expandedCats[cat]
+		isCatSelected := m.categoryMode && (catIdx == m.categoryCursor)
 
-		emoji := league.Emoji
+		// Icon / arrow for accordion category
+		arrow := "▶"
+		if isExpanded {
+			arrow = "▼"
+		}
 		if m.noEmoji {
-			emoji = "-"
-		} else if emoji == "" {
-			emoji = "⚽"
+			if isExpanded {
+				arrow = "[-]"
+			} else {
+				arrow = "[+]"
+			}
 		}
 
-		itemText := fmt.Sprintf("%s%s  %s", prefix, emoji, league.Name)
-		if i == m.leagueCursor {
-			lines = append(lines, MenuItemSelected.Render(itemText))
+		catPrefix := "  "
+		if isCatSelected {
+			catPrefix = "› "
+		}
+
+		catText := fmt.Sprintf("%s%s %s (%d)", catPrefix, arrow, strings.ToUpper(cat), len(indices))
+		if isCatSelected {
+			lines = append(lines, lipgloss.NewStyle().Foreground(ColorHighlight).Bold(true).Render(catText))
 		} else {
-			lines = append(lines, MenuItemNormal.Render(itemText))
+			lines = append(lines, CategoryHeaderStyle.Render(catText))
+		}
+
+		if isExpanded {
+			for _, lIdx := range indices {
+				if lIdx < 0 || lIdx >= len(m.leagues) {
+					continue
+				}
+				league := m.leagues[lIdx]
+				isLeagueSelected := (!m.categoryMode || catIdx == m.categoryCursor) && (lIdx == m.leagueCursor)
+
+				prefix := "     "
+				if isLeagueSelected {
+					prefix = "   › "
+				}
+
+				emoji := league.Emoji
+				if m.noEmoji {
+					emoji = "-"
+				} else if emoji == "" {
+					emoji = "⚽"
+				}
+
+				itemText := fmt.Sprintf("%s%s  %s", prefix, emoji, league.Name)
+				if isLeagueSelected {
+					lines = append(lines, MenuItemSelected.Render(itemText))
+				} else {
+					lines = append(lines, MenuItemNormal.Render(itemText))
+				}
+			}
 		}
 	}
 
 	menuBox := MenuBoxStyle.Render(strings.Join(lines, "\n"))
 
-	footerText := "↑/k  ↓/j: navegar  •  enter: entrar  •  q: salir"
+	footerText := "↑/k ↓/j: navegar  •  enter/space: desplegar/entrar  •  ←/→: plegar/desplegar  •  q: salir"
 	if m.updateAvailable != "" {
 		footerText = fmt.Sprintf("↑/k ↓/j: navegar  •  enter: entrar  •  u: actualizar (%s)  •  q: salir", m.updateAvailable)
 	}
@@ -285,12 +296,26 @@ func renderTabPartidos(m Model, curr model.League) string {
 		if m.noEmoji {
 			emptyPrefix = ""
 		}
-		emptyMsg := fmt.Sprintf("%sNo hay partidos programados hoy para %s.", emptyPrefix, curr.Name)
+		emptyMsg := fmt.Sprintf("%sNo hay partidos disponibles para %s.", emptyPrefix, curr.Name)
 		return MatchBoxStyle.Render(EmptyStateStyle.Render(emptyMsg))
 	}
 
+	todayStr := time.Now().Format("2006-01-02")
+	isTodayMatchday := false
+	for _, match := range m.matches {
+		if match.StartTime.Format("2006-01-02") == todayStr {
+			isTodayMatchday = true
+			break
+		}
+	}
+
+	headerText := fmt.Sprintf("PARTIDOS DE HOY (%d)", len(m.matches))
+	if !isTodayMatchday {
+		headerText = fmt.Sprintf("PARTIDOS DE LA JORNADA / RECIENTES (%d)", len(m.matches))
+	}
+
 	var lines []string
-	lines = append(lines, CategoryHeaderStyle.Render(fmt.Sprintf("PARTIDOS DE HOY (%d)", len(m.matches))))
+	lines = append(lines, CategoryHeaderStyle.Render(headerText))
 	lines = append(lines, "")
 
 	for i, match := range m.matches {
@@ -331,12 +356,16 @@ func renderTabResumen(m Model, curr model.League) string {
 		}
 	}
 
-	lines = append(lines, CategoryHeaderStyle.Render(fmt.Sprintf("RESULTADOS RECIENTES (%d)", len(pastMatches))))
+	lines = append(lines, CategoryHeaderStyle.Render(fmt.Sprintf("RESULTADOS RECIENTES / JORNADA PASADA (%d)", len(pastMatches))))
 	if len(pastMatches) == 0 {
-		lines = append(lines, EmptyStateStyle.Render("No hay partidos finalizados hoy."))
+		lines = append(lines, EmptyStateStyle.Render("No hay partidos finalizados recientemente."))
 	} else {
 		for _, pm := range pastMatches {
-			score := fmt.Sprintf("%s %s - %s %s", pm.HomeTeam.DisplayName, pm.HomeTeam.Score, pm.AwayTeam.Score, pm.AwayTeam.DisplayName)
+			datePrefix := ""
+			if !pm.StartTime.IsZero() {
+				datePrefix = fmt.Sprintf("[%s] ", pm.StartTime.Format("02/01"))
+			}
+			score := fmt.Sprintf("%s%s %s - %s %s", datePrefix, pm.HomeTeam.DisplayName, pm.HomeTeam.Score, pm.AwayTeam.Score, pm.AwayTeam.DisplayName)
 			lines = append(lines, fmt.Sprintf("  • %s  (%s)", ScoreboardTeams.Render(score), StatusPostStyle.Render("FINAL")))
 		}
 	}
@@ -345,11 +374,15 @@ func renderTabResumen(m Model, curr model.League) string {
 	// 3. Next Upcoming Fixtures
 	lines = append(lines, CategoryHeaderStyle.Render(fmt.Sprintf("PRÓXIMOS ENCUENTROS (%d)", len(upcomingMatches))))
 	if len(upcomingMatches) == 0 {
-		lines = append(lines, EmptyStateStyle.Render("No hay partidos pendientes hoy."))
+		lines = append(lines, EmptyStateStyle.Render("No hay próximos partidos programados."))
 	} else {
 		for _, um := range upcomingMatches {
+			datePrefix := ""
+			if !um.StartTime.IsZero() {
+				datePrefix = fmt.Sprintf("%s ", um.StartTime.Format("02/01"))
+			}
 			fixture := fmt.Sprintf("%s vs %s", um.HomeTeam.DisplayName, um.AwayTeam.DisplayName)
-			lines = append(lines, fmt.Sprintf("  • %s  %s  (%s)", MatchTimeStyle.Render(um.TimeStr), TeamNameStyle.Render(fixture), VenueStyle.Render(um.Venue)))
+			lines = append(lines, fmt.Sprintf("  • %s  %s  (%s)", MatchTimeStyle.Render(datePrefix+um.TimeStr), TeamNameStyle.Render(fixture), VenueStyle.Render(um.Venue)))
 		}
 	}
 

@@ -102,39 +102,40 @@ func TestModel_MainMenu_Navigation(t *testing.T) {
 
 	m := NewModel(cli, cat, pla)
 
+	// Initial state is StateMainMenu with first category expanded
 	if m.state != StateMainMenu {
 		t.Fatalf("expected initial state StateMainMenu, got %d", m.state)
 	}
-	if m.leagueCursor != 0 {
-		t.Fatalf("expected initial leagueCursor 0, got %d", m.leagueCursor)
+	if !m.expandedCats[m.categories[0]] {
+		t.Fatalf("expected first category to be expanded initially")
 	}
 
-	// Move down with 'j'
+	// Move down with 'j': moves from category header into the first league of expanded category
 	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
 	m = newM.(Model)
-	if m.leagueCursor != 1 {
-		t.Errorf("expected leagueCursor 1 after 'j', got %d", m.leagueCursor)
+	if m.leagueCursor != 0 || m.categoryMode {
+		t.Errorf("expected leagueCursor 0 and categoryMode false after first 'j', got %d (mode %v)", m.leagueCursor, m.categoryMode)
 	}
 
-	// Move up with 'k'
+	// Next 'j': moves to next league in category
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	m = newM.(Model)
+	if m.leagueCursor != 1 {
+		t.Errorf("expected leagueCursor 1 after second 'j', got %d", m.leagueCursor)
+	}
+
+	// Move up with 'k': back to first league
 	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
 	m = newM.(Model)
 	if m.leagueCursor != 0 {
 		t.Errorf("expected leagueCursor 0 after 'k', got %d", m.leagueCursor)
 	}
 
-	// Wrap around up from 0 to last
-	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	// Next 'k': back to category header
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
 	m = newM.(Model)
-	if m.leagueCursor != len(m.leagues)-1 {
-		t.Errorf("expected leagueCursor %d after wrap-up, got %d", len(m.leagues)-1, m.leagueCursor)
-	}
-
-	// Wrap around down from last to 0
-	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
-	m = newM.(Model)
-	if m.leagueCursor != 0 {
-		t.Errorf("expected leagueCursor 0 after wrap-down, got %d", m.leagueCursor)
+	if !m.categoryMode {
+		t.Errorf("expected categoryMode true after moving up to header")
 	}
 
 	// Check View rendering in StateMainMenu
@@ -456,7 +457,7 @@ func TestModel_EmptyMatches_And_Error(t *testing.T) {
 	m = newM.(Model)
 
 	viewStr := m.View()
-	if !strings.Contains(viewStr, "No hay partidos programados") {
+	if !strings.Contains(viewStr, "No hay partidos disponibles") {
 		t.Errorf("expected empty state message, got:\n%s", viewStr)
 	}
 
@@ -1189,8 +1190,8 @@ func TestModel_LeagueTabs_NavigationAndRendering(t *testing.T) {
 	// Verify Tab 2 (Partidos) is default when browsing
 	m.leagueTab = TabPartidos
 	viewPartidos := m.View()
-	if !strings.Contains(viewPartidos, "PARTIDOS DE HOY") {
-		t.Errorf("expected 'PARTIDOS DE HOY' in TabPartidos view")
+	if !strings.Contains(viewPartidos, "PARTIDOS DE HOY") && !strings.Contains(viewPartidos, "PARTIDOS DE LA JORNADA") {
+		t.Errorf("expected 'PARTIDOS DE HOY' or 'PARTIDOS DE LA JORNADA' in TabPartidos view, got:\n%s", viewPartidos)
 	}
 
 	// Press '1' -> Tab 1 (Resumen)
@@ -1261,8 +1262,8 @@ func TestModel_StartupWarmup_Animation(t *testing.T) {
 
 	// Verify renderStartup contains ANSI logo and initializing message
 	startupView := m.View()
-	if !strings.Contains(startupView, "Initializing Engine") {
-		t.Errorf("expected 'Initializing Engine' in startup view, got:\n%s", startupView)
+	if !strings.Contains(startupView, "Cargando Kickoff...") {
+		t.Errorf("expected 'Cargando Kickoff...' in startup view, got:\n%s", startupView)
 	}
 
 	// Advance progress through ticks

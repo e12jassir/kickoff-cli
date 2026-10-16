@@ -460,15 +460,116 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						})
 					}
 				}
+			case "left", "h":
+				if len(m.categories) > 0 {
+					currCat := m.categories[m.categoryCursor]
+					if m.expandedCats[currCat] {
+						m.expandedCats[currCat] = false
+					}
+					m.categoryMode = true
+				}
+			case "right", "l":
+				if len(m.categories) > 0 {
+					currCat := m.categories[m.categoryCursor]
+					if !m.expandedCats[currCat] {
+						m.expandedCats[currCat] = true
+					}
+					m.categoryMode = false
+					if indices := m.categoryIndices[currCat]; len(indices) > 0 {
+						m.leagueCursor = indices[0]
+					}
+				}
 			case "up", "k":
-				if len(m.leagues) > 0 {
-					m.leagueCursor = (m.leagueCursor - 1 + len(m.leagues)) % len(m.leagues)
+				if len(m.categories) > 0 {
+					currCat := m.categories[m.categoryCursor]
+					indices := m.categoryIndices[currCat]
+					if !m.categoryMode && m.expandedCats[currCat] && len(indices) > 0 {
+						// Inside expanded category: check current league position
+						pos := -1
+						for idx, lIdx := range indices {
+							if lIdx == m.leagueCursor {
+								pos = idx
+								break
+							}
+						}
+						if pos > 0 {
+							m.leagueCursor = indices[pos-1]
+						} else {
+							// Return to category header
+							m.categoryMode = true
+						}
+					} else {
+						// Moving between categories
+						m.categoryMode = true
+						m.categoryCursor = (m.categoryCursor - 1 + len(m.categories)) % len(m.categories)
+						prevCat := m.categories[m.categoryCursor]
+						if m.expandedCats[prevCat] && len(m.categoryIndices[prevCat]) > 0 {
+							m.leagueCursor = m.categoryIndices[prevCat][0]
+						}
+					}
 				}
 			case "down", "j":
-				if len(m.leagues) > 0 {
-					m.leagueCursor = (m.leagueCursor + 1) % len(m.leagues)
+				if len(m.categories) > 0 {
+					currCat := m.categories[m.categoryCursor]
+					indices := m.categoryIndices[currCat]
+					if m.categoryMode {
+						if m.expandedCats[currCat] && len(indices) > 0 {
+							// Enter expanded category first item
+							m.categoryMode = false
+							m.leagueCursor = indices[0]
+						} else {
+							// Move to next category
+							m.categoryCursor = (m.categoryCursor + 1) % len(m.categories)
+							nextCat := m.categories[m.categoryCursor]
+							if m.expandedCats[nextCat] && len(m.categoryIndices[nextCat]) > 0 {
+								m.leagueCursor = m.categoryIndices[nextCat][0]
+							}
+						}
+					} else {
+						// Already inside expanded category leagues
+						pos := -1
+						for idx, lIdx := range indices {
+							if lIdx == m.leagueCursor {
+								pos = idx
+								break
+							}
+						}
+						if pos >= 0 && pos < len(indices)-1 {
+							m.leagueCursor = indices[pos+1]
+						} else {
+							// At last league in category, move to next category header
+							m.categoryMode = true
+							m.categoryCursor = (m.categoryCursor + 1) % len(m.categories)
+							nextCat := m.categories[m.categoryCursor]
+							if m.expandedCats[nextCat] && len(m.categoryIndices[nextCat]) > 0 {
+								m.leagueCursor = m.categoryIndices[nextCat][0]
+							}
+						}
+					}
+				}
+			case "space":
+				if len(m.categories) > 0 {
+					currCat := m.categories[m.categoryCursor]
+					m.expandedCats[currCat] = !m.expandedCats[currCat]
+					if m.expandedCats[currCat] && len(m.categoryIndices[currCat]) > 0 {
+						m.leagueCursor = m.categoryIndices[currCat][0]
+					}
 				}
 			case "enter":
+				if len(m.categories) > 0 {
+					currCat := m.categories[m.categoryCursor]
+					indices := m.categoryIndices[currCat]
+					// If on category header and it's collapsed, expand it!
+					if m.categoryMode && !m.expandedCats[currCat] {
+						m.expandedCats[currCat] = true
+						m.categoryMode = false
+						if len(indices) > 0 {
+							m.leagueCursor = indices[0]
+						}
+						return m, nil
+					}
+				}
+
 				if len(m.leagues) > 0 {
 					m.activeTab = m.leagueCursor
 					m.leagueTab = TabPartidos

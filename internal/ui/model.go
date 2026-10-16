@@ -43,6 +43,13 @@ type Model struct {
 	activeTab    int
 	leagueTab    LeagueTab // 0: Resumen, 1: Partidos, 2: Posiciones, 3: Goleadores
 
+	// Accordion menu state
+	categories      []string
+	categoryCursor  int
+	categoryMode    bool            // true: cursor moves between categories; false: cursor moves between leagues of expanded category
+	categoryIndices map[string][]int // category name -> indices into m.leagues
+	expandedCats    map[string]bool // category name -> whether it is expanded
+
 	matches     []model.Match
 	matchCursor int
 
@@ -90,6 +97,26 @@ func NewModel(client model.Client, catalog model.Resolver, player model.Controll
 	sp.Spinner = spinner.Dot
 	sp.Style = AppTitleStyle
 
+	var categories []string
+	categoryIndices := make(map[string][]int)
+	seenCat := make(map[string]bool)
+	for i, l := range leagues {
+		cat := l.Category
+		if cat == "" {
+			cat = "Otras Competiciones"
+		}
+		if !seenCat[cat] {
+			seenCat[cat] = true
+			categories = append(categories, cat)
+		}
+		categoryIndices[cat] = append(categoryIndices[cat], i)
+	}
+
+	expandedCats := make(map[string]bool)
+	if len(categories) > 0 {
+		expandedCats[categories[0]] = true // First category expanded by default
+	}
+
 	return Model{
 		client:          client,
 		catalog:         catalog,
@@ -97,6 +124,11 @@ func NewModel(client model.Client, catalog model.Resolver, player model.Controll
 		state:           StateMainMenu,
 		leagues:         leagues,
 		leagueCursor:    0,
+		categories:      categories,
+		categoryCursor:  0,
+		categoryMode:    true,
+		categoryIndices: categoryIndices,
+		expandedCats:    expandedCats,
 		activeTab:       0,
 		leagueTab:       TabPartidos,
 		matches:         nil,
