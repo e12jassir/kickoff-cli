@@ -116,9 +116,7 @@ func NewModel(client model.Client, catalog model.Resolver, player model.Controll
 	}
 
 	expandedCats := make(map[string]bool)
-	if len(categories) > 0 {
-		expandedCats[categories[0]] = true // First category expanded by default
-	}
+	// All categories start collapsed by default for a clean minimal layout
 
 	return Model{
 		client:          client,

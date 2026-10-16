@@ -526,7 +526,19 @@ func (c *Catalog) resolveFromOfficialBroadcasts(broadcasts []string) []model.Cha
 func hasUSBroadcast(broadcasts []string) bool {
 	for _, b := range broadcasts {
 		bl := strings.ToLower(strings.TrimSpace(b))
-		if strings.Contains(bl, "cbssn") || strings.Contains(bl, "cbs sports") || strings.Contains(bl, "paramount") || strings.Contains(bl, "golazo") {
+		if strings.Contains(bl, "cbssn") ||
+			strings.Contains(bl, "cbs sports") ||
+			strings.Contains(bl, "paramount") ||
+			strings.Contains(bl, "golazo") ||
+			strings.Contains(bl, "peacock") ||
+			strings.Contains(bl, "usa net") ||
+			strings.Contains(bl, "nbc") ||
+			strings.Contains(bl, "universo") ||
+			strings.Contains(bl, "telemundo") ||
+			strings.Contains(bl, "espn+") ||
+			strings.Contains(bl, "vix") ||
+			strings.Contains(bl, "fubo") ||
+			strings.Contains(bl, "tudn") {
 			return true
 		}
 	}
@@ -704,7 +716,7 @@ func (c *Catalog) GetChannels(match model.Match) []model.Channel {
 		if len(candidates) > 0 {
 			return c.filterAndDeduplicate(candidates)
 		}
-		// If an event specifically has US metadata (cbssn/paramount/golazo) without a configured US stream,
+		// If an event specifically has US metadata (cbssn/paramount/golazo/peacock/etc) without a configured US stream,
 		// fall through gracefully to the verified ESPN channel if user has configured it.
 		if !hasUSBroadcast(match.Broadcasts) {
 			return nil

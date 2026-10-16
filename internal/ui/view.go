@@ -65,16 +65,16 @@ func renderMainMenu(m Model) string {
 		isExpanded := m.expandedCats[cat]
 		isCatSelected := m.categoryMode && (catIdx == m.categoryCursor)
 
-		// Icon / arrow for accordion category
-		arrow := "▶"
+		// Minimal aesthetic indicator for accordion category
+		dot := "○"
 		if isExpanded {
-			arrow = "▼"
+			dot = "●"
 		}
 		if m.noEmoji {
 			if isExpanded {
-				arrow = "[-]"
+				dot = "[-]"
 			} else {
-				arrow = "[+]"
+				dot = "[+]"
 			}
 		}
 
@@ -83,7 +83,7 @@ func renderMainMenu(m Model) string {
 			catPrefix = "› "
 		}
 
-		catText := fmt.Sprintf("%s%s %s (%d)", catPrefix, arrow, strings.ToUpper(cat), len(indices))
+		catText := fmt.Sprintf("%s%s %s (%d)", catPrefix, dot, strings.ToUpper(cat), len(indices))
 		if isCatSelected {
 			lines = append(lines, lipgloss.NewStyle().Foreground(ColorHighlight).Bold(true).Render(catText))
 		} else {

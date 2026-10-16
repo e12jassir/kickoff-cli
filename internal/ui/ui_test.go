@@ -103,16 +103,23 @@ func TestModel_MainMenu_Navigation(t *testing.T) {
 
 	m := NewModel(cli, cat, pla)
 
-	// Initial state is StateMainMenu with first category expanded
+	// Initial state is StateMainMenu with categories collapsed
 	if m.state != StateMainMenu {
 		t.Fatalf("expected initial state StateMainMenu, got %d", m.state)
 	}
+	if m.expandedCats[m.categories[0]] {
+		t.Fatalf("expected first category to be collapsed initially")
+	}
+
+	// Press Enter on category header to expand it
+	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newM.(Model)
 	if !m.expandedCats[m.categories[0]] {
-		t.Fatalf("expected first category to be expanded initially")
+		t.Fatalf("expected first category to be expanded after Enter")
 	}
 
 	// Move down with 'j': moves from category header into the first league of expanded category
-	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
 	m = newM.(Model)
 	if m.leagueCursor != 0 || m.categoryMode {
 		t.Errorf("expected leagueCursor 0 and categoryMode false after first 'j', got %d (mode %v)", m.leagueCursor, m.categoryMode)
@@ -165,7 +172,15 @@ func TestModel_Enter_Transition_To_Matches(t *testing.T) {
 
 	m := NewModel(cli, cat, pla)
 
-	// Press Enter on main menu (index 0: UEFA Champions League)
+	// Expand first category
+	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newM.(Model)
+
+	// Move down into first league (UEFA Champions League)
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	m = newM.(Model)
+
+	// Press Enter to select UEFA Champions League and transition to loading
 	newM, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = newM.(Model)
 
@@ -1043,12 +1058,14 @@ func TestModel_NoEmoji(t *testing.T) {
 	p := &mockPlayer{}
 
 	mDefault := NewModel(client, cat, p)
+	mDefault.expandedCats[mDefault.categories[0]] = true
 	viewDefault := mDefault.View()
 	if !strings.Contains(viewDefault, "🏆") && !strings.Contains(viewDefault, "⚽") {
-		t.Errorf("expected emojis in default view")
+		t.Errorf("expected emojis in default view with expanded category")
 	}
 
 	mNoEmoji := NewModel(client, cat, p).WithNoEmoji(true)
+	mNoEmoji.expandedCats[mNoEmoji.categories[0]] = true
 	viewNoEmoji := mNoEmoji.View()
 	if strings.Contains(viewNoEmoji, "🏆") {
 		t.Errorf("did not expect trophy emoji in no-emoji view:\n%s", viewNoEmoji)
