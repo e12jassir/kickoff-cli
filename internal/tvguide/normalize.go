@@ -16,8 +16,15 @@ import (
 
 var (
 	reNonAlphaNum = regexp.MustCompile(`[^\p{L}\p{N}]+`)
-	reTokensFC    = regexp.MustCompile(`\b(fc|cf|f\.c\.|c\.f\.)\b`)
-	reWhitespace  = regexp.MustCompile(`\s+`)
+	// reTokensFC matches the club acronyms FC / CF in every form the sources
+	// publish them: compact ("fc", "cf"; "F.C." lands here once the dots are
+	// stripped) and spaced ("F. C." -> "f c", "f-c" -> "f c"). The `\s*` between
+	// the two letters is what lets the spaced form collapse to nothing. Without
+	// it the spaced spelling left dangling "f"/"c" tokens that poisoned the
+	// comparison, e.g. "F. C. Augsburgo" normalized to "f c augsburgo" and never
+	// matched the parrilla's "Augsburg".
+	reTokensFC   = regexp.MustCompile(`\b(fc|cf|f\s*c|c\s*f)\b`)
+	reWhitespace = regexp.MustCompile(`\s+`)
 )
 
 // accentTransformerPool hands out transformers that strip diacritical marks
@@ -53,19 +60,22 @@ func RemoveAccents(s string) string {
 // 1. Unescapes HTML entities (&amp;, etc.)
 // 2. Removes diacritical accents
 // 3. Converts to lowercase
-// 4. Strips dots
-// 5. Strips "FC", "CF" acronyms
-// 6. Replaces non-alphanumeric punctuation with space and collapses whitespace
+// 4. Strips dots (so "C.F." becomes "cf" and "S.K." becomes "sk")
+// 5. Replaces remaining non-alphanumeric punctuation with space
+// 6. Strips the FC / CF club acronyms in compact ("fc") and spaced ("f c") form
+// 7. Collapses whitespace
 func Normalize(s string) string {
 	s = html.UnescapeString(s)
 	s = RemoveAccents(s)
 	s = strings.ToLower(s)
 	// Strip dots directly so C.F. becomes cf, S.K. becomes sk
 	s = strings.ReplaceAll(s, ".", "")
-	// Strip FC / CF acronyms
-	s = reTokensFC.ReplaceAllString(s, " ")
-	// Replace remaining non-alphanumeric chars with space
+	// Fold remaining punctuation to spaces BEFORE the FC/CF strip, so a
+	// punctuation-separated acronym ("f-c") reaches reTokensFC in the same
+	// spaced form as "F. C.".
 	s = reNonAlphaNum.ReplaceAllString(s, " ")
+	// Strip FC / CF acronyms (compact fc/cf and spaced f c / c f)
+	s = reTokensFC.ReplaceAllString(s, " ")
 	return strings.TrimSpace(reWhitespace.ReplaceAllString(s, " "))
 }
 
@@ -370,6 +380,10 @@ var clubAliases = map[string]string{
 	"belgrano":                  "belgrano",
 	"independiente rivadavia":   "independiente-rivadavia",
 	"aldosivi":                  "aldosivi",
+	// Deportivo Riestra (Liga Profesional) and the short "Newell's" form.
+	"deportivo riestra": "deportivo-riestra",
+	"riestra":           "deportivo-riestra",
+	"newell s":          "newells-old-boys",
 
 	// --- Mexico: Liga MX ---
 	"club america":       "america-mex",
@@ -570,6 +584,16 @@ var clubAliases = map[string]string{
 	"cremonese":      "cremonese",
 	"venezia":        "venezia",
 
+	// Spanish exonyms the ESPN es feed publishes instead of the local Italian
+	// names (e.g. "Bolonia" vs "Bologna"). Both spellings must land on one id.
+	"bolonia":   "bologna",
+	"genova":    "genoa",
+	"turin":     "torino",
+	"napoles":   "napoli",
+	"venecia":   "venezia",
+	"florencia": "fiorentina",
+	"milano":    "ac-milan",
+
 	// --- Germany: Bundesliga ---
 	"bayern munich":            "bayern-munchen",
 	"bayern munchen":           "bayern-munchen",
@@ -608,6 +632,25 @@ var clubAliases = map[string]string{
 	"koln":                     "koln",
 	"cologne":                  "koln",
 
+	// German club spellings and prefix variants that must collapse onto the
+	// same id: the parrilla writes "Hamburger SV"/"Stuttgart" while ESPN es
+	// writes "Hamburg SV"/"VfB Stuttgart"/"F. C. Augsburgo", and the local
+	// Spanish exonyms ("Augsburgo", "Wolfsburgo", "Colonia", "Friburgo",
+	// "Fráncfort") must bridge too.
+	"hamburg sv":          "hamburger-sv",
+	"hamburg":             "hamburger-sv",
+	"sv elversberg":       "elversberg",
+	"elversberg":          "elversberg",
+	"vfl wolfsburg":       "wolfsburg",
+	"vfl bochum":          "bochum",
+	"augsburgo":           "augsburg",
+	"wolfsburgo":          "wolfsburg",
+	"colonia":             "koln",
+	"friburgo":            "freiburg",
+	"francfort":           "eintracht-frankfurt",
+	"eintracht francfort": "eintracht-frankfurt",
+	"bremen":              "werder-bremen",
+
 	// --- France: Ligue 1 ---
 	"paris saint germain": "paris-saint-germain",
 	"paris sg":            "paris-saint-germain",
@@ -636,6 +679,14 @@ var clubAliases = map[string]string{
 	"metz":                "metz",
 	"lorient":             "lorient",
 	"saint etienne":       "saint-etienne",
+
+	// Spanish exonyms the ESPN es feed publishes instead of the local French
+	// names, plus the parrilla's full "Stade Brestois" for ESPN's short "Brest".
+	"estrasburgo":    "strasbourg",
+	"tolosa":         "toulouse",
+	"niza":           "nice",
+	"marsella":       "olympique-marseille",
+	"stade brestois": "brest",
 
 	// --- Netherlands: Eredivisie ---
 	"ajax":                "ajax",
@@ -685,6 +736,8 @@ var clubAliases = map[string]string{
 	"farense":            "farense",
 	"tondela":            "tondela",
 	"avs":                "avs",
+	// Spanish exonym for FC Porto ("Oporto").
+	"oporto": "fc-porto",
 
 	// --- Turkey: Süper Lig ---
 	"galatasaray":         "galatasaray",
@@ -694,6 +747,8 @@ var clubAliases = map[string]string{
 	"trabzonspor":         "trabzonspor",
 	"basaksehir":          "basaksehir",
 	"istanbul basaksehir": "basaksehir",
+	// Spanish exonym for the Istanbul clubs' city prefix.
+	"estambul basaksehir": "basaksehir",
 	"samsunspor":          "samsunspor",
 	"konyaspor":           "konyaspor",
 	"kayserispor":         "kayserispor",

@@ -163,6 +163,32 @@ func TestNormalizeAndAccents(t *testing.T) {
 	}
 }
 
+// TestNormalize_ClubAcronymVariants guards the FC/CF strip against every
+// published spelling. The spaced form ("F. C.") used to survive as dangling
+// "f"/"c" tokens and corrupt the comparison; "S.K." must still collapse to
+// "sk" because dot removal merges those letters and it is not an FC/CF variant.
+func TestNormalize_ClubAcronymVariants(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"F. C. Augsburgo", "augsburgo"},
+		{"F.C. Augsburgo", "augsburgo"},
+		{"FC Augsburg", "augsburg"},
+		{"C. F. Monterrey", "monterrey"},
+		{"C.F. Monterrey", "monterrey"},
+		{"F. C. Barcelona", "barcelona"},
+		{"Fenerbahçe S.K.", "fenerbahce sk"},
+		{"Real Madrid C.F.", "real madrid"},
+	}
+
+	for _, tt := range tests {
+		if got := Normalize(tt.input); got != tt.expected {
+			t.Errorf("Normalize(%q) = %q, expected %q", tt.input, got, tt.expected)
+		}
+	}
+}
+
 func TestMatchScore(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -836,6 +862,131 @@ func TestMatchScore_CanonicalClubIdentity(t *testing.T) {
 			matched, score := MatchScore(tt.guideTitle, tt.match)
 			if matched != tt.shouldMatch {
 				t.Fatalf("MatchScore(%q) matched=%v (score %d), want matched=%v", tt.guideTitle, matched, score, tt.shouldMatch)
+			}
+		})
+	}
+}
+
+// TestMatchScore_SpanishExonymsAndNameBridges pins the fix for the five live
+// misses of the 2026-10-17 Gol Caracol parrilla vs ESPN es run. All five were
+// NAME-BRIDGING GAPS (the parrilla lists the fixture under a different
+// spelling), one of them compounded by the spaced "F. C." tokenisation bug.
+// The collision guards and the "legitimate absence stays unmatched" rule are
+// asserted in the same table so a future alias cannot silently reopen them.
+func TestMatchScore_SpanishExonymsAndNameBridges(t *testing.T) {
+	tests := []struct {
+		name        string
+		guideTitle  string
+		match       model.Match
+		shouldMatch bool
+	}{
+		// --- the five live misses, all gaps ---
+		{
+			name:        "Bolonia (ES) bridges to parrilla Bologna",
+			guideTitle:  "Bologna vs. Inter de Milán",
+			match:       model.Match{HomeTeam: model.Competitor{DisplayName: "Bolonia"}, AwayTeam: model.Competitor{DisplayName: "Internazionale"}},
+			shouldMatch: true,
+		},
+		{
+			name:        "Génova (ES) bridges to parrilla Genoa",
+			guideTitle:  "AS Roma vs. Genoa",
+			match:       model.Match{HomeTeam: model.Competitor{DisplayName: "AS Roma"}, AwayTeam: model.Competitor{DisplayName: "Génova"}},
+			shouldMatch: true,
+		},
+		{
+			name:        "Hamburg SV bridges to parrilla Hamburger SV",
+			guideTitle:  "Hamburger SV vs. Stuttgart",
+			match:       model.Match{HomeTeam: model.Competitor{DisplayName: "Hamburg SV"}, AwayTeam: model.Competitor{DisplayName: "VfB Stuttgart"}},
+			shouldMatch: true,
+		},
+		{
+			name:        "F. C. Augsburgo (spaced acronym + exonym) bridges to Augsburg",
+			guideTitle:  "SV Elversberg vs. Augsburg",
+			match:       model.Match{HomeTeam: model.Competitor{DisplayName: "SV Elversberg"}, AwayTeam: model.Competitor{DisplayName: "F. C. Augsburgo"}},
+			shouldMatch: true,
+		},
+		{
+			name:        "Brest bridges to parrilla full Stade Brestois",
+			guideTitle:  "Lille vs. Stade Brestois",
+			match:       model.Match{HomeTeam: model.Competitor{DisplayName: "Lille"}, AwayTeam: model.Competitor{DisplayName: "Brest"}},
+			shouldMatch: true,
+		},
+
+		// --- idiomatic exonyms across the supported leagues ---
+		{
+			name:        "Wolfsburgo bridges to Wolfsburg",
+			guideTitle:  "Wolfsburg vs Hoffenheim",
+			match:       model.Match{HomeTeam: model.Competitor{DisplayName: "Wolfsburgo"}, AwayTeam: model.Competitor{DisplayName: "Hoffenheim"}},
+			shouldMatch: true,
+		},
+		{
+			name:        "Nápoles bridges to Napoli",
+			guideTitle:  "Napoli vs Lazio",
+			match:       model.Match{HomeTeam: model.Competitor{DisplayName: "Nápoles"}, AwayTeam: model.Competitor{DisplayName: "Lazio"}},
+			shouldMatch: true,
+		},
+		{
+			name:        "Marsella bridges to Marseille",
+			guideTitle:  "Marseille vs Lyon",
+			match:       model.Match{HomeTeam: model.Competitor{DisplayName: "Marsella"}, AwayTeam: model.Competitor{DisplayName: "Lyon"}},
+			shouldMatch: true,
+		},
+		{
+			name:        "Estrasburgo bridges to Strasbourg",
+			guideTitle:  "Strasbourg vs Nantes",
+			match:       model.Match{HomeTeam: model.Competitor{DisplayName: "Estrasburgo"}, AwayTeam: model.Competitor{DisplayName: "Nantes"}},
+			shouldMatch: true,
+		},
+		{
+			name:        "Colonia bridges to Köln",
+			guideTitle:  "Köln vs Mainz 05",
+			match:       model.Match{HomeTeam: model.Competitor{DisplayName: "Colonia"}, AwayTeam: model.Competitor{DisplayName: "Mainz"}},
+			shouldMatch: true,
+		},
+
+		// --- collision guards that must STILL decline ---
+		{
+			name:        "Milano (AC Milan) must not match an Inter Milan fixture",
+			guideTitle:  "Inter Milan vs Napoli",
+			match:       model.Match{HomeTeam: model.Competitor{DisplayName: "Milano"}, AwayTeam: model.Competitor{DisplayName: "Napoli"}},
+			shouldMatch: false,
+		},
+		{
+			name:        "Stade Brestois must not match a Stade Rennais fixture",
+			guideTitle:  "Stade Rennais vs Nice",
+			match:       model.Match{HomeTeam: model.Competitor{DisplayName: "Stade Brestois"}, AwayTeam: model.Competitor{DisplayName: "Nice"}},
+			shouldMatch: false,
+		},
+		{
+			name:        "Augsburg must not match when its opponent is not listed",
+			guideTitle:  "Augsburg vs Hoffenheim",
+			match:       model.Match{HomeTeam: model.Competitor{DisplayName: "SV Elversberg"}, AwayTeam: model.Competitor{DisplayName: "F. C. Augsburgo"}},
+			shouldMatch: false,
+		},
+
+		// --- legitimate absences must remain unmatched ---
+		{
+			name:        "a fixture with no parrilla entry stays unmatched",
+			guideTitle:  "Lille vs. Stade Brestois",
+			match:       model.Match{HomeTeam: model.Competitor{DisplayName: "Lille"}, AwayTeam: model.Competitor{DisplayName: "Monaco"}},
+			shouldMatch: false,
+		},
+		{
+			name:        "a single shared team is never enough",
+			guideTitle:  "Bologna vs. Inter de Milán",
+			match:       model.Match{HomeTeam: model.Competitor{DisplayName: "Bologna"}, AwayTeam: model.Competitor{DisplayName: "Lille"}},
+			shouldMatch: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			matched, score := MatchScore(tt.guideTitle, tt.match)
+			if matched != tt.shouldMatch {
+				t.Fatalf("MatchScore(%q) matched=%v (score %d), want matched=%v", tt.guideTitle, matched, score, tt.shouldMatch)
+			}
+			if matched && score < minMatchScore {
+				t.Errorf("accepted candidate scored %d, below minMatchScore %d", score, minMatchScore)
 			}
 		})
 	}
