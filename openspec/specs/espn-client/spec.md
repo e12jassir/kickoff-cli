@@ -7,7 +7,7 @@ per-match broadcast metadata for the channel catalog.
 ## Requirements
 
 ### Requirement: Fixture Retrieval and Defensive Parsing
-The client MUST query ESPN scoreboard endpoints with `lang=en` and MUST NOT send
+The client MUST query ESPN scoreboard endpoints with `lang=es` and MUST NOT send
 a `region` parameter: the `region` combined with `lang=es` returns empty
 `broadcasts` and `geoBroadcasts`, which disables the evidence chain. The client
 MUST cache responses (30 seconds by default, 5 seconds while a match is live,
@@ -16,7 +16,7 @@ and 6 hours for past fixtures) and parse events into Match models.
 #### Scenario: Scoreboard retrieval and caching (Happy Path)
 - **GIVEN** an expired or missing cache for a league
 - **WHEN** FetchMatches is called
-- **THEN** the client MUST query ESPN with `lang=en` and no `region`, filter by today's date, and update the cache.
+- **THEN** the client MUST query ESPN with `lang=es` and no `region`, filter by today's date, and update the cache.
 
 #### Scenario: Broadcast metadata preservation (Happy Path)
 - **GIVEN** an ESPN scoreboard response that populates `broadcasts` and `geoBroadcasts`
