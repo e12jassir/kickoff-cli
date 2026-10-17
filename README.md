@@ -144,6 +144,41 @@ kickoff bar --watch --notify
 
 <br/>
 
+## 📺 Channels & playback sources
+
+kickoff resolves which channel airs each match and hands the stream URL to your
+local `mpv`. Resolution uses verified evidence only: when no source can be
+confirmed, the match shows no channels instead of a guess.
+
+Playback is Bring Your Own Streams (BYOS). Map each canonical channel key to
+your own IPTV/HLS URL in `~/.config/kickoff/channels.json`:
+
+```json
+{
+  "streams": {
+    "espn1": "http://your-provider.example/live/espn1.m3u8",
+    "dsports": "http://your-provider.example/live/dsports.m3u8",
+    "win_sports_mas": "http://your-provider.example/live/win_sports_mas.m3u8",
+    "gol_caracol": "http://your-provider.example/live/gol_caracol.m3u8"
+  }
+}
+```
+
+Recognized keys: `espn1`–`espn7`, `dsports`, `dsports2`, `dsports4`,
+`dsports_plus`, `win`, `win_plus`, `win_sports_mas`, `gol_caracol`, `caracol`,
+`caracol_hd2`, `rcn`, `rcn_hd2`, `claro_sports`, `tyc`, `realmadrid`,
+`teledeporte`. The retired Fox Sports keys (`fox1`, `fox2`, `fox3`) and
+`espn_extra` are no longer recognized.
+
+> [!IMPORTANT]
+> Streaming platforms — Disney+ Premium, DGO, Amazon Prime Video, Paramount+,
+> DAZN, Apple TV, VIX, Fanatiz and OneFootball — are DRM-protected and are
+> metadata only. kickoff has no DRM/CDM support and never launches them in `mpv`.
+
+See [`docs/configuration.md`](docs/configuration.md) for the full schema.
+
+<br/>
+
 ## 🏆 Competitions
 
 | | |

@@ -92,12 +92,44 @@ cp channels.json.example ~/.config/kickoff/channels.json
 | :--- | :--- | :--- |
 | `playlist_path` | `string` *(optional)* | Local filesystem path to an M3U/M3U8 playlist file (supports `~` expansion). |
 | `playlist_url` | `string` *(optional)* | Remote URL to an M3U/M3U8 playlist. |
-| `streams` | `map[string]string` | Direct channel alias mappings (e.g. `espn1`, `espn2`, `win_plus`, `caracol`). |
+| `streams` | `map[string]string` | Maps a canonical channel key to your own IPTV/HLS URL. Recognized keys: `espn1`–`espn7`, `dsports`, `dsports2`, `dsports4`, `dsports_plus`, `win`, `win_plus`, `win_sports_mas`, `gol_caracol`, `caracol`, `caracol_hd2`, `rcn`, `rcn_hd2`, `claro_sports`, `tyc`, `realmadrid`, `teledeporte`. The retired keys `fox1`–`fox3` and `espn_extra` are no longer recognized. |
 | `league_channels` | `map[string][]Channel` | Overrides default channel listings for a specific league slug (e.g. `eng.1`, `esp.1`, `uefa.champions`, `col.1`). |
 | `custom_rules` | `[]Rule` | Matches a regular expression against the match title. If matched, these channels are prioritized first. |
 | `name` | `string` | Display label shown in the stream launcher selector. |
 | `url` | `string` | Stream URL (HTTP/HTTPS `.m3u8` playlist). |
 | `bitrate_mode` | `string` *(optional)* | HLS bitrate selection: `"min"`, `"max"`, or a bitrate in bps (e.g. `"4500000"`). Defaults to `"min"`. |
+
+---
+
+## Broadcast Sources and Resolution
+
+kickoff resolves channels from verified evidence only, in this order:
+
+1. Your `custom_rules` and `league_channels` overrides.
+2. ESPN per-match broadcast metadata for the fixture.
+3. The Gol Caracol daily parrilla: the authoritative per-match Colombian channel
+   listing, fetched from a deterministic per-date URL and matched on both teams.
+4. Corroboration from the Colombian TV guide.
+
+A broadcaster named by ESPN that has no configured stream and is not a US-only
+broadcaster ends resolution with no channels. When no source yields a playable
+channel, the match is reported with no channels instead of a guessed one.
+
+The Gol Caracol parrilla covers ESPN 1–7, DSports, DSports 2, DSports 4,
+DSports+, Win Sports and the streaming platforms. It is the only tier that can
+resolve channels absent from both ESPN metadata and the TV guide (for example
+DSports, which the TV guide does not list). Entries still marked "por definir"
+resolve to nothing rather than a guess.
+
+A channel is playable only when its stream URL resolves, so a broadcast whose
+key you have not mapped is never offered. A fixture with no playable channel is
+hidden from the match list; if no stream source is configured at all, kickoff
+shows a configuration notice instead of an empty list.
+
+Streaming platforms (Disney+ Premium, DGO, Amazon Prime Video, Paramount+,
+DAZN, Apple TV, VIX, Fanatiz, OneFootball) are DRM-protected. kickoff has no
+DRM/CDM support and treats them as metadata only: they never receive a play
+action, even when the broadcast metadata names them.
 
 ---
 
