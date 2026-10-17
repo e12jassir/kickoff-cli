@@ -14,9 +14,6 @@ import (
 	"github.com/e12jassir/kickoff-cli/internal/catalog"
 )
 
-const LegalDisclaimer = `Notice: Kickoff does not host, provide, or distribute media streams.
-You are solely responsible for ensuring you have the legal right to access
-and stream content from the configured sources.`
 
 func backupExistingConfig(targetFile string) error {
 	if _, err := os.Stat(targetFile); err != nil {
@@ -76,8 +73,6 @@ func RunConfigImport(source string) error {
 		return fmt.Errorf("source cannot be empty")
 	}
 
-	fmt.Println(LegalDisclaimer)
-	fmt.Println()
 
 	data, err := readSourceContent(source)
 	if err != nil {
