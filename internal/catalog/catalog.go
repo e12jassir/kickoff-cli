@@ -262,6 +262,21 @@ func (c *Catalog) loadExternalConfig() {
 		cfgPath = os.Getenv("KICKOFF_CHANNELS_PATH")
 	}
 	if cfgPath == "" {
+		// Check next to executable (portable installation)
+		if exe, exeErr := os.Executable(); exeErr == nil {
+			exeDirCfg := filepath.Join(filepath.Dir(exe), "channels.json")
+			if _, err := os.Stat(exeDirCfg); err == nil {
+				cfgPath = exeDirCfg
+			}
+		}
+	}
+	if cfgPath == "" {
+		// Check current working directory
+		if _, err := os.Stat("channels.json"); err == nil {
+			cfgPath = "channels.json"
+		}
+	}
+	if cfgPath == "" {
 		configBase, err := os.UserConfigDir()
 		if err != nil || configBase == "" {
 			if home, err := os.UserHomeDir(); err == nil {
@@ -275,24 +290,10 @@ func (c *Catalog) loadExternalConfig() {
 
 	data, err := os.ReadFile(cfgPath)
 	if err != nil {
-		// Fallback: check next to executable (e.g. portable zip or local install)
-		if exe, exeErr := os.Executable(); exeErr == nil {
-			exeDirCfg := filepath.Join(filepath.Dir(exe), "channels.json")
-			if d, e := os.ReadFile(exeDirCfg); e == nil {
-				data = d
-				err = nil
-			}
-		}
-		// Fallback: check current working directory
-		if err != nil {
-			if d, e := os.ReadFile("channels.json"); e == nil {
-				data = d
-				err = nil
-			}
-		}
-		if err != nil {
-			return
-		}
+		c.mu.Lock()
+		c.loadAdjacentPlaylists()
+		c.mu.Unlock()
+		return
 	}
 
 	var ext ExternalConfig
@@ -377,6 +378,28 @@ func (c *Catalog) loadExternalConfig() {
 					}
 				}
 			}
+		}
+	}
+	c.loadAdjacentPlaylists()
+}
+
+func (c *Catalog) loadAdjacentPlaylists() {
+	if len(c.m3uChannels) > 0 {
+		return
+	}
+	var candidateM3Us []string
+	if exe, exeErr := os.Executable(); exeErr == nil {
+		exeDir := filepath.Dir(exe)
+		candidateM3Us = append(candidateM3Us,
+			filepath.Join(exeDir, "signals.m3u"),
+			filepath.Join(exeDir, "playlist.m3u"),
+		)
+	}
+	candidateM3Us = append(candidateM3Us, "signals.m3u", "playlist.m3u")
+	for _, mPath := range candidateM3Us {
+		if m3uList, err := ParseM3UFile(mPath); err == nil && len(m3uList) > 0 {
+			c.m3uChannels = append(c.m3uChannels, m3uList...)
+			break
 		}
 	}
 }

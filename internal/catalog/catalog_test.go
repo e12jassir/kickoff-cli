@@ -743,3 +743,46 @@ func TestCatalog_ProbeStreams_RejectsHTMLErrorPages(t *testing.T) {
 		t.Errorf("Valid M3U8 stream must be marked alive")
 	}
 }
+
+func TestCatalog_AdjacentChannelsAndM3UFallback(t *testing.T) {
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("could not get working dir: %v", err)
+	}
+	defer func() { _ = os.Chdir(origWd) }()
+
+	tmpDir := t.TempDir()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("could not chdir to tmpDir: %v", err)
+	}
+
+	// 1. Write channels.json in working directory
+	cfgContent := `{"streams": {"adjacent_test": "http://stream.example/live.m3u8"}}`
+	if err := os.WriteFile("channels.json", []byte(cfgContent), 0o600); err != nil {
+		t.Fatalf("could not write channels.json: %v", err)
+	}
+
+	cat := New()
+	endpoint, ok := cat.StreamEndpoint("adjacent_test")
+	if !ok || endpoint != "http://stream.example/live.m3u8" {
+		t.Errorf("expected adjacent channels.json to be loaded, got ok=%v, endpoint=%s", ok, endpoint)
+	}
+
+	// 2. Test adjacent signals.m3u
+	tmpDir2 := t.TempDir()
+	if err := os.Chdir(tmpDir2); err != nil {
+		t.Fatalf("could not chdir to tmpDir2: %v", err)
+	}
+	m3uContent := "#EXTM3U\n#EXTINF:-1 tvg-name=\"ESPN 1 HD\",ESPN 1 HD\nhttp://example.com/espn1.m3u8\n"
+	if err := os.WriteFile("signals.m3u", []byte(m3uContent), 0o600); err != nil {
+		t.Fatalf("could not write signals.m3u: %v", err)
+	}
+
+	cat2 := New()
+	cat2.mu.RLock()
+	defer cat2.mu.RUnlock()
+	if len(cat2.m3uChannels) == 0 {
+		t.Errorf("expected adjacent signals.m3u to be loaded into m3uChannels, got 0")
+	}
+}
+
