@@ -1465,7 +1465,7 @@ func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 
 // readScoreboardFixture loads a recorded ESPN scoreboard response. The fixture
 // was captured live from
-// https://site.api.espn.com/apis/site/v2/sports/soccer/eng.1/scoreboard?lang=en
+// https://site.api.espn.com/apis/site/v2/sports/soccer/eng.1/scoreboard?lang=es
 // and both events carry broadcasts[] and geoBroadcasts[] metadata.
 func readScoreboardFixture(t *testing.T) []byte {
 	t.Helper()
@@ -1529,7 +1529,9 @@ func TestClient_FetchMatches_BroadcastsFromRecordedFixture(t *testing.T) {
 // TestClient_ScoreboardQueryParams_PreserveBroadcasts is the regression guard
 // for the erased-broadcasts bug: ESPN drops the broadcasts[]/geoBroadcasts[]
 // arrays when the scoreboard is requested with region=co combined with lang=es.
-// The client must request lang=en and must not send lang=es or a region param.
+// The client must omit the region param entirely (region alone is what triggers
+// the erase when paired with lang=es) while keeping lang=es so the user-facing
+// status strings stay in Spanish.
 // The baseURL deliberately contains "espn.com" so the query-param branch runs,
 // while a custom transport serves the recorded fixture locally.
 func TestClient_ScoreboardQueryParams_PreserveBroadcasts(t *testing.T) {
@@ -1576,14 +1578,11 @@ func TestClient_ScoreboardQueryParams_PreserveBroadcasts(t *testing.T) {
 	if q == "" {
 		t.Fatalf("expected to observe the main scoreboard request query")
 	}
-	if !strings.Contains(q, "lang=en") {
-		t.Errorf("expected lang=en in ESPN scoreboard query, got %q", q)
-	}
-	if strings.Contains(q, "lang=es") {
-		t.Errorf("lang=es erases broadcasts and must never be sent, got %q", q)
+	if !strings.Contains(q, "lang=es") {
+		t.Errorf("expected lang=es in ESPN scoreboard query (Spanish status strings), got %q", q)
 	}
 	if strings.Contains(q, "region=") {
-		t.Errorf("region param must not be sent (it combines with lang=es to erase broadcasts and is inert with lang=en), got %q", q)
+		t.Errorf("region param must not be sent: region=co/ar/mx combined with lang=es erases broadcasts, got %q", q)
 	}
 
 	if len(matches) == 0 {
