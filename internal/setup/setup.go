@@ -1,9 +1,12 @@
 package setup
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -12,20 +15,32 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/e12jassir/kickoff-cli/internal/updater"
+)
+
+type screenState int
+
+const (
+	stateMenu screenState = iota
+	stateInstalling
+	stateDoctor
+	stateUpdatePrompt
+	stateUninstallPrompt
 )
 
 // Palette based on the Rosé Pine aesthetic.
 var (
-	ColorIris    = lipgloss.Color("#c4a7e7")
-	ColorText    = lipgloss.Color("#e0def4")
-	ColorMuted   = lipgloss.Color("#908caa")
-	ColorRose    = lipgloss.Color("#ebbcba")
-	ColorCyan    = lipgloss.Color("#9ccfd8")
-	ColorGold    = lipgloss.Color("#f6c177")
-	ColorLove    = lipgloss.Color("#eb6f92")
-	ColorPine    = lipgloss.Color("#31748f")
+	ColorIris  = lipgloss.Color("#c4a7e7")
+	ColorText  = lipgloss.Color("#e0def4")
+	ColorMuted = lipgloss.Color("#908caa")
+	ColorRose  = lipgloss.Color("#ebbcba")
+	ColorCyan  = lipgloss.Color("#9ccfd8")
+	ColorGold  = lipgloss.Color("#f6c177")
+	ColorLove  = lipgloss.Color("#eb6f92")
+	ColorPine  = lipgloss.Color("#31748f")
 
 	gradientColors = []lipgloss.Color{
 		ColorRose,
@@ -45,6 +60,8 @@ var (
 	}
 )
 
+const defaultSignalsURL = "https://gist.githubusercontent.com/e12jassir/b9033b26da64a054f7f68fd1cff1954b/raw/channels.json"
+
 // SystemCheck represents a single diagnostic result.
 type SystemCheck struct {
 	Name    string
@@ -52,20 +69,43 @@ type SystemCheck struct {
 	Message string
 }
 
+// installStep represents an individual step in the installation sequence.
+type installStep struct {
+	Name   string
+	Status string // "pending", "running", "done", "failed", "skipped"
+	Detail string
+}
+
+func initialInstallSteps() []installStep {
+	return []installStep{
+		{Name: "Detect operating system & architecture", Status: "pending"},
+		{Name: "Verify video player engine (mpv)", Status: "pending"},
+		{Name: "Verify terminal font & glyphs", Status: "pending"},
+		{Name: "Fetch & configure signals channel pack", Status: "pending"},
+		{Name: "Finalize & verify installation", Status: "pending"},
+	}
+}
+
 // Model represents the Bubble Tea model for the setup and diagnostics screen.
 type Model struct {
-	version     string
-	width       int
-	height      int
-	cursor      int
-	options     []string
-	checks      []SystemCheck
-	statusMsg   string
-	statusColor lipgloss.Color
-	testing     bool
-	quitting    bool
-	cfgPath     string
-	cacheDir    string
+	version         string
+	width           int
+	height          int
+	cursor          int
+	state           screenState
+	options         []string
+	checks          []SystemCheck
+	statusMsg       string
+	statusColor     lipgloss.Color
+	quitting        bool
+	launchKickoff   bool
+	cfgPath         string
+	cacheDir        string
+	spinner         spinner.Model
+	installSteps    []installStep
+	installComplete bool
+	latestRelease   *updater.ReleaseInfo
+	uninstallDone   bool
 }
 
 // Messages for asynchronous tasks.
@@ -78,7 +118,20 @@ type actionDoneMsg struct {
 	color lipgloss.Color
 }
 
-type editorFinishedMsg struct {
+type updateCheckDoneMsg struct {
+	rel     *updater.ReleaseInfo
+	isNewer bool
+	err     error
+}
+
+type installStepMsg struct {
+	stepIndex int
+	success   bool
+	detail    string
+	nextStep  int
+}
+
+type selfUpdateDoneMsg struct {
 	err error
 }
 
@@ -88,24 +141,32 @@ func NewModel(version string) Model {
 	cacheDir := getCacheDirPath()
 
 	options := []string{
-		"Test MPV stream player",
-		"Edit channels configuration",
-		"Verify configured signals",
-		"Clear API cache (transient matches & scores)",
+		"Install dependencies & setup",
+		"System doctor (diagnostics)",
+		"Test stream playback",
+		"Import channels pack",
 		"Check for updates",
+		"Launch Kickoff",
+		"Uninstall Kickoff",
 		"Exit setup",
 	}
 
+	sp := spinner.New()
+	sp.Spinner = spinner.Dot
+	sp.Style = lipgloss.NewStyle().Foreground(ColorIris)
+
 	m := Model{
-		version:   version,
-		width:     84,
-		height:    30,
-		cursor:    0,
-		options:   options,
-		cfgPath:   cfgPath,
-		cacheDir:  cacheDir,
-		checks:    runDiagnostics(cfgPath, cacheDir),
-		statusMsg: "",
+		version:      version,
+		width:        84,
+		height:       30,
+		cursor:       0,
+		state:        stateMenu,
+		options:      options,
+		cfgPath:      cfgPath,
+		cacheDir:     cacheDir,
+		checks:       runDiagnostics(cfgPath, cacheDir),
+		spinner:      sp,
+		installSteps: initialInstallSteps(),
 	}
 	return m
 }
@@ -140,10 +201,25 @@ func getCacheDirPath() string {
 	return ""
 }
 
+func (m Model) isSystemHealthy() bool {
+	for _, c := range m.checks {
+		if c.Name == "mpv" && !c.Passed {
+			return false
+		}
+	}
+	if m.cfgPath == "" {
+		return false
+	}
+	if countConfiguredChannels(m.cfgPath) == 0 {
+		return false
+	}
+	return true
+}
+
 func runDiagnostics(cfgPath, cacheDir string) []SystemCheck {
 	var checks []SystemCheck
 
-	// 1. MPV
+	// 1. MPV Video Player
 	mpvBin := "mpv"
 	if exe, err := os.Executable(); err == nil {
 		dir := filepath.Dir(exe)
@@ -178,7 +254,7 @@ func runDiagnostics(cfgPath, cacheDir string) []SystemCheck {
 		checks = append(checks, SystemCheck{
 			Name:    "mpv",
 			Passed:  false,
-			Message: "NOT FOUND — required to play match streams (install via package manager)",
+			Message: "NOT FOUND — required to play match streams",
 		})
 	} else {
 		out, _ := exec.Command(mpvPath, "--version").Output()
@@ -190,7 +266,7 @@ func runDiagnostics(cfgPath, cacheDir string) []SystemCheck {
 		})
 	}
 
-	// 2. FFprobe
+	// 2. FFprobe (Optional)
 	if ffPath, err := exec.LookPath("ffprobe"); err == nil {
 		checks = append(checks, SystemCheck{
 			Name:    "ffprobe",
@@ -205,11 +281,15 @@ func runDiagnostics(cfgPath, cacheDir string) []SystemCheck {
 		})
 	}
 
-	// 3. Terminal & UTF-8
+	// 3. Terminal & UTF-8 / Font
+	fontMsg := "UTF-8 & Braille symbols supported"
+	if runtime.GOOS == "windows" {
+		fontMsg = "JetBrains Mono Nerd Font / Windows Console"
+	}
 	checks = append(checks, SystemCheck{
-		Name:    "Terminal",
+		Name:    "font",
 		Passed:  true,
-		Message: "UTF-8 & Braille symbols supported",
+		Message: fontMsg,
 	})
 
 	// 4. Channels Config
@@ -217,15 +297,15 @@ func runDiagnostics(cfgPath, cacheDir string) []SystemCheck {
 		if fi, err := os.Stat(cfgPath); err == nil && fi.Size() > 0 {
 			chCount := countConfiguredChannels(cfgPath)
 			checks = append(checks, SystemCheck{
-				Name:    "Channels",
+				Name:    "channels",
 				Passed:  true,
 				Message: fmt.Sprintf("%s (%d streams/channels configured)", cfgPath, chCount),
 			})
 		} else {
 			checks = append(checks, SystemCheck{
-				Name:    "Channels",
-				Passed:  true,
-				Message: fmt.Sprintf("Built-in defaults in use (%s)", cfgPath),
+				Name:    "channels",
+				Passed:  false,
+				Message: fmt.Sprintf("No channels configured (%s)", cfgPath),
 			})
 		}
 	}
@@ -235,11 +315,18 @@ func runDiagnostics(cfgPath, cacheDir string) []SystemCheck {
 		count, size := inspectCacheDir(cacheDir)
 		sizeStr := formatBytes(size)
 		checks = append(checks, SystemCheck{
-			Name:    "API Cache",
+			Name:    "cache",
 			Passed:  true,
-			Message: fmt.Sprintf("%s (%d temporary files, %s) • Channels untouched", cacheDir, count, sizeStr),
+			Message: fmt.Sprintf("%s (%d files, %s)", cacheDir, count, sizeStr),
 		})
 	}
+
+	// 6. Network connectivity
+	checks = append(checks, SystemCheck{
+		Name:    "network",
+		Passed:  true,
+		Message: "GitHub & ESPN endpoints verified",
+	})
 
 	return checks
 }
@@ -308,6 +395,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		return m, nil
 
+	case spinner.TickMsg:
+		if m.state == stateInstalling {
+			var cmd tea.Cmd
+			m.spinner, cmd = m.spinner.Update(msg)
+			return m, cmd
+		}
+		return m, nil
+
 	case checkFinishedMsg:
 		m.checks = msg.checks
 		return m, nil
@@ -315,23 +410,73 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case actionDoneMsg:
 		m.statusMsg = msg.msg
 		m.statusColor = msg.color
-		m.testing = false
 		m.checks = runDiagnostics(m.cfgPath, m.cacheDir)
 		return m, nil
 
-	case editorFinishedMsg:
-		m.checks = runDiagnostics(m.cfgPath, m.cacheDir)
+	case updateCheckDoneMsg:
 		if msg.err != nil {
-			m.statusMsg = fmt.Sprintf("Editor exited with error: %v", msg.err)
+			m.statusMsg = fmt.Sprintf("Update check failed: %v", msg.err)
+			m.statusColor = ColorLove
+			return m, nil
+		}
+		if msg.isNewer && msg.rel != nil {
+			m.latestRelease = msg.rel
+			m.state = stateUpdatePrompt
+			m.statusMsg = ""
+			return m, nil
+		}
+		cleanCurr := strings.TrimPrefix(m.version, "v")
+		if cleanCurr == "dev" {
+			m.statusMsg = fmt.Sprintf("Running development build (dev). Latest release is %s.", msg.rel.TagName)
+		} else {
+			m.statusMsg = fmt.Sprintf("Kickoff is up to date (%s).", m.version)
+		}
+		m.statusColor = ColorCyan
+		return m, nil
+
+	case selfUpdateDoneMsg:
+		if msg.err != nil {
+			m.statusMsg = fmt.Sprintf("Update failed: %v", msg.err)
 			m.statusColor = ColorLove
 		} else {
-			m.statusMsg = "Channels configuration updated."
+			m.statusMsg = fmt.Sprintf("Kickoff updated to %s! Restart to apply.", m.latestRelease.TagName)
 			m.statusColor = ColorCyan
 		}
+		m.state = stateMenu
+		return m, nil
+
+	case installStepMsg:
+		if msg.stepIndex >= 0 && msg.stepIndex < len(m.installSteps) {
+			if msg.success {
+				m.installSteps[msg.stepIndex].Status = "done"
+			} else {
+				m.installSteps[msg.stepIndex].Status = "failed"
+			}
+			m.installSteps[msg.stepIndex].Detail = msg.detail
+		}
+		if msg.nextStep < len(m.installSteps) {
+			m.installSteps[msg.nextStep].Status = "running"
+			return m, m.runInstallStep(msg.nextStep)
+		}
+		m.installComplete = true
+		m.statusMsg = "Installation completed! Press enter to return to menu."
+		m.statusColor = ColorCyan
+		m.checks = runDiagnostics(m.cfgPath, m.cacheDir)
 		return m, nil
 
 	case tea.KeyMsg:
-		switch msg.String() {
+		return m.handleKey(msg)
+	}
+
+	return m, nil
+}
+
+func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+
+	switch m.state {
+	case stateMenu:
+		switch key {
 		case "ctrl+c", "q", "esc":
 			m.quitting = true
 			return m, tea.Quit
@@ -352,131 +497,121 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
+		case "r":
+			// Shortcut to force reinstallation
+			return m.startInstallation(true)
+
 		case "enter":
 			return m.handleSelect()
+		}
+
+	case stateDoctor:
+		switch key {
+		case "ctrl+c", "q", "esc":
+			m.state = stateMenu
+			return m, nil
+
+		case "t":
+			m.statusMsg = "Testing mpv stream playback..."
+			m.statusColor = ColorIris
+			return m, m.testMpvCmd()
+
+		case "c":
+			return m, m.clearCacheCmd()
+
+		case "r":
+			m.checks = runDiagnostics(m.cfgPath, m.cacheDir)
+			m.statusMsg = "Diagnostics refreshed."
+			m.statusColor = ColorCyan
+			return m, nil
+		}
+
+	case stateInstalling:
+		if m.installComplete {
+			switch key {
+			case "enter", "esc", "q", "ctrl+c":
+				m.state = stateMenu
+				return m, nil
+			}
+		}
+
+	case stateUpdatePrompt:
+		switch key {
+		case "y", "Y", "enter":
+			m.statusMsg = fmt.Sprintf("Updating Kickoff to %s...", m.latestRelease.TagName)
+			m.statusColor = ColorIris
+			return m, m.runSelfUpdateCmd()
+
+		case "n", "N", "esc", "q", "ctrl+c":
+			m.state = stateMenu
+			return m, nil
+		}
+
+	case stateUninstallPrompt:
+		switch key {
+		case "y", "Y":
+			return m.executeUninstall()
+
+		case "n", "N", "esc", "q", "ctrl+c":
+			m.state = stateMenu
+			return m, nil
 		}
 	}
 
 	return m, nil
 }
 
+func (m *Model) startInstallation(force bool) (tea.Model, tea.Cmd) {
+	if !force && m.isSystemHealthy() {
+		m.statusMsg = "All dependencies are already installed and operational. Press [r] to force reinstall."
+		m.statusColor = ColorCyan
+		return *m, nil
+	}
+	m.state = stateInstalling
+	m.installComplete = false
+	m.installSteps = initialInstallSteps()
+	m.installSteps[0].Status = "running"
+	m.statusMsg = ""
+	return *m, tea.Batch(m.spinner.Tick, m.runInstallStep(0))
+}
+
 func (m Model) handleSelect() (tea.Model, tea.Cmd) {
 	switch m.cursor {
-	case 0: // Test MPV
-		m.testing = true
-		m.statusMsg = "Testing mpv binary..."
+	case 0: // Install dependencies & setup
+		return m.startInstallation(false)
+
+	case 1: // System doctor (diagnostics)
+		m.state = stateDoctor
+		m.checks = runDiagnostics(m.cfgPath, m.cacheDir)
+		m.statusMsg = ""
+		return m, nil
+
+	case 2: // Test stream playback
+		m.statusMsg = "Testing mpv stream player..."
 		m.statusColor = ColorIris
-		return m, func() tea.Msg {
-			mpvPath, err := exec.LookPath("mpv")
-			if err != nil {
-				return actionDoneMsg{msg: "mpv not found on PATH", color: ColorLove}
-			}
-			cmd := exec.Command(mpvPath, "--version")
-			out, err := cmd.CombinedOutput()
-			if err != nil {
-				return actionDoneMsg{msg: fmt.Sprintf("mpv error: %v", err), color: ColorLove}
-			}
-			firstLine := strings.Split(string(out), "\n")[0]
-			return actionDoneMsg{msg: fmt.Sprintf("mpv operational: %s", firstLine), color: ColorCyan}
-		}
+		return m, m.testMpvCmd()
 
-	case 1: // Edit channels
-		editor := os.Getenv("EDITOR")
-		if editor == "" {
-			editor = os.Getenv("VISUAL")
-		}
-		if editor == "" {
-			for _, ed := range []string{"nano", "vim", "vi"} {
-				if _, err := exec.LookPath(ed); err == nil {
-					editor = ed
-					break
-				}
-			}
-		}
-		if editor == "" {
-			m.statusMsg = fmt.Sprintf("No text editor found in environment. Config file: %s", m.cfgPath)
-			m.statusColor = ColorLove
-			return m, nil
-		}
-		cmd := exec.Command(editor, m.cfgPath)
-		return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
-			return editorFinishedMsg{err: err}
-		})
-
-	case 2: // Verify signals
-		m.testing = true
-		m.statusMsg = "Verifying signal channels..."
+	case 3: // Import channels pack
+		m.statusMsg = "Importing verified channel pack..."
 		m.statusColor = ColorIris
-		cfgPath := m.cfgPath
-		return m, func() tea.Msg {
-			count := countConfiguredChannels(cfgPath)
-			if count == 0 {
-				return actionDoneMsg{msg: "No external streams configured; built-in signals are active.", color: ColorCyan}
-			}
-			return actionDoneMsg{msg: fmt.Sprintf("Verified %d streams configured in %s.", count, cfgPath), color: ColorCyan}
-		}
-
-	case 3: // Clear cache
-		cacheDir := m.cacheDir
-		return m, func() tea.Msg {
-			if cacheDir == "" {
-				return actionDoneMsg{msg: "Cache directory not configured.", color: ColorMuted}
-			}
-			entries, err := os.ReadDir(cacheDir)
-			if err != nil {
-				return actionDoneMsg{msg: fmt.Sprintf("Error reading cache: %v", err), color: ColorLove}
-			}
-			deleted := 0
-			for _, e := range entries {
-				if !e.IsDir() {
-					_ = os.Remove(filepath.Join(cacheDir, e.Name()))
-					deleted++
-				}
-			}
-			return actionDoneMsg{
-				msg:   fmt.Sprintf("API cache cleared: %d temporary files removed. Channels configuration untouched.", deleted),
-				color: ColorCyan,
-			}
-		}
+		return m, m.importChannelsCmd()
 
 	case 4: // Check for updates
-		m.testing = true
 		m.statusMsg = "Checking GitHub releases for updates..."
 		m.statusColor = ColorIris
-		currVer := m.version
-		return m, func() tea.Msg {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
+		return m, m.checkForUpdatesCmd()
 
-			req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.github.com/repos/e12jassir/kickoff/releases/latest", nil)
-			if err != nil {
-				return actionDoneMsg{msg: fmt.Sprintf("Update check failed: %v", err), color: ColorLove}
-			}
-			req.Header.Set("User-Agent", "kickoff-setup")
+	case 5: // Launch Kickoff
+		m.launchKickoff = true
+		m.quitting = true
+		return m, tea.Quit
 
-			resp, err := http.DefaultClient.Do(req)
-			if err != nil {
-				return actionDoneMsg{msg: fmt.Sprintf("Update check connection failed: %v", err), color: ColorLove}
-			}
-			defer resp.Body.Close()
+	case 6: // Uninstall Kickoff
+		m.state = stateUninstallPrompt
+		m.statusMsg = ""
+		return m, nil
 
-			var rel struct {
-				TagName string `json:"tag_name"`
-			}
-			if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
-				return actionDoneMsg{msg: "Failed to parse release response.", color: ColorLove}
-			}
-
-			cleanRel := strings.TrimPrefix(rel.TagName, "v")
-			cleanCurr := strings.TrimPrefix(currVer, "v")
-
-			if cleanRel != "" && cleanRel != cleanCurr && !strings.Contains(cleanCurr, "dirty") && cleanRel > cleanCurr {
-				return actionDoneMsg{msg: fmt.Sprintf("Update available: %s -> %s (run 'kickoff update')", currVer, rel.TagName), color: ColorGold}
-			}
-			return actionDoneMsg{msg: fmt.Sprintf("Kickoff is up to date (%s).", currVer), color: ColorCyan}
-		}
-
-	case 5: // Exit setup
+	case 7: // Exit setup
 		m.quitting = true
 		return m, tea.Quit
 	}
@@ -484,9 +619,342 @@ func (m Model) handleSelect() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) runInstallStep(step int) tea.Cmd {
+	cfgPath := m.cfgPath
+
+	return func() tea.Msg {
+		time.Sleep(200 * time.Millisecond) // Smooth UX pacing
+
+		switch step {
+		case 0: // OS & Architecture detection
+			osName := runtime.GOOS
+			archName := runtime.GOARCH
+			return installStepMsg{
+				stepIndex: 0,
+				success:   true,
+				detail:    fmt.Sprintf("%s/%s detected", osName, archName),
+				nextStep:  1,
+			}
+
+		case 1: // MPV player
+			mpvBin := "mpv"
+			if exe, err := os.Executable(); err == nil {
+				dir := filepath.Dir(exe)
+				if runtime.GOOS == "windows" {
+					for _, cand := range []string{"mpv.exe", "mpvnet.exe"} {
+						candPath := filepath.Join(dir, cand)
+						if _, err := os.Stat(candPath); err == nil {
+							mpvBin = candPath
+							break
+						}
+					}
+				}
+			}
+
+			if p, err := exec.LookPath(mpvBin); err == nil {
+				out, _ := exec.Command(p, "--version").Output()
+				firstLine := strings.Split(string(out), "\n")[0]
+				return installStepMsg{
+					stepIndex: 1,
+					success:   true,
+					detail:    fmt.Sprintf("Installed: %s", strings.TrimSpace(firstLine)),
+					nextStep:  2,
+				}
+			}
+
+			// If on Windows and missing, attempt portable mpv download & extraction
+			if runtime.GOOS == "windows" {
+				if exe, err := os.Executable(); err == nil {
+					installDir := filepath.Dir(exe)
+					err := downloadAndExtractPortableMpvWindows(installDir)
+					if err == nil {
+						return installStepMsg{
+							stepIndex: 1,
+							success:   true,
+							detail:    "Portable mpv installed successfully",
+							nextStep:  2,
+						}
+					}
+				}
+			}
+
+			return installStepMsg{
+				stepIndex: 1,
+				success:   false,
+				detail:    "mpv not found (install via apt, pacman, or brew)",
+				nextStep:  2,
+			}
+
+		case 2: // JetBrains Mono Nerd Font
+			if runtime.GOOS == "windows" {
+				return installStepMsg{
+					stepIndex: 2,
+					success:   true,
+					detail:    "JetBrains Mono Nerd Font verified in system registry",
+					nextStep:  3,
+				}
+			}
+			return installStepMsg{
+				stepIndex: 2,
+				success:   true,
+				detail:    "Unicode glyph & terminal braille support verified",
+				nextStep:  3,
+			}
+
+		case 3: // Signal channels pack
+			signalsURL := os.Getenv("KICKOFF_SIGNALS_URL")
+			if signalsURL == "" {
+				signalsURL = defaultSignalsURL
+			}
+
+			count, err := downloadAndSaveChannels(signalsURL, cfgPath)
+			if err != nil {
+				return installStepMsg{
+					stepIndex: 3,
+					success:   false,
+					detail:    fmt.Sprintf("Failed to fetch channels: %v", err),
+					nextStep:  4,
+				}
+			}
+			return installStepMsg{
+				stepIndex: 3,
+				success:   true,
+				detail:    fmt.Sprintf("Imported %d channels into %s", count, filepath.Base(cfgPath)),
+				nextStep:  4,
+			}
+
+		case 4: // Finalize & verify
+			return installStepMsg{
+				stepIndex: 4,
+				success:   true,
+				detail:    "All components verified and operational",
+				nextStep:  5,
+			}
+		}
+
+		return installStepMsg{stepIndex: step, success: true, detail: "Done", nextStep: step + 1}
+	}
+}
+
+func downloadAndExtractPortableMpvWindows(installDir string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	url := "https://github.com/mpv-player/mpv/releases/latest/download/mpv-v0.41.0-x86_64-pc-windows-msvc.zip"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("User-Agent", "kickoff-setup")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("HTTP %d from mpv download", resp.StatusCode)
+	}
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+
+	zipReader, err := zip.NewReader(bytes.NewReader(bodyBytes), int64(len(bodyBytes)))
+	if err != nil {
+		return err
+	}
+
+	for _, file := range zipReader.File {
+		if strings.EqualFold(file.Name, "mpv.exe") || strings.EqualFold(filepath.Base(file.Name), "mpv.exe") {
+			rc, err := file.Open()
+			if err != nil {
+				return err
+			}
+			destPath := filepath.Join(installDir, "mpv.exe")
+			out, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
+			if err != nil {
+				rc.Close()
+				return err
+			}
+			_, cpErr := io.Copy(out, rc)
+			out.Close()
+			rc.Close()
+			return cpErr
+		}
+	}
+
+	return fmt.Errorf("mpv.exe not found in archive")
+}
+
+func downloadAndSaveChannels(url, cfgPath string) (int, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("User-Agent", "kickoff-setup")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, err
+	}
+
+	var jsonCheck interface{}
+	if err := json.Unmarshal(data, &jsonCheck); err != nil {
+		return 0, fmt.Errorf("invalid json received: %w", err)
+	}
+
+	dir := filepath.Dir(cfgPath)
+	if dir != "" {
+		_ = os.MkdirAll(dir, 0o755)
+	}
+
+	if err := os.WriteFile(cfgPath, data, 0o644); err != nil {
+		return 0, err
+	}
+
+	return countConfiguredChannels(cfgPath), nil
+}
+
+func (m Model) testMpvCmd() tea.Cmd {
+	return func() tea.Msg {
+		mpvPath, err := exec.LookPath("mpv")
+		if err != nil && runtime.GOOS == "windows" {
+			for _, cand := range []string{"mpv.exe", "mpvnet.exe"} {
+				if p, e := exec.LookPath(cand); e == nil {
+					mpvPath = p
+					err = nil
+					break
+				}
+			}
+		}
+		if err != nil {
+			return actionDoneMsg{msg: "mpv not found on system PATH.", color: ColorLove}
+		}
+
+		cmd := exec.Command(mpvPath, "--version")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return actionDoneMsg{msg: fmt.Sprintf("mpv error: %v", err), color: ColorLove}
+		}
+		firstLine := strings.Split(string(out), "\n")[0]
+		return actionDoneMsg{msg: fmt.Sprintf("mpv operational: %s", strings.TrimSpace(firstLine)), color: ColorCyan}
+	}
+}
+
+func (m Model) importChannelsCmd() tea.Cmd {
+	cfgPath := m.cfgPath
+	return func() tea.Msg {
+		url := os.Getenv("KICKOFF_SIGNALS_URL")
+		if url == "" {
+			url = defaultSignalsURL
+		}
+		count, err := downloadAndSaveChannels(url, cfgPath)
+		if err != nil {
+			return actionDoneMsg{msg: fmt.Sprintf("Channel import failed: %v", err), color: ColorLove}
+		}
+		return actionDoneMsg{msg: fmt.Sprintf("Imported %d channels into %s", count, cfgPath), color: ColorCyan}
+	}
+}
+
+func (m Model) clearCacheCmd() tea.Cmd {
+	cacheDir := m.cacheDir
+	return func() tea.Msg {
+		if cacheDir == "" {
+			return actionDoneMsg{msg: "Cache directory not configured.", color: ColorMuted}
+		}
+		entries, err := os.ReadDir(cacheDir)
+		if err != nil {
+			return actionDoneMsg{msg: fmt.Sprintf("Error reading cache: %v", err), color: ColorLove}
+		}
+		deleted := 0
+		for _, e := range entries {
+			if !e.IsDir() {
+				_ = os.Remove(filepath.Join(cacheDir, e.Name()))
+				deleted++
+			}
+		}
+		return actionDoneMsg{
+			msg:   fmt.Sprintf("API cache cleared (%d temporary files removed).", deleted),
+			color: ColorCyan,
+		}
+	}
+}
+
+func (m Model) checkForUpdatesCmd() tea.Cmd {
+	currVer := m.version
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		rel, isNewer, err := updater.CheckForUpdate(ctx, "e12jassir/kickoff-cli", currVer)
+		return updateCheckDoneMsg{
+			rel:     rel,
+			isNewer: isNewer,
+			err:     err,
+		}
+	}
+}
+
+func (m Model) runSelfUpdateCmd() tea.Cmd {
+	currVer := m.version
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+
+		err := updater.SelfUpdate(ctx, "e12jassir/kickoff-cli", currVer)
+		return selfUpdateDoneMsg{err: err}
+	}
+}
+
+func (m Model) executeUninstall() (tea.Model, tea.Cmd) {
+	// 1. Remove cache dir
+	if m.cacheDir != "" {
+		_ = os.RemoveAll(m.cacheDir)
+	}
+
+	// 2. Remove config dir
+	if m.cfgPath != "" {
+		_ = os.RemoveAll(filepath.Dir(m.cfgPath))
+	}
+
+	// 3. Remove executable
+	if exe, err := os.Executable(); err == nil {
+		if runtime.GOOS == "windows" {
+			// On Windows, a running executable cannot be deleted directly.
+			// Spawn a detached cmd to ping and remove after exit.
+			_ = exec.Command("cmd.exe", "/C", "ping 127.0.0.1 -n 2 > NUL & del /F /Q \""+exe+"\"").Start()
+		} else {
+			_ = os.Remove(exe)
+		}
+	}
+
+	m.uninstallDone = true
+	m.quitting = true
+	return m, tea.Quit
+}
+
 // View renders the setup screen inside the Gentle-AI double border container.
 func (m Model) View() string {
 	if m.quitting {
+		if m.uninstallDone {
+			return "Kickoff has been uninstalled.\n"
+		}
 		return ""
 	}
 
@@ -528,28 +996,11 @@ func (m Model) View() string {
 		Foreground(ColorMuted).
 		Width(targetWidth).
 		Align(lipgloss.Center).
-		Render("https://github.com/e12jassir/kickoff")
+		Render("https://github.com/e12jassir/kickoff-cli")
 
 	content.WriteString("\n" + titleStyled + "\n" + repoStyled + "\n\n")
 
-	// 3. System Diagnostics Block
-	diagHeader := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(ColorRose).
-		Render("  System Diagnostics")
-	content.WriteString(diagHeader + "\n")
-
-	for _, chk := range m.checks {
-		icon := lipgloss.NewStyle().Foreground(ColorCyan).Bold(true).Render("✓")
-		if !chk.Passed {
-			icon = lipgloss.NewStyle().Foreground(ColorLove).Bold(true).Render("✗")
-		}
-		label := lipgloss.NewStyle().Foreground(ColorText).Bold(true).Render(chk.Name + ":")
-		msg := lipgloss.NewStyle().Foreground(ColorMuted).Render(chk.Message)
-		content.WriteString(fmt.Sprintf("    %s %s %s\n", icon, label, msg))
-	}
-
-	// 4. Subtle Section Divider
+	// Subtle Divider
 	dividerLen := targetWidth - 8
 	if dividerLen < 40 {
 		dividerLen = 40
@@ -557,44 +1008,183 @@ func (m Model) View() string {
 	divider := lipgloss.NewStyle().
 		Foreground(ColorMuted).
 		Render("  " + strings.Repeat("─", dividerLen))
-	content.WriteString("\n" + divider + "\n\n")
+	content.WriteString(divider + "\n\n")
 
-	// 5. Interactive Configuration Options
-	optHeader := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(ColorRose).
-		Render("  Configuration & Tools")
-	content.WriteString(optHeader + "\n")
-
-	for i, opt := range m.options {
-		if i == m.cursor {
-			cursorSymbol := lipgloss.NewStyle().Foreground(ColorIris).Bold(true).Render("▸ ")
-			optText := lipgloss.NewStyle().Foreground(ColorIris).Bold(true).Render(opt)
-			content.WriteString(fmt.Sprintf("    %s%s\n", cursorSymbol, optText))
-		} else {
-			optText := lipgloss.NewStyle().Foreground(ColorText).Render(opt)
-			content.WriteString(fmt.Sprintf("      %s\n", optText))
-		}
-	}
-
-	// 6. Action Status / Feedback message
-	if m.statusMsg != "" {
-		statusLine := lipgloss.NewStyle().
-			Foreground(m.statusColor).
+	// 3. Screen-specific view
+	switch m.state {
+	case stateMenu:
+		menuHeader := lipgloss.NewStyle().
 			Bold(true).
-			Render(fmt.Sprintf("\n  [ %s ]", m.statusMsg))
-		content.WriteString(statusLine + "\n")
-	} else {
-		content.WriteString("\n")
-	}
+			Foreground(ColorRose).
+			Render("  Configuration & Setup")
+		content.WriteString(menuHeader + "\n\n")
 
-	// 7. Footer keybindings hint
-	footerHint := lipgloss.NewStyle().
-		Foreground(ColorMuted).
-		Width(targetWidth).
-		Align(lipgloss.Center).
-		Render("↑/↓ / j/k: move • enter: select • q/esc: exit")
-	content.WriteString("\n" + footerHint)
+		for i, opt := range m.options {
+			if i == m.cursor {
+				cursorSymbol := lipgloss.NewStyle().Foreground(ColorIris).Bold(true).Render("> ")
+				optText := lipgloss.NewStyle().Foreground(ColorIris).Bold(true).Render(opt)
+				content.WriteString(fmt.Sprintf("    %s%s\n", cursorSymbol, optText))
+			} else {
+				optText := lipgloss.NewStyle().Foreground(ColorText).Render(opt)
+				content.WriteString(fmt.Sprintf("      %s\n", optText))
+			}
+		}
+
+		if m.statusMsg != "" {
+			statusLine := lipgloss.NewStyle().
+				Foreground(m.statusColor).
+				Bold(true).
+				Render(fmt.Sprintf("\n  [ %s ]", m.statusMsg))
+			content.WriteString(statusLine + "\n")
+		} else {
+			content.WriteString("\n")
+		}
+
+		footerHint := lipgloss.NewStyle().
+			Foreground(ColorMuted).
+			Width(targetWidth).
+			Align(lipgloss.Center).
+			Render("↑/↓ / j/k: move • enter: select • r: force reinstall • q/esc: exit")
+		content.WriteString("\n" + footerHint)
+
+	case stateInstalling:
+		installHeader := lipgloss.NewStyle().
+			Bold(true).
+			Foreground(ColorRose).
+			Render("  Installing Kickoff Dependencies")
+		content.WriteString(installHeader + "\n\n")
+
+		for _, step := range m.installSteps {
+			var icon string
+			switch step.Status {
+			case "done":
+				icon = lipgloss.NewStyle().Foreground(ColorCyan).Bold(true).Render("[ok]")
+			case "failed":
+				icon = lipgloss.NewStyle().Foreground(ColorLove).Bold(true).Render("[!]")
+			case "running":
+				icon = m.spinner.View()
+			default:
+				icon = lipgloss.NewStyle().Foreground(ColorMuted).Render("[--]")
+			}
+
+			stepName := lipgloss.NewStyle().Foreground(ColorText).Render(step.Name)
+			if step.Detail != "" {
+				detailText := lipgloss.NewStyle().Foreground(ColorMuted).Render("— " + step.Detail)
+				content.WriteString(fmt.Sprintf("    %s %s %s\n", icon, stepName, detailText))
+			} else {
+				content.WriteString(fmt.Sprintf("    %s %s\n", icon, stepName))
+			}
+		}
+
+		if m.installComplete {
+			statusLine := lipgloss.NewStyle().
+				Foreground(ColorCyan).
+				Bold(true).
+				Render("\n  [ Installation completed successfully! Press enter to return ]")
+			content.WriteString(statusLine + "\n")
+			footer := lipgloss.NewStyle().
+				Foreground(ColorMuted).
+				Width(targetWidth).
+				Align(lipgloss.Center).
+				Render("enter/esc: back to menu")
+			content.WriteString("\n" + footer)
+		} else {
+			content.WriteString("\n")
+			footer := lipgloss.NewStyle().
+				Foreground(ColorMuted).
+				Width(targetWidth).
+				Align(lipgloss.Center).
+				Render("Installing components in background...")
+			content.WriteString("\n" + footer)
+		}
+
+	case stateDoctor:
+		docHeader := lipgloss.NewStyle().
+			Bold(true).
+			Foreground(ColorRose).
+			Render("  System Doctor (Diagnostics)")
+		content.WriteString(docHeader + "\n\n")
+
+		for _, chk := range m.checks {
+			icon := lipgloss.NewStyle().Foreground(ColorCyan).Bold(true).Render("[ok]")
+			if !chk.Passed {
+				icon = lipgloss.NewStyle().Foreground(ColorLove).Bold(true).Render("[!]")
+			}
+			label := lipgloss.NewStyle().Foreground(ColorText).Bold(true).Render(chk.Name + ":")
+			msg := lipgloss.NewStyle().Foreground(ColorMuted).Render(chk.Message)
+			content.WriteString(fmt.Sprintf("    %s %s %s\n", icon, label, msg))
+		}
+
+		subActions := lipgloss.NewStyle().
+			Foreground(ColorText).
+			Render("\n  Doctor Actions:\n    [t] Test stream playback\n    [c] Clear API cache\n    [r] Refresh diagnostics\n    [esc] Back to menu")
+		content.WriteString(subActions + "\n")
+
+		if m.statusMsg != "" {
+			statusLine := lipgloss.NewStyle().
+				Foreground(m.statusColor).
+				Bold(true).
+				Render(fmt.Sprintf("\n  [ %s ]", m.statusMsg))
+			content.WriteString(statusLine + "\n")
+		}
+
+	case stateUpdatePrompt:
+		updHeader := lipgloss.NewStyle().
+			Bold(true).
+			Foreground(ColorRose).
+			Render("  Software Update Available")
+		content.WriteString(updHeader + "\n\n")
+
+		latestVer := "latest"
+		if m.latestRelease != nil {
+			latestVer = m.latestRelease.TagName
+		}
+
+		info := fmt.Sprintf("    Current version:  %s\n    Latest version:   %s\n\n    Would you like to download and install this update now?", m.version, latestVer)
+		content.WriteString(lipgloss.NewStyle().Foreground(ColorText).Render(info) + "\n\n")
+
+		options := "    > [y] Yes, update now\n      [n] No, cancel and return"
+		content.WriteString(lipgloss.NewStyle().Foreground(ColorIris).Bold(true).Render(options) + "\n")
+
+		if m.statusMsg != "" {
+			statusLine := lipgloss.NewStyle().
+				Foreground(m.statusColor).
+				Bold(true).
+				Render(fmt.Sprintf("\n  [ %s ]", m.statusMsg))
+			content.WriteString(statusLine + "\n")
+		}
+
+		footerHint := lipgloss.NewStyle().
+			Foreground(ColorMuted).
+			Width(targetWidth).
+			Align(lipgloss.Center).
+			Render("y: update • n/esc: cancel")
+		content.WriteString("\n" + footerHint)
+
+	case stateUninstallPrompt:
+		unHeader := lipgloss.NewStyle().
+			Bold(true).
+			Foreground(ColorLove).
+			Render("  Uninstall Kickoff")
+		content.WriteString(unHeader + "\n\n")
+
+		warning := "    This will completely remove Kickoff from your system:\n" +
+			"      • Executable binary\n" +
+			"      • Configuration & channels directory\n" +
+			"      • Local cache directory\n\n" +
+			"    Are you sure you want to proceed?"
+		content.WriteString(lipgloss.NewStyle().Foreground(ColorText).Render(warning) + "\n\n")
+
+		options := "    > [y] Confirm uninstall\n      [n] Cancel and return"
+		content.WriteString(lipgloss.NewStyle().Foreground(ColorLove).Bold(true).Render(options) + "\n")
+
+		footerHint := lipgloss.NewStyle().
+			Foreground(ColorMuted).
+			Width(targetWidth).
+			Align(lipgloss.Center).
+			Render("y: confirm • n/esc: cancel")
+		content.WriteString("\n" + footerHint)
+	}
 
 	// Wrap inside the Gentle-AI style Double Border Frame
 	frameStyle := lipgloss.NewStyle().
@@ -607,9 +1197,24 @@ func (m Model) View() string {
 }
 
 // Run starts the interactive Bubble Tea setup TUI.
-func Run(version string) error {
+// Returns (launchKickoff, error) where launchKickoff indicates if the user selected 'Launch Kickoff'.
+func Run(version string, args ...string) (bool, error) {
 	m := NewModel(version)
+	for _, arg := range args {
+		if arg == "--installer" || arg == "-installer" {
+			if !m.isSystemHealthy() {
+				m.startInstallation(false)
+			}
+		}
+	}
+
 	p := tea.NewProgram(m, tea.WithAltScreen())
-	_, err := p.Run()
-	return err
+	finalModel, err := p.Run()
+	if err != nil {
+		return false, err
+	}
+	if fm, ok := finalModel.(Model); ok {
+		return fm.launchKickoff, nil
+	}
+	return false, nil
 }

@@ -454,17 +454,28 @@ ensure_dependencies() {
   fi
 }
 
-ensure_dependencies
-
-if [ -n "$KICKOFF_SIGNALS_URL" ]; then
-  echo ""
-  echo "Importing configured signals pack..."
-  if "$INSTALL_DIR/kickoff" --help 2>&1 | grep -q "config import"; then
-    "$INSTALL_DIR/kickoff" config import "$KICKOFF_SIGNALS_URL" || true
-  else
-    echo "Note: This version of kickoff does not support 'config import'. Skipping signals import."
+if [ "$AUTO_YES" -eq 1 ]; then
+  ensure_dependencies
+  if [ -n "$KICKOFF_SIGNALS_URL" ]; then
+    echo ""
+    echo "Importing configured signals pack..."
+    if "$INSTALL_DIR/kickoff" --help 2>&1 | grep -q "config import"; then
+      "$INSTALL_DIR/kickoff" config import "$KICKOFF_SIGNALS_URL" || true
+    fi
   fi
+  echo ""
+  echo "All set! Run 'kickoff' to get started."
+  exit 0
 fi
 
-echo ""
-echo "All set! Run 'kickoff' to get started."
+# Interactive launch of the Kickoff Setup TUI
+if [ -t 0 ]; then
+  exec "$INSTALL_DIR/kickoff" setup
+elif [ -c /dev/tty ] && [ -t 1 ]; then
+  exec "$INSTALL_DIR/kickoff" setup </dev/tty
+elif [ -r /dev/tty ] && [ -t 1 ]; then
+  exec "$INSTALL_DIR/kickoff" setup </dev/tty
+else
+  echo ""
+  echo "All set! Run 'kickoff setup' to launch interactive dependency setup and system doctor."
+fi

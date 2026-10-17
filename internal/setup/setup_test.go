@@ -5,12 +5,13 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/e12jassir/kickoff-cli/internal/updater"
 )
 
 func TestSetup_NewModel_And_Diagnostics(t *testing.T) {
-	m := NewModel("v0.2.2")
-	if len(m.options) != 6 {
-		t.Fatalf("expected 6 options, got %d", len(m.options))
+	m := NewModel("v0.2.4")
+	if len(m.options) != 8 {
+		t.Fatalf("expected 8 options, got %d", len(m.options))
 	}
 	if len(m.checks) == 0 {
 		t.Fatalf("expected system checks to be populated")
@@ -29,7 +30,7 @@ func TestSetup_NewModel_And_Diagnostics(t *testing.T) {
 }
 
 func TestSetup_Navigation_CursorWrap(t *testing.T) {
-	m := NewModel("v0.2.2")
+	m := NewModel("v0.2.4")
 
 	// Initial cursor is 0
 	if m.cursor != 0 {
@@ -66,7 +67,7 @@ func TestSetup_Navigation_CursorWrap(t *testing.T) {
 }
 
 func TestSetup_QuitKey(t *testing.T) {
-	m := NewModel("v0.2.2")
+	m := NewModel("v0.2.4")
 	newM, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
 	m = newM.(Model)
 	if !m.quitting {
@@ -78,7 +79,7 @@ func TestSetup_QuitKey(t *testing.T) {
 }
 
 func TestSetup_View_Rendering(t *testing.T) {
-	m := NewModel("v0.2.2")
+	m := NewModel("v0.2.4")
 	m.width = 84
 	m.height = 35
 
@@ -95,20 +96,17 @@ func TestSetup_View_Rendering(t *testing.T) {
 	}
 
 	// 3. Verify Version & Title
-	if !strings.Contains(view, "Kickoff v0.2.2") {
-		t.Errorf("expected view to contain version v0.2.2")
+	if !strings.Contains(view, "Kickoff v0.2.4") {
+		t.Errorf("expected view to contain version v0.2.4")
 	}
 
-	// 4. Verify System Diagnostics
-	if !strings.Contains(view, "System Diagnostics") {
-		t.Errorf("expected view to contain 'System Diagnostics'")
-	}
-	if !strings.Contains(view, "mpv:") {
-		t.Errorf("expected view to contain mpv check")
+	// 4. Verify Configuration & Setup header
+	if !strings.Contains(view, "Configuration & Setup") {
+		t.Errorf("expected view to contain 'Configuration & Setup'")
 	}
 
-	// 5. Verify Menu Options and Active Cursor
-	if !strings.Contains(view, "▸ Test MPV stream player") {
+	// 5. Verify Menu Options and Active Minimalist Cursor (> )
+	if !strings.Contains(view, "> Install dependencies & setup") {
 		t.Errorf("expected view to show active cursor on first option")
 	}
 
@@ -118,11 +116,97 @@ func TestSetup_View_Rendering(t *testing.T) {
 	}
 
 	// 7. Strictly NO Emojis in setup view
-	disallowed := []string{"⚽", "✨", "🎉", "🚀", "📡", "⚙️"}
+	disallowed := []string{"⚽", "✨", "🎉", "🚀", "📡", "⚙️", "📦", "🩺", "🗑️"}
 	for _, bad := range disallowed {
 		if strings.Contains(view, bad) {
 			t.Errorf("found disallowed emoji %q in setup view", bad)
 		}
+	}
+}
+
+func TestSetup_Doctor_View(t *testing.T) {
+	m := NewModel("v0.2.4")
+	m.width = 84
+	m.height = 35
+	m.state = stateDoctor
+
+	view := m.View()
+
+	if !strings.Contains(view, "System Doctor (Diagnostics)") {
+		t.Errorf("expected view to contain 'System Doctor (Diagnostics)'")
+	}
+	if !strings.Contains(view, "mpv:") {
+		t.Errorf("expected doctor view to contain mpv check")
+	}
+	if !strings.Contains(view, "[t] Test stream playback") {
+		t.Errorf("expected doctor view to contain stream playback action")
+	}
+
+	// Return to menu on Esc
+	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = newM.(Model)
+	if m.state != stateMenu {
+		t.Errorf("expected state to return to stateMenu on Esc, got %v", m.state)
+	}
+}
+
+func TestSetup_Installing_View(t *testing.T) {
+	m := NewModel("v0.2.4")
+	m.width = 84
+	m.height = 35
+	m.state = stateInstalling
+	m.installSteps[0].Status = "done"
+	m.installSteps[0].Detail = "linux/amd64 detected"
+	m.installSteps[1].Status = "running"
+
+	view := m.View()
+
+	if !strings.Contains(view, "Installing Kickoff Dependencies") {
+		t.Errorf("expected view to contain 'Installing Kickoff Dependencies'")
+	}
+	if !strings.Contains(view, "[ok]") {
+		t.Errorf("expected view to contain [ok] badge for completed step")
+	}
+	if !strings.Contains(view, "linux/amd64 detected") {
+		t.Errorf("expected view to contain detail for completed step")
+	}
+}
+
+func TestSetup_UpdatePrompt_View(t *testing.T) {
+	m := NewModel("v0.2.3")
+	m.width = 84
+	m.height = 35
+	m.state = stateUpdatePrompt
+	m.latestRelease = &updater.ReleaseInfo{
+		TagName: "v0.2.4",
+	}
+
+	view := m.View()
+
+	if !strings.Contains(view, "Software Update Available") {
+		t.Errorf("expected view to contain 'Software Update Available'")
+	}
+	if !strings.Contains(view, "v0.2.3") || !strings.Contains(view, "v0.2.4") {
+		t.Errorf("expected view to display current and latest versions")
+	}
+	if !strings.Contains(view, "> [y] Yes, update now") {
+		t.Errorf("expected view to display update choice")
+	}
+}
+
+func TestSetup_UninstallPrompt_View(t *testing.T) {
+	m := NewModel("v0.2.4")
+	m.width = 84
+	m.height = 35
+	m.state = stateUninstallPrompt
+
+	view := m.View()
+
+	if !strings.Contains(view, "Uninstall Kickoff") {
+		t.Errorf("expected view to contain 'Uninstall Kickoff'")
+	}
+	if !strings.Contains(view, "Are you sure you want to proceed?") {
+		t.Errorf("expected view to ask for confirmation")
 	}
 }
 

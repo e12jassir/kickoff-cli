@@ -215,7 +215,17 @@ try {
     }
 }
 
-# 4. Check Video Playback Dependency (mpv)
+$targetExe = Join-Path $installDir "kickoff.exe"
+
+# If interactive (default), launch the Kickoff Setup TUI immediately
+if (-not $Yes -and (Test-Path -Path $targetExe)) {
+    Write-Host ""
+    Write-Host "Opening interactive Kickoff setup..." -ForegroundColor Cyan
+    & $targetExe setup
+    exit 0
+}
+
+# 4. Check Video Playback Dependency (mpv) [Non-interactive mode]
 Write-Host "[3/4] Checking video player dependencies..."
 $hasMpv = (Get-Command mpv.exe -ErrorAction SilentlyContinue) -or (Get-Command mpvnet.exe -ErrorAction SilentlyContinue) -or (Test-Path (Join-Path $installDir "mpv.exe")) -or (Test-Path (Join-Path $installDir "mpvnet.exe"))
 if (-not $hasMpv) {

@@ -19,8 +19,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/e12jassir/kickoff-cli/internal/setup"
 )
 
 const (
@@ -504,14 +502,5 @@ func SelfUpdate(ctx context.Context, repo, currentVersion string) error {
 	fmt.Printf("kickoff successfully updated to version %s\n", rel.TagName)
 	fmt.Printf("Binary location: %s\n", exePath)
 	return nil
-}
-
-// RunSetup diagnoses system dependencies and runs the interactive configuration & diagnostics TUI.
-func RunSetup(ver ...string) error {
-	v := "v0.2.2"
-	if len(ver) > 0 && ver[0] != "" {
-		v = ver[0]
-	}
-	return setup.Run(v)
 }
 

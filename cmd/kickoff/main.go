@@ -15,6 +15,7 @@ import (
 	"github.com/e12jassir/kickoff-cli/internal/espn"
 	"github.com/e12jassir/kickoff-cli/internal/model"
 	"github.com/e12jassir/kickoff-cli/internal/player"
+	"github.com/e12jassir/kickoff-cli/internal/setup"
 	"github.com/e12jassir/kickoff-cli/internal/ui"
 	"github.com/e12jassir/kickoff-cli/internal/updater"
 	"github.com/muesli/termenv"
@@ -66,10 +67,13 @@ func main() {
 	}
 
 	if strings.HasSuffix(filepath.Base(os.Args[0]), "kickoff-setup") {
-		if err := updater.RunSetup(version); err != nil {
+		launch, err := setup.Run(version, os.Args[1:]...)
+		if err != nil {
 			os.Exit(1)
 		}
-		os.Exit(0)
+		if !launch {
+			os.Exit(0)
+		}
 	}
 
 	runDemo := false
@@ -117,10 +121,13 @@ func main() {
 			}
 			os.Exit(0)
 		case "setup":
-			if err := updater.RunSetup(version); err != nil {
+			launch, err := setup.Run(version, os.Args[2:]...)
+			if err != nil {
 				os.Exit(1)
 			}
-			os.Exit(0)
+			if !launch {
+				os.Exit(0)
+			}
 		case "bar":
 			if err := RunBar(os.Args[2:], nil, nil, os.Stdout); err != nil {
 				if errors.Is(err, ErrNoLiveMatches) {
