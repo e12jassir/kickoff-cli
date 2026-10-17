@@ -39,12 +39,17 @@ if %errorlevel% equ 0 (
           "  if (-not $asset) { throw 'No se encontro un asset x86_64 (.7z) en el ultimo release.' }; " ^
           "  Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $dest -UseBasicParsing; " ^
           "  Write-Host ('[OK] Build portable descargado: ' + $asset.name); " ^
-          "  $sevenZip = (Get-Command 7z.exe -ErrorAction SilentlyContinue).Source; " ^
-          "  if (-not $sevenZip) { $p7 = Join-Path $env:ProgramFiles '7-Zip\7z.exe'; if (Test-Path $p7) { $sevenZip = $p7 } }; " ^
-          "  if (-not $sevenZip) { Write-Host '[!] 7-Zip no disponible: no se puede extraer mpv_temp.7z.'; exit 2 }; " ^
-          "  & $sevenZip x $dest ('-o' + $dir) '-y' | Out-Null; " ^
-          "  if (Test-Path (Join-Path $dir 'mpv.exe')) { Write-Host '[OK] mpv.exe extraido correctamente.'; exit 0 } else { Write-Host '[!] La extraccion termino sin encontrar mpv.exe.'; exit 3 } " ^
-          "} catch { Write-Host ('[!] No se pudo descargar el build portable: ' + $_.Exception.Message); exit 1 }"
+          "  $extracted = $false; " ^
+          "  $tar = (Get-Command tar.exe -ErrorAction SilentlyContinue).Source; " ^
+          "  if ($tar) { & $tar -xf $dest -C $dir 2>$null; if (Test-Path (Join-Path $dir 'mpv.exe')) { $extracted = $true } } " ^
+          "  if (-not $extracted) { " ^
+          "    $sevenZip = (Get-Command 7z.exe -ErrorAction SilentlyContinue).Source; " ^
+          "    if (-not $sevenZip) { $p7 = Join-Path $env:ProgramFiles '7-Zip\7z.exe'; if (Test-Path $p7) { $sevenZip = $p7 } }; " ^
+          "    if ($sevenZip) { & $sevenZip x $dest ('-o' + $dir) '-y' | Out-Null; if (Test-Path (Join-Path $dir 'mpv.exe')) { $extracted = $true } } " ^
+          "  } " ^
+          "  Remove-Item $dest -Force -ErrorAction SilentlyContinue; " ^
+          "  if ($extracted) { Write-Host '[OK] mpv.exe extraido correctamente.'; exit 0 } else { throw 'No se pudo extraer mpv.exe con tar ni con 7-Zip.' } " ^
+          "} catch { Write-Host ('[!] Fallback necesario: ' + $_.Exception.Message); exit 1 }"
 
         if !errorlevel! equ 0 (
             echo [OK] mpv instalado con exito.

@@ -217,7 +217,40 @@ if (-not $hasMpv) {
             Write-Host "Skipped mpv installation. Note: Kickoff score tracking works without mpv. Video playback requires mpv (https://mpv.io)."
         }
     } else {
-        Write-Host "mpv is recommended for video playback. winget was not found; please install mpv manually from https://mpv.io."
+        Write-Host "winget not found. Resolving portable mpv build for $archName..."
+        try {
+            $dest = Join-Path $installDir "mpv_temp.7z"
+            $rel = Invoke-RestMethod -Uri 'https://api.github.com/repos/shinchiro/mpv-winbuild-cmake/releases/latest' -Headers @{ 'User-Agent' = 'kickoff-cli-installer' } -UseBasicParsing
+            $candidates = $rel.assets | Where-Object { $_.name -match 'x86_64' -and $_.name -match '\.7z$' }
+            $asset = $candidates | Where-Object { $_.name -notmatch 'v3' } | Select-Object -First 1
+            if (-not $asset) { $asset = $candidates | Select-Object -First 1 }
+            if ($asset) {
+                Write-Host "Downloading portable mpv: $($asset.name)..."
+                Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $dest -UseBasicParsing
+                $extracted = $false
+                $tar = (Get-Command tar.exe -ErrorAction SilentlyContinue).Source
+                if ($tar) {
+                    & $tar -xf $dest -C $installDir 2>$null
+                    if (Test-Path (Join-Path $installDir "mpv.exe")) { $extracted = $true }
+                }
+                if (-not $extracted) {
+                    $sevenZip = (Get-Command 7z.exe -ErrorAction SilentlyContinue).Source
+                    if (-not $sevenZip) { $p7 = Join-Path $env:ProgramFiles '7-Zip\7z.exe'; if (Test-Path $p7) { $sevenZip = $p7 } }
+                    if ($sevenZip) {
+                        & $sevenZip x $dest ('-o' + $installDir) '-y' | Out-Null
+                        if (Test-Path (Join-Path $installDir "mpv.exe")) { $extracted = $true }
+                    }
+                }
+                Remove-Item $dest -Force -ErrorAction SilentlyContinue
+                if ($extracted) {
+                    Write-Host "[OK] Portable mpv installed successfully into $installDir."
+                } else {
+                    Write-Host "mpv is recommended for video playback. Please install mpv manually from https://mpv.io."
+                }
+            }
+        } catch {
+            Write-Host "mpv is recommended for video playback. Please install mpv manually from https://mpv.io."
+        }
     }
 } else {
     Write-Host "[OK] Video player (mpv) is already installed."
