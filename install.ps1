@@ -65,14 +65,23 @@ if (-not [string]::IsNullOrWhiteSpace($Version)) {
     $tag = "v$cleanVer"
     Write-Host "[2/4] Downloading Kickoff $tag for windows/$archName..."
     $downloadUrls = @(
-        "https://github.com/$Repo/releases/download/$tag/kickoff_windows_$archName.zip",
-        "https://github.com/$Repo/releases/download/$tag/kickoff_${cleanVer}_windows_$archName.zip"
+        "https://github.com/$Repo/releases/download/$tag/kickoff_${cleanVer}_windows_$archName.zip",
+        "https://github.com/$Repo/releases/download/$tag/kickoff_windows_$archName.zip"
     )
 } else {
-    Write-Host "[2/4] Downloading latest Kickoff release for windows/$archName..."
+    try {
+        $latestRel = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" -Headers @{ 'User-Agent' = 'kickoff-cli-installer' } -UseBasicParsing
+        $tag = $latestRel.tag_name
+        $cleanVer = $tag.TrimStart('v')
+    } catch {
+        $tag = "latest"
+        $cleanVer = ""
+    }
+    Write-Host "[2/4] Downloading latest Kickoff release ($tag) for windows/$archName..."
     $downloadUrls = @(
-        "https://github.com/$Repo/releases/latest/download/kickoff_windows_$archName.zip",
-        "https://github.com/$Repo/releases/latest/download/kickoff_0.1.2_windows_$archName.zip"
+        "https://github.com/$Repo/releases/download/$tag/kickoff_${cleanVer}_windows_$archName.zip",
+        "https://github.com/$Repo/releases/latest/download/kickoff_${cleanVer}_windows_$archName.zip",
+        "https://github.com/$Repo/releases/latest/download/kickoff_windows_$archName.zip"
     )
 }
 
@@ -181,6 +190,24 @@ try {
         Copy-Item -Path $extractedIco.FullName -Destination (Join-Path $installDir "kickoff.ico") -Force
     }
 
+    # Copy and register JetBrainsMono Nerd Font if bundled in the release
+    $extractedFont = Get-ChildItem -Path $extractPath -Filter "*JetBrainsMono*Nerd*.ttf" -Recurse | Select-Object -First 1
+    if ($extractedFont) {
+        try {
+            $userFontsDir = Join-Path $env:LOCALAPPDATA "Microsoft\Windows\Fonts"
+            if (-not (Test-Path -Path $userFontsDir)) {
+                New-Item -ItemType Directory -Path $userFontsDir -Force | Out-Null
+            }
+            $targetFont = Join-Path $userFontsDir $extractedFont.Name
+            Copy-Item -Path $extractedFont.FullName -Destination $targetFont -Force
+            $regKey = "HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts"
+            New-ItemProperty -Path $regKey -Name "JetBrainsMono Nerd Font (TrueType)" -Value $targetFont -PropertyType String -Force | Out-Null
+            Write-Host "[OK] JetBrains Mono Nerd Font installed and registered."
+        } catch {
+            Write-Warning "Could not register font: $_"
+        }
+    }
+
     Write-Host "[OK] kickoff.exe extracted and installed successfully."
 } finally {
     if (Test-Path -Path $tempDir) {
@@ -190,36 +217,37 @@ try {
 
 # 4. Check Video Playback Dependency (mpv)
 Write-Host "[3/4] Checking video player dependencies..."
-$hasMpv = (Get-Command mpv.exe -ErrorAction SilentlyContinue) -or (Get-Command mpvnet.exe -ErrorAction SilentlyContinue) -or (Test-Path (Join-Path $installDir "mpv.exe"))
+$hasMpv = (Get-Command mpv.exe -ErrorAction SilentlyContinue) -or (Get-Command mpvnet.exe -ErrorAction SilentlyContinue) -or (Test-Path (Join-Path $installDir "mpv.exe")) -or (Test-Path (Join-Path $installDir "mpvnet.exe"))
 if (-not $hasMpv) {
     Write-Host "Resolving video player (mpv) for $archName..."
     $installed = $false
 
-    # Try portable mpv extraction first (native tar on Windows 10+ / 7-Zip)
+    # Try portable mpv extraction first (native Expand-Archive from official mpv.net zip)
     try {
-        $dest = Join-Path $installDir "mpv_temp.7z"
-        $rel = Invoke-RestMethod -Uri 'https://api.github.com/repos/shinchiro/mpv-winbuild-cmake/releases/latest' -Headers @{ 'User-Agent' = 'kickoff-cli-installer' } -UseBasicParsing
-        $candidates = $rel.assets | Where-Object { $_.name -match 'x86_64' -and $_.name -match '\.7z$' }
-        $asset = $candidates | Where-Object { $_.name -notmatch 'v3' } | Select-Object -First 1
-        if (-not $asset) { $asset = $candidates | Select-Object -First 1 }
+        $zipDest = Join-Path $installDir "mpv_portable.zip"
+        $rel = Invoke-RestMethod -Uri 'https://api.github.com/repos/mpvnet-player/mpv.net/releases/latest' -Headers @{ 'User-Agent' = 'kickoff-cli-installer' } -UseBasicParsing
+        $pattern = if ($archName -eq 'arm64') { 'portable-ARM64\.zip$' } else { 'portable-x64\.zip$' }
+        $asset = $rel.assets | Where-Object { $_.name -match $pattern } | Select-Object -First 1
         if ($asset) {
-            Write-Host "Downloading portable mpv: $($asset.name)..."
-            Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $dest -UseBasicParsing
-            $tar = (Get-Command tar.exe -ErrorAction SilentlyContinue).Source
-            if ($tar) {
-                & $tar -xf $dest -C $installDir 2>$null
-                if (Test-Path (Join-Path $installDir "mpv.exe")) { $installed = $true }
+            Write-Host "Downloading portable video player: $($asset.name)..."
+            Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zipDest -UseBasicParsing
+            $tempMpvDir = Join-Path $installDir "mpv_extracted"
+            if (Test-Path $tempMpvDir) { Remove-Item $tempMpvDir -Recurse -Force -ErrorAction SilentlyContinue }
+            Expand-Archive -Path $zipDest -DestinationPath $tempMpvDir -Force
+            Get-ChildItem -Path $tempMpvDir | ForEach-Object {
+                Copy-Item -Path $_.FullName -Destination $installDir -Recurse -Force
             }
-            if (-not $installed) {
-                $sevenZip = (Get-Command 7z.exe -ErrorAction SilentlyContinue).Source
-                if (-not $sevenZip) { $p7 = Join-Path $env:ProgramFiles '7-Zip\7z.exe'; if (Test-Path $p7) { $sevenZip = $p7 } }
-                if ($sevenZip) {
-                    & $sevenZip x $dest ('-o' + $installDir) '-y' | Out-Null
-                    if (Test-Path (Join-Path $installDir "mpv.exe")) { $installed = $true }
-                }
+            Remove-Item $zipDest -Force -ErrorAction SilentlyContinue
+            Remove-Item $tempMpvDir -Recurse -Force -ErrorAction SilentlyContinue
+
+            $mpvNetExe = Join-Path $installDir "mpvnet.exe"
+            $targetMpv = Join-Path $installDir "mpv.exe"
+            if ((Test-Path $mpvNetExe) -and (-not (Test-Path $targetMpv))) {
+                Copy-Item -Path $mpvNetExe -Destination $targetMpv -Force
             }
-            Remove-Item $dest -Force -ErrorAction SilentlyContinue
-            if ($installed) {
+
+            if ((Test-Path $targetMpv) -or (Test-Path $mpvNetExe)) {
+                $installed = $true
                 Write-Host "[OK] Portable mpv installed successfully into $installDir."
             }
         }

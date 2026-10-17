@@ -18,7 +18,7 @@ if not exist "%TARGET_EXE%" (
     exit /b 1
 )
 
-echo [1/3] Verificando reproductor de video (mpv)...
+echo [1/4] Verificando reproductor de video (mpv)...
 where mpv >nul 2>nul
 if %errorlevel% equ 0 (
     echo [OK] mpv ya esta instalado en el sistema.
@@ -26,30 +26,29 @@ if %errorlevel% equ 0 (
     if exist "%SCRIPT_DIR%mpv.exe" (
         echo [OK] mpv.exe portable encontrado en la carpeta.
     ) else (
-        echo [!] mpv no encontrado. Resolviendo el ultimo build portable oficial (x86_64)...
+        echo [!] mpv no encontrado. Descargando build portable oficial (mpv.net)...
         powershell -NoProfile -ExecutionPolicy Bypass -Command ^
           "$ErrorActionPreference = 'Stop'; " ^
           "$dir = '%SCRIPT_DIR%'; " ^
-          "$dest = Join-Path $dir 'mpv_temp.7z'; " ^
+          "$dest = Join-Path $dir 'mpv_portable.zip'; " ^
           "try { " ^
-          "  $rel = Invoke-RestMethod -Uri 'https://api.github.com/repos/shinchiro/mpv-winbuild-cmake/releases/latest' -Headers @{ 'User-Agent' = 'kickoff-cli-installer' } -UseBasicParsing; " ^
-          "  $candidates = $rel.assets | Where-Object { $_.name -match 'x86_64' -and $_.name -match '\.7z$' }; " ^
-          "  $asset = $candidates | Where-Object { $_.name -notmatch 'v3' } | Select-Object -First 1; " ^
-          "  if (-not $asset) { $asset = $candidates | Select-Object -First 1 }; " ^
-          "  if (-not $asset) { throw 'No se encontro un asset x86_64 (.7z) en el ultimo release.' }; " ^
+          "  $rel = Invoke-RestMethod -Uri 'https://api.github.com/repos/mpvnet-player/mpv.net/releases/latest' -Headers @{ 'User-Agent' = 'kickoff-cli-installer' } -UseBasicParsing; " ^
+          "  $asset = $rel.assets | Where-Object { $_.name -match 'portable-x64\.zip$' } | Select-Object -First 1; " ^
+          "  if (-not $asset) { throw 'No se encontro el archivo zip de mpv.net' }; " ^
           "  Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $dest -UseBasicParsing; " ^
-          "  Write-Host ('[OK] Build portable descargado: ' + $asset.name); " ^
-          "  $extracted = $false; " ^
-          "  $tar = (Get-Command tar.exe -ErrorAction SilentlyContinue).Source; " ^
-          "  if ($tar) { & $tar -xf $dest -C $dir 2>$null; if (Test-Path (Join-Path $dir 'mpv.exe')) { $extracted = $true } } " ^
-          "  if (-not $extracted) { " ^
-          "    $sevenZip = (Get-Command 7z.exe -ErrorAction SilentlyContinue).Source; " ^
-          "    if (-not $sevenZip) { $p7 = Join-Path $env:ProgramFiles '7-Zip\7z.exe'; if (Test-Path $p7) { $sevenZip = $p7 } }; " ^
-          "    if ($sevenZip) { & $sevenZip x $dest ('-o' + $dir) '-y' | Out-Null; if (Test-Path (Join-Path $dir 'mpv.exe')) { $extracted = $true } } " ^
-          "  } " ^
+          "  $temp = Join-Path $dir 'mpv_temp'; " ^
+          "  if (Test-Path $temp) { Remove-Item $temp -Recurse -Force -ErrorAction SilentlyContinue }; " ^
+          "  Expand-Archive -Path $dest -DestinationPath $temp -Force; " ^
+          "  Get-ChildItem -Path $temp | ForEach-Object { Copy-Item $_.FullName -Destination $dir -Recurse -Force }; " ^
           "  Remove-Item $dest -Force -ErrorAction SilentlyContinue; " ^
-          "  if ($extracted) { Write-Host '[OK] mpv.exe extraido correctamente.'; exit 0 } else { throw 'No se pudo extraer mpv.exe con tar ni con 7-Zip.' } " ^
-          "} catch { Write-Host ('[!] Fallback necesario: ' + $_.Exception.Message); exit 1 }"
+          "  Remove-Item $temp -Recurse -Force -ErrorAction SilentlyContinue; " ^
+          "  if (Test-Path (Join-Path $dir 'mpvnet.exe')) { Copy-Item (Join-Path $dir 'mpvnet.exe') (Join-Path $dir 'mpv.exe') -Force }; " ^
+          "  Write-Host '[OK] mpv.exe portable instalado correctamente.'; " ^
+          "  exit 0; " ^
+          "} catch { " ^
+          "  Write-Host ('[!] Fallback necesario: ' + $_.Exception.Message); " ^
+          "  exit 1; " ^
+          "}"
 
         if !errorlevel! equ 0 (
             echo [OK] mpv instalado con exito.
@@ -78,7 +77,20 @@ if %errorlevel% equ 0 (
 )
 echo.
 
-echo [2/3] Creando acceso directo en el Escritorio con logo oficial...
+echo [2/4] Verificando fuente JetBrains Mono Nerd Font...
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$font = Get-ChildItem -Path '%SCRIPT_DIR%' -Filter '*JetBrainsMono*Nerd*.ttf' | Select-Object -First 1; " ^
+  "if ($font) { " ^
+  "  $dir = Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Fonts'; " ^
+  "  if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }; " ^
+  "  $target = Join-Path $dir $font.Name; " ^
+  "  Copy-Item $font.FullName -Destination $target -Force; " ^
+  "  New-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts' -Name 'JetBrainsMono Nerd Font (TrueType)' -Value $target -PropertyType String -Force | Out-Null; " ^
+  "  Write-Host '[OK] Fuente JetBrains Mono Nerd Font instalada en el sistema.' " ^
+  "}"
+echo.
+
+echo [3/4] Creando acceso directo en el Escritorio con logo oficial...
 
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$ws = New-Object -ComObject WScript.Shell; " ^
@@ -97,7 +109,7 @@ if %errorlevel% equ 0 (
 )
 echo.
 
-echo [3/3] Iniciando Kickoff...
+echo [4/4] Iniciando Kickoff...
 timeout /t 2 >nul
 start "" "%TARGET_EXE%"
 exit /b 0

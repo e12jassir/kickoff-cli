@@ -48,7 +48,7 @@ func printHelp() {
 	fmt.Println("  kickoff config import <src> Import channels from local file or URL (JSON or M3U playlist)")
 	fmt.Println("  kickoff import <src>        Shortcut for 'kickoff config import'")
 	fmt.Println("  kickoff update              Update kickoff automatically to latest release")
-	fmt.Println("  kickoff setup               Diagnose and verify system dependencies (mpv, fonts)")
+	fmt.Println("  kickoff setup               Diagnose and verify system dependencies (mpv, channels)")
 	fmt.Println("  kickoff version             Print version information and exit")
 	fmt.Println("\nFlags:")
 	fmt.Println("  -demo                       Launch TUI in demo mode with simulated matches")

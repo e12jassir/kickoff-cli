@@ -116,7 +116,7 @@ git clone https://github.com/e12jassir/kickoff-cli.git && cd kickoff-cli && make
 kickoff            Open the match explorer
 kickoff bar        Status bar & prompt integration (plain, tmux, waybar, starship)
 kickoff update     Update to the latest release
-kickoff setup      Check mpv, fonts, config and cache
+kickoff setup      Check mpv, config and cache
 kickoff version    Print the version
 ```
 
