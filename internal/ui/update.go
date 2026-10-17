@@ -109,7 +109,7 @@ func autoSyncTickCmd(d time.Duration) tea.Cmd {
 
 // nextSyncInterval dynamically computes the polling frequency based on match states.
 func (m Model) nextSyncInterval() time.Duration {
-	if m.state != StateBrowsing && m.state != StateChannelSelect && m.state != StatePlaying && m.state != StateTacticalBoard {
+	if m.state != StateBrowsing && m.state != StateChannelSelect && m.state != StatePlaying {
 		return 30 * time.Second
 	}
 	if len(m.matches) == 0 {
@@ -299,11 +299,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case autoSyncTickMsg:
 		cmds := []tea.Cmd{autoSyncTickCmd(m.nextSyncInterval())}
-		if m.state == StateBrowsing || m.state == StateChannelSelect || m.state == StatePlaying || m.state == StateTacticalBoard {
+		if m.state == StateBrowsing || m.state == StateChannelSelect || m.state == StatePlaying {
 			league := m.CurrentLeague()
 			cmds = append(cmds, forceRefreshMatchesCmd(m.client, league.Key, true))
 
-			if m.state == StateChannelSelect || m.state == StateTacticalBoard {
+			if m.state == StateChannelSelect {
 				if selMatch, ok := m.CurrentSelectedMatch(); ok && selMatch.ID != "" && selMatch.Status.State == "in" {
 					cmds = append(cmds, forceFetchMatchStatsCmd(m.client, league.Key, selMatch.ID))
 				}
@@ -323,7 +323,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.statusMsg = ""
 			} else {
 				var prevSelectedID string
-				if (m.state == StateChannelSelect || m.state == StatePlaying || m.state == StateTacticalBoard) && m.selectedMatchID != "" {
+				if (m.state == StateChannelSelect || m.state == StatePlaying) && m.selectedMatchID != "" {
 					prevSelectedID = m.selectedMatchID
 				} else if m.leagueTab == TabResumen {
 					pms := m.ResumenMatches()
@@ -521,13 +521,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						})
 					}
 				}
+			case "esc":
+				if len(m.categories) > 0 {
+					currCat := m.categories[m.categoryCursor]
+					if !m.categoryMode {
+						m.categoryMode = true
+						return m, nil
+					} else if m.expandedCats[currCat] {
+						m.expandedCats[currCat] = false
+						return m, nil
+					}
+				}
 			case "left", "h":
 				if len(m.categories) > 0 {
 					currCat := m.categories[m.categoryCursor]
-					if m.expandedCats[currCat] {
+					if !m.categoryMode {
+						m.categoryMode = true
+					} else if m.expandedCats[currCat] {
 						m.expandedCats[currCat] = false
 					}
-					m.categoryMode = true
 				}
 			case "right", "l":
 				if len(m.categories) > 0 {
@@ -612,17 +624,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if len(m.categories) > 0 {
 					currCat := m.categories[m.categoryCursor]
 					m.expandedCats[currCat] = !m.expandedCats[currCat]
-					if m.expandedCats[currCat] && len(m.categoryIndices[currCat]) > 0 {
-						m.leagueCursor = m.categoryIndices[currCat][0]
+					if m.expandedCats[currCat] {
+						m.categoryMode = false
+						if len(m.categoryIndices[currCat]) > 0 {
+							m.leagueCursor = m.categoryIndices[currCat][0]
+						}
+					} else {
+						m.categoryMode = true
 					}
 				}
 			case "enter":
 				if len(m.categories) > 0 {
 					currCat := m.categories[m.categoryCursor]
 					indices := m.categoryIndices[currCat]
-					// If on category header and it's collapsed, expand it!
-					if m.categoryMode && !m.expandedCats[currCat] {
-						m.expandedCats[currCat] = true
+					if m.categoryMode {
+						if !m.expandedCats[currCat] {
+							m.expandedCats[currCat] = true
+							if len(indices) > 0 {
+								m.leagueCursor = indices[0]
+							}
+							return m, nil
+						}
+						m.categoryMode = false
 						if len(indices) > 0 {
 							m.leagueCursor = indices[0]
 						}
@@ -741,7 +764,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.channels = m.catalog.GetChannels(selectedMatch)
 						m.channelCursor = 0
 						m.modalTab = 0
-						m.lineupTeam = 0
 						m.state = StateChannelSelect
 						if (selectedMatch.Stats == nil || selectedMatch.Lineups == nil) && selectedMatch.ID != "" && !m.detailsLoaded[selectedMatch.ID] {
 							return m, fetchMatchStatsCmd(m.client, m.CurrentLeague().Key, selectedMatch.ID)
@@ -755,7 +777,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.channels = m.catalog.GetChannels(selectedMatch)
 						m.channelCursor = 0
 						m.modalTab = 0
-						m.lineupTeam = 0
 						m.state = StateChannelSelect
 						if (selectedMatch.Stats == nil || selectedMatch.Lineups == nil) && selectedMatch.ID != "" && !m.detailsLoaded[selectedMatch.ID] {
 							return m, fetchMatchStatsCmd(m.client, m.CurrentLeague().Key, selectedMatch.ID)
@@ -780,7 +801,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.channels = nil
 				m.channelCursor = 0
 				m.modalTab = 0
-				m.lineupTeam = 0
 				m.statusMsg = ""
 				m.errorMsg = ""
 				return m, nil
@@ -802,22 +822,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case StateChannelSelect:
 			switch key {
 			case "left", "h":
-				if m.modalTab == 2 {
-					m.ToggleLineupTeam()
-					return m, nil
-				}
 				m.modalTab = (m.modalTab - 1 + 3) % 3
 			case "right", "l":
-				if m.modalTab == 2 {
-					m.ToggleLineupTeam()
-					return m, nil
-				}
 				m.modalTab = (m.modalTab + 1) % 3
 			case "tab":
-				if m.modalTab == 2 {
-					m.ToggleLineupTeam()
-					return m, nil
-				}
 				m.modalTab = (m.modalTab + 1) % 3
 			case "shift+tab":
 				m.modalTab = (m.modalTab - 1 + 3) % 3
@@ -868,31 +876,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						playStreamCmd(m.player, req, m.playbackID),
 					)
 				}
-			case "c", "space", " ":
-				if m.modalTab == 2 {
-					m.state = StateTacticalBoard
-					return m, nil
-				}
 			case "esc", "backspace":
 				m.state = StateBrowsing
 				m.selectedMatchID = ""
 				m.channels = nil
 				m.channelCursor = 0
 				m.modalTab = 0
-				m.lineupTeam = 0
 				return m, nil
-			}
-
-		case StateTacticalBoard:
-			switch key {
-			case "esc", "c", "backspace":
-				m.state = StateChannelSelect
-				return m, nil
-			case "q", "ctrl+c":
-				if m.player != nil {
-					_ = m.player.Stop()
-				}
-				return m, tea.Quit
 			}
 
 		case StateLoading, StateError:
@@ -914,7 +904,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.channels = nil
 				m.channelCursor = 0
 				m.modalTab = 0
-				m.lineupTeam = 0
 				m.statusMsg = ""
 				m.errorMsg = ""
 				return m, nil

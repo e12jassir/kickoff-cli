@@ -20,7 +20,6 @@ const (
 	StateChannelSelect
 	StatePlaying
 	StateError
-	StateTacticalBoard
 )
 
 // LeagueTab represents the 4 views per league.
@@ -69,7 +68,6 @@ type Model struct {
 	channels      []model.Channel
 	channelCursor int
 	modalTab      int
-	lineupTeam    int // 0: Home, 1: Away
 
 	livePulse  bool
 	pulseStep  int
@@ -145,7 +143,6 @@ func NewModel(client model.Client, catalog model.Resolver, player model.Controll
 		channels:        nil,
 		channelCursor:   0,
 		modalTab:        0,
-		lineupTeam:      0,
 		livePulse:       true,
 		pulseStep:       0,
 		startupProgress: 0,
@@ -260,7 +257,7 @@ func (m Model) WithDetailsLoaded(matchIDs ...string) Model {
 
 // CurrentSelectedMatch returns the currently selected match based on active modal anchor, tab, and bounds checks.
 func (m Model) CurrentSelectedMatch() (model.Match, bool) {
-	if (m.state == StateChannelSelect || m.state == StatePlaying || m.state == StateTacticalBoard) && m.selectedMatchID != "" {
+	if (m.state == StateChannelSelect || m.state == StatePlaying) && m.selectedMatchID != "" {
 		for _, mt := range m.matches {
 			if mt.ID == m.selectedMatchID {
 				return mt, true
@@ -283,14 +280,4 @@ func (m Model) CurrentSelectedMatch() (model.Match, bool) {
 		return m.matches[m.matchCursor], true
 	}
 	return model.Match{}, false
-}
-
-// LineupTeam returns the currently selected team index for tactical lineups (0: Home, 1: Away).
-func (m Model) LineupTeam() int {
-	return m.lineupTeam
-}
-
-// ToggleLineupTeam toggles between Home (0) and Away (1) for tactical lineups.
-func (m *Model) ToggleLineupTeam() {
-	m.lineupTeam = 1 - m.lineupTeam
 }

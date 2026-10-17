@@ -23,25 +23,9 @@ func (m Model) View() string {
 	if m.state == StateMainMenu {
 		return renderMainMenu(m)
 	}
-	if m.state == StateTacticalBoard {
-		return renderTacticalBoardView(m)
-	}
 	return renderBrowsing(m)
 }
 
-func renderTacticalBoardView(m Model) string {
-	selMatch, _ := m.CurrentSelectedMatch()
-	board := RenderFullTacticalBoard(selMatch, m.width, m.height, m.noEmoji)
-	w := m.width
-	h := m.height
-	if w <= 0 {
-		w = 80
-	}
-	if h <= 0 {
-		h = 24
-	}
-	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, board)
-}
 
 func renderStartup(m Model) string {
 	logo := AsciiLogoStyle.Render(AsciiLogo)
@@ -113,21 +97,23 @@ func renderMainMenu(m Model) string {
 					continue
 				}
 				league := m.leagues[lIdx]
-				isLeagueSelected := (!m.categoryMode || catIdx == m.categoryCursor) && (lIdx == m.leagueCursor)
+				isLeagueSelected := !m.categoryMode && (lIdx == m.leagueCursor)
 
 				prefix := "     "
 				if isLeagueSelected {
 					prefix = "   › "
 				}
 
-				emoji := league.Emoji
+				var itemText string
 				if m.noEmoji {
-					emoji = "-"
-				} else if emoji == "" {
-					emoji = "⚽"
+					itemText = fmt.Sprintf("%s%s", prefix, league.Name)
+				} else {
+					emoji := league.Emoji
+					if emoji == "" {
+						emoji = "⚽"
+					}
+					itemText = fmt.Sprintf("%s%s  %s", prefix, emoji, league.Name)
 				}
-
-				itemText := fmt.Sprintf("%s%s  %s", prefix, emoji, league.Name)
 				if isLeagueSelected {
 					lines = append(lines, MenuItemSelected.Render(itemText))
 				} else {
@@ -270,18 +256,13 @@ func renderBrowsing(m Model) string {
 				modalWidth = 74
 				modalBox = modalBox.Width(modalWidth + 6)
 			}
-			modalContent := renderChannelModal(selMatch, m.channels, m.channelCursor, m.modalTab, m.livePulse, m.spinner.View(), m.IsDetailsLoaded(selMatch.ID), m.noEmoji, m.lineupTeam, modalWidth)
+			modalContent := renderChannelModal(selMatch, m.channels, m.channelCursor, m.modalTab, m.livePulse, m.spinner.View(), m.IsDetailsLoaded(selMatch.ID), m.noEmoji, modalWidth)
 			body = modalBox.Render(modalContent)
-			if m.modalTab == 2 {
-				footer = FooterHelpStyle.Render("h/l o ←/→: pestaña  •  c/espacio: cancha 2D  •  esc: volver  •  q: salir")
-			} else {
+			if m.modalTab == 0 {
 				footer = FooterHelpStyle.Render("h/l o ←/→: pestaña  •  j/k o ↑/↓: canal  •  enter: reproducir  •  esc: volver")
+			} else {
+				footer = FooterHelpStyle.Render("h/l o ←/→: pestaña  •  esc: volver  •  q: salir")
 			}
-
-		case StateTacticalBoard:
-			selMatch, _ := m.CurrentSelectedMatch()
-			body = RenderFullTacticalBoard(selMatch, m.width, m.height, m.noEmoji)
-			footer = FooterHelpStyle.Render("esc / c: volver  •  q: salir")
 
 		default: // StateBrowsing, StatePlaying
 			switch m.leagueTab {
@@ -745,23 +726,16 @@ func renderMatchItem(match model.Match, isSelected bool, livePulse bool) []strin
 
 func renderChannelModal(match model.Match, channels []model.Channel, selectedIdx int, modalTab int, livePulse bool, spinnerStr string, detailsLoaded bool, optArgs ...any) string {
 	noEmoji := false
-	lineupTeam := 0
 	modalContentWidth := 60
 
-	if len(optArgs) > 0 {
-		if b, ok := optArgs[0].(bool); ok {
-			noEmoji = b
-		}
-	}
-	if len(optArgs) > 1 {
-		if t, ok := optArgs[1].(int); ok {
-			lineupTeam = t
-			_ = lineupTeam
-		}
-	}
-	if len(optArgs) > 2 {
-		if w, ok := optArgs[2].(int); ok && w > 0 {
-			modalContentWidth = w
+	for _, arg := range optArgs {
+		switch v := arg.(type) {
+		case bool:
+			noEmoji = v
+		case int:
+			if v > 0 {
+				modalContentWidth = v
+			}
 		}
 	}
 	var modal strings.Builder
@@ -791,7 +765,27 @@ func renderChannelModal(match model.Match, channels []model.Channel, selectedIdx
 	case "post":
 		statusPart = StatusPostStyle.Render("FINALIZADO")
 	default:
-		statusPart = StatusPreStyle.Render(fmt.Sprintf("%s (Hoy)", match.TimeStr))
+		preText := match.TimeStr
+		if !match.StartTime.IsZero() {
+			now := time.Now().In(match.StartTime.Location())
+			today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, match.StartTime.Location())
+			matchDay := time.Date(match.StartTime.Year(), match.StartTime.Month(), match.StartTime.Day(), 0, 0, 0, 0, match.StartTime.Location())
+			daysDiff := int(matchDay.Sub(today).Hours() / 24)
+
+			switch daysDiff {
+			case 0:
+				preText = fmt.Sprintf("%s (Hoy)", match.TimeStr)
+			case 1:
+				preText = fmt.Sprintf("%s (Mañana)", match.TimeStr)
+			case -1:
+				preText = fmt.Sprintf("%s (Ayer)", match.TimeStr)
+			default:
+				preText = fmt.Sprintf("%s • %s", match.StartTime.Format("02/01"), match.TimeStr)
+			}
+		} else if preText == "" {
+			preText = "Programado"
+		}
+		statusPart = StatusPreStyle.Render(preText)
 	}
 
 	venue := match.Venue
@@ -971,11 +965,6 @@ func renderCompactLineups(match model.Match, modalContentWidth int, noEmoji bool
 
 	var sb strings.Builder
 
-	// Action banner
-	bannerText := "[ c / Espacio: Ver Cancha Táctica Completa 2D ]"
-	banner := lipgloss.NewStyle().Width(modalContentWidth).Align(lipgloss.Center).Foreground(ColorHighlight).Bold(true).Render(bannerText)
-	sb.WriteString(banner + "\n\n")
-
 	homeName := match.HomeTeam.DisplayName
 	if homeName == "" {
 		homeName = match.HomeTeam.Name
@@ -1094,11 +1083,6 @@ func renderCompactLineups(match model.Match, modalContentWidth int, noEmoji bool
 	}
 
 	return sb.String()
-}
-
-// renderModalContent renders the tactical pitch modal tab content.
-func renderModalContent(match model.Match, lineupTeam int, modalContentWidth int, noEmoji bool) string {
-	return RenderTacticalPitch(match, lineupTeam, modalContentWidth, noEmoji)
 }
 
 func renderPossessionBar(homeStr, awayStr string, totalWidth int) string {

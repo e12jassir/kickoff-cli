@@ -796,9 +796,9 @@ func TestModel_Match_Events_And_Stats_Modal(t *testing.T) {
 		t.Errorf("expected formations badge in Tab 2, got:\n%s", viewTab2)
 	}
 
-	// Verify compact 2-column starters and action banner
-	if !strings.Contains(viewTab2, "c / Espacio: Ver Cancha Táctica Completa 2D") {
-		t.Errorf("expected action banner in Tab 2, got:\n%s", viewTab2)
+	// Verify compact 2-column starters and NO 2D action banner
+	if strings.Contains(viewTab2, "c / Espacio: Ver Cancha Táctica Completa 2D") {
+		t.Errorf("did not expect 2D action banner in Tab 2, got:\n%s", viewTab2)
 	}
 	if !strings.Contains(viewTab2, "M. ter Stegen") || !strings.Contains(viewTab2, "R. Lewandowski") {
 		t.Errorf("expected home starters in Tab 2, got:\n%s", viewTab2)
@@ -807,22 +807,26 @@ func TestModel_Match_Events_And_Stats_Modal(t *testing.T) {
 		t.Errorf("expected away starters in Tab 2, got:\n%s", viewTab2)
 	}
 
-	// Transition to StateTacticalBoard with 'c'
-	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	// Verify seamless left/right navigation out of Tab 2 (no key trapping)
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
 	m = newM.(Model)
-	if m.state != StateTacticalBoard {
-		t.Fatalf("expected StateTacticalBoard after 'c', got %d", m.state)
+	if m.modalTab != 1 {
+		t.Fatalf("expected modalTab 1 after left from Tab 2, got %d", m.modalTab)
 	}
-	viewBoard := m.View()
-	if !strings.Contains(viewBoard, "PIZARRA TÁCTICA") && !strings.Contains(viewBoard, "CANCHA TÁCTICA") && !strings.Contains(viewBoard, "DETALLES Y BANCOS") {
-		t.Errorf("expected tactical board view, got:\n%s", viewBoard)
-	}
-
-	// Return to StateChannelSelect with 'esc'
-	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
 	m = newM.(Model)
-	if m.state != StateChannelSelect {
-		t.Fatalf("expected StateChannelSelect after esc, got %d", m.state)
+	if m.modalTab != 0 {
+		t.Fatalf("expected modalTab 0 after left from Tab 1, got %d", m.modalTab)
+	}
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	m = newM.(Model)
+	if m.modalTab != 1 {
+		t.Fatalf("expected modalTab 1 after right from Tab 0, got %d", m.modalTab)
+	}
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	m = newM.(Model)
+	if m.modalTab != 2 {
+		t.Fatalf("expected modalTab 2 after right from Tab 1, got %d", m.modalTab)
 	}
 
 	// --- 4. DIRECT NUMERIC TAB SWITCHING ---
@@ -2034,7 +2038,7 @@ func TestModel_Esc_WhenLoading_StopsPlayer(t *testing.T) {
 	}
 }
 
-func TestStateTacticalBoard_KeyTransitionsAndRendering(t *testing.T) {
+func TestModalTabTransitionsAndLineups(t *testing.T) {
 	cli := &mockClient{}
 	cat := &mockCatalog{}
 	pla := &mockPlayer{}
@@ -2043,7 +2047,7 @@ func TestStateTacticalBoard_KeyTransitionsAndRendering(t *testing.T) {
 	m.height = 35
 
 	match := model.Match{
-		ID:        "modal-tactical-test",
+		ID:        "modal-tab-test",
 		Title:     "FC Barcelona vs Real Madrid",
 		HomeTeam:  model.Competitor{ID: "home-1", DisplayName: "FC Barcelona"},
 		AwayTeam:  model.Competitor{ID: "away-1", DisplayName: "Real Madrid"},
@@ -2094,80 +2098,168 @@ func TestStateTacticalBoard_KeyTransitionsAndRendering(t *testing.T) {
 		t.Fatalf("expected modalTab 2, got %d", m.modalTab)
 	}
 
-	// Verify action banner in compact view
-	compactView := m.View()
-	if !strings.Contains(compactView, "[ c / Espacio: Ver Cancha Táctica Completa 2D ]") {
-		t.Errorf("expected action banner in compact view, got:\n%s", compactView)
+	// Verify coaches and lineups are rendered without 2D pitch banner
+	viewTab2 := m.View()
+	if strings.Contains(viewTab2, "c / Espacio: Ver Cancha Táctica Completa 2D") {
+		t.Errorf("did not expect 2D pitch banner in Tab 2, got:\n%s", viewTab2)
+	}
+	if !strings.Contains(viewTab2, "DT: Hansi Flick") || !strings.Contains(viewTab2, "DT: Carlo Ancelotti") {
+		t.Errorf("expected coaches in Tab 2, got:\n%s", viewTab2)
 	}
 
-	// 1. Press 'space' -> Enter StateTacticalBoard
-	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	// Verify free tab navigation out of Tab 2 with Left
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
 	m = newM.(Model)
-	if m.state != StateTacticalBoard {
-		t.Fatalf("expected StateTacticalBoard after space, got %d", m.state)
+	if m.modalTab != 1 {
+		t.Fatalf("expected modalTab 1 after Left on Tab 2, got %d", m.modalTab)
 	}
 
-	// Verify full tactical board rendering
-	fullView := m.View()
-	if !strings.Contains(fullView, "DT: Hansi Flick") {
-		t.Errorf("expected 'DT: Hansi Flick' in tactical board view, got:\n%s", fullView)
-	}
-	if !strings.Contains(fullView, "DT: Carlo Ancelotti") {
-		t.Errorf("expected 'DT: Carlo Ancelotti' in tactical board view, got:\n%s", fullView)
-	}
-	if !strings.Contains(fullView, "[esc / c: Volver]") {
-		t.Errorf("expected '[esc / c: Volver]' in tactical board view, got:\n%s", fullView)
-	}
-
-	// 2. Press 'c' inside StateTacticalBoard -> Return to StateChannelSelect
-	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	// Left to Tab 0
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
 	m = newM.(Model)
-	if m.state != StateChannelSelect {
-		t.Fatalf("expected StateChannelSelect after 'c' inside tactical board, got %d", m.state)
+	if m.modalTab != 0 {
+		t.Fatalf("expected modalTab 0 after Left on Tab 1, got %d", m.modalTab)
 	}
 
-	// 3. Press 'c' inside StateChannelSelect (Tab 2) -> Re-enter StateTacticalBoard
-	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	// Tab cycling forward
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	m = newM.(Model)
-	if m.state != StateTacticalBoard {
-		t.Fatalf("expected StateTacticalBoard after 'c' in modalTab 2, got %d", m.state)
+	if m.modalTab != 1 {
+		t.Fatalf("expected modalTab 1 after Tab, got %d", m.modalTab)
 	}
-
-	// 4. Press 'backspace' inside StateTacticalBoard -> Return to StateChannelSelect
-	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	m = newM.(Model)
-	if m.state != StateChannelSelect {
-		t.Fatalf("expected StateChannelSelect after backspace inside tactical board, got %d", m.state)
+	if m.modalTab != 2 {
+		t.Fatalf("expected modalTab 2 after Tab, got %d", m.modalTab)
 	}
-
-	// 5. Re-enter StateTacticalBoard via space
-	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	m = newM.(Model)
-	if m.state != StateTacticalBoard {
-		t.Fatalf("expected StateTacticalBoard after space rune, got %d", m.state)
+	if m.modalTab != 0 {
+		t.Fatalf("expected modalTab 0 after Tab wrap-around, got %d", m.modalTab)
 	}
 
-	// 6. Press 'esc' inside StateTacticalBoard -> Return to StateChannelSelect
+	// Shift+Tab cycling backward
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	m = newM.(Model)
+	if m.modalTab != 2 {
+		t.Fatalf("expected modalTab 2 after Shift+Tab, got %d", m.modalTab)
+	}
+}
+
+func TestModalDateFormatting(t *testing.T) {
+	cli := &mockClient{}
+	cat := &mockCatalog{}
+	pla := &mockPlayer{}
+	m := NewModel(cli, cat, pla)
+	m.width = 100
+	m.height = 35
+
+	// Future match on Oct 20
+	futureTime := time.Date(2026, time.October, 20, 14, 0, 0, 0, time.Local)
+	matchFuture := model.Match{
+		ID:        "match-future",
+		Title:     "FC Porto vs PSV Eindhoven",
+		HomeTeam:  model.Competitor{ID: "porto", DisplayName: "FC Porto"},
+		AwayTeam:  model.Competitor{ID: "psv", DisplayName: "PSV Eindhoven"},
+		Status:    model.MatchStatus{State: "pre", Description: "Scheduled"},
+		StartTime: futureTime,
+		TimeStr:   "14:00",
+		Venue:     "Estádio do Dragão",
+	}
+
+	m.state = StateBrowsing
+	m.matches = []model.Match{matchFuture}
+	m.matchCursor = 0
+	m.leagueTab = TabPartidos
+
+	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newM.(Model)
+	view := m.View()
+
+	// Must NOT contain "(Hoy)" for a future match!
+	if strings.Contains(view, "(Hoy)") {
+		t.Errorf("future match scheduled for Oct 20 must NOT contain '(Hoy)':\n%s", view)
+	}
+	if !strings.Contains(view, "20/10 • 14:00") {
+		t.Errorf("expected '20/10 • 14:00' in modal header for future match, got:\n%s", view)
+	}
+
+	// Today's match
+	now := time.Now()
+	todayTime := time.Date(now.Year(), now.Month(), now.Day(), 14, 0, 0, 0, time.Local)
+	matchToday := model.Match{
+		ID:        "match-today",
+		Title:     "FC Porto vs PSV Eindhoven",
+		HomeTeam:  model.Competitor{ID: "porto", DisplayName: "FC Porto"},
+		AwayTeam:  model.Competitor{ID: "psv", DisplayName: "PSV Eindhoven"},
+		Status:    model.MatchStatus{State: "pre", Description: "Scheduled"},
+		StartTime: todayTime,
+		TimeStr:   "14:00",
+	}
+	m.matches = []model.Match{matchToday}
+	m.selectedMatchID = matchToday.ID
+	viewToday := m.View()
+	if !strings.Contains(viewToday, "14:00 (Hoy)") {
+		t.Errorf("expected '14:00 (Hoy)' in modal header for today's match, got:\n%s", viewToday)
+	}
+}
+
+func TestMainMenu_SingleCursorAndEscAccordion(t *testing.T) {
+	cli := &mockClient{}
+	cat := &mockCatalog{}
+	pla := &mockPlayer{}
+	m := NewModel(cli, cat, pla)
+
+	// In initial category mode, expand first category
+	m.expandedCats[m.categories[0]] = true
+	m.categoryMode = true
+	m.categoryCursor = 0
+
+	viewCatMode := m.View()
+	// Category header has cursor
+	if !strings.Contains(viewCatMode, "› ●") && !strings.Contains(viewCatMode, "›") {
+		t.Errorf("expected category header to have cursor:\n%s", viewCatMode)
+	}
+	// Inner leagues must NOT have cursor
+	if strings.Contains(viewCatMode, "   › ") {
+		t.Errorf("did NOT expect inner leagues to have cursor when categoryMode is true:\n%s", viewCatMode)
+	}
+
+	// Press Enter on category header -> enters category leagues
+	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newM.(Model)
+	if m.categoryMode {
+		t.Fatalf("expected categoryMode to be false after Enter")
+	}
+
+	viewLeagueMode := m.View()
+	// Inner league has cursor
+	if !strings.Contains(viewLeagueMode, "   › ") {
+		t.Errorf("expected inner league to have cursor when categoryMode is false:\n%s", viewLeagueMode)
+	}
+	// Category header must NOT have cursor
+	if strings.Contains(viewLeagueMode, "› ●") {
+		t.Errorf("did NOT expect category header to have cursor when inside leagues:\n%s", viewLeagueMode)
+	}
+
+	// Press Esc inside leagues -> returns to category header
 	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = newM.(Model)
-	if m.state != StateChannelSelect {
-		t.Fatalf("expected StateChannelSelect after esc inside tactical board, got %d", m.state)
+	if !m.categoryMode {
+		t.Fatalf("expected categoryMode to be true after Esc")
 	}
 
-	// 7. Quit cleanly with 'q'
-	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
-	m = newM.(Model)
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
-	if cmd == nil {
-		t.Errorf("expected tea.Quit cmd on 'q' in StateTacticalBoard")
+	viewBack := m.View()
+	if strings.Contains(viewBack, "   › ") {
+		t.Errorf("did NOT expect inner leagues to have cursor after Esc:\n%s", viewBack)
 	}
 
-	// 8. Quit cleanly with 'ctrl+c'
-	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	// Press Esc again on category header -> collapses category
+	currCat := m.categories[m.categoryCursor]
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = newM.(Model)
-	_, cmd = m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
-	if cmd == nil {
-		t.Errorf("expected tea.Quit cmd on 'ctrl+c' in StateTacticalBoard")
+	if m.expandedCats[currCat] {
+		t.Errorf("expected category to collapse after second Esc")
 	}
 }
 
