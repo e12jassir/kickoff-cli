@@ -89,9 +89,9 @@ func TestSetup_View_Rendering(t *testing.T) {
 		t.Errorf("expected view to contain double borders (╔═╗ ╚═╝)")
 	}
 
-	// 2. Verify Braille ASCII football art
-	if !strings.Contains(view, "⣠⣤⣶⣶⣶⣶⣶⣶⣤⣀") {
-		t.Errorf("expected view to contain Braille ASCII banner")
+	// 2. Verify Kickoff ANSI Shadow ASCII logo
+	if !strings.Contains(view, "██╗  ██╗██╗ ██████╗██╗  ██╗ ██████╗ ███████╗███████╗") {
+		t.Errorf("expected view to contain Kickoff ANSI Shadow ASCII logo")
 	}
 
 	// 3. Verify Version & Title

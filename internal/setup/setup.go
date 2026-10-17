@@ -35,17 +35,13 @@ var (
 		ColorCyan,
 	}
 
-	brailleBall = []string{
-		"               ⣠⣤⣶⣶⣶⣶⣶⣶⣤⣀             ",
-		"            ⢀⣴⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣤          ",
-		"          ⢠⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡆        ",
-		"         ⢰⣿⣿⣿⣿⠟⠉⢁⣴⣶⣦⡈⠙⢿⣿⣿⣿⣿⣿⡆       ",
-		"         ⣿⣿⣿⡿⠁  ⢰⣿⣿⣿⣿⡇   ⠈⢿⣿⣿⣿⣧       ",
-		"         ⣿⣿⣿⡇   ⠸⣿⣿⣿⣿⠇    ⢸⣿⣿⣿⣿       ",
-		"         ⠸⣿⣿⣿⣄    ⠉⠻⠿⠋    ⣠⣿⣿⣿⣿⠇       ",
-		"          ⠹⣿⣿⣿⣷⣦⣤⣀⣀⣠⣤⣶⣾⣿⣿⣿⡿⠋        ",
-		"            ⠙⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠋          ",
-		"               ⠈⠉⠛⠿⠿⠿⠿⠿⠿⠛⠉⠁             ",
+	asciiLogoLines = []string{
+		"██╗  ██╗██╗ ██████╗██╗  ██╗ ██████╗ ███████╗███████╗",
+		"██║ ██╔╝██║██╔════╝██║ ██╔╝██╔═══██╗██╔════╝██╔════╝",
+		"█████╔╝ ██║██║     █████╔╝ ██║   ██║█████╗  █████╗  ",
+		"██╔═██╗ ██║██║     ██╔═██╗ ██║   ██║██╔══╝  ██╔══╝  ",
+		"██║  ██╗██║╚██████╗██║  ██╗╚██████╔╝██║     ██║     ",
+		"╚═╝  ╚═╝╚═╝ ╚═════╝╚═╝  ╚═╝ ╚═════╝ ╚═╝     ╚═╝     ",
 	}
 )
 
@@ -95,7 +91,7 @@ func NewModel(version string) Model {
 		"Test MPV stream player",
 		"Edit channels configuration",
 		"Verify configured signals",
-		"Clear match & API cache",
+		"Clear API cache (transient matches & scores)",
 		"Check for updates",
 		"Exit setup",
 	}
@@ -223,7 +219,7 @@ func runDiagnostics(cfgPath, cacheDir string) []SystemCheck {
 			checks = append(checks, SystemCheck{
 				Name:    "Channels",
 				Passed:  true,
-				Message: fmt.Sprintf("%s (%d channels loaded)", cfgPath, chCount),
+				Message: fmt.Sprintf("%s (%d streams/channels configured)", cfgPath, chCount),
 			})
 		} else {
 			checks = append(checks, SystemCheck{
@@ -239,9 +235,9 @@ func runDiagnostics(cfgPath, cacheDir string) []SystemCheck {
 		count, size := inspectCacheDir(cacheDir)
 		sizeStr := formatBytes(size)
 		checks = append(checks, SystemCheck{
-			Name:    "Cache",
+			Name:    "API Cache",
 			Passed:  true,
-			Message: fmt.Sprintf("%s (%d files, %s)", cacheDir, count, sizeStr),
+			Message: fmt.Sprintf("%s (%d temporary files, %s) • Channels untouched", cacheDir, count, sizeStr),
 		})
 	}
 
@@ -254,10 +250,15 @@ func countConfiguredChannels(path string) int {
 		return 0
 	}
 	var raw struct {
-		Channels []interface{} `json:"channels"`
+		Streams        map[string]string      `json:"streams"`
+		Channels       []interface{}          `json:"channels"`
+		LeagueChannels map[string]interface{} `json:"league_channels"`
 	}
 	if err := json.Unmarshal(data, &raw); err == nil {
-		return len(raw.Channels)
+		count := len(raw.Streams) + len(raw.Channels)
+		if count > 0 {
+			return count
+		}
 	}
 	var list []interface{}
 	if err := json.Unmarshal(data, &list); err == nil {
@@ -410,9 +411,9 @@ func (m Model) handleSelect() (tea.Model, tea.Cmd) {
 		return m, func() tea.Msg {
 			count := countConfiguredChannels(cfgPath)
 			if count == 0 {
-				return actionDoneMsg{msg: "No external channels configured; built-in signals are active.", color: ColorCyan}
+				return actionDoneMsg{msg: "No external streams configured; built-in signals are active.", color: ColorCyan}
 			}
-			return actionDoneMsg{msg: fmt.Sprintf("Verified %d channels in configuration file.", count), color: ColorCyan}
+			return actionDoneMsg{msg: fmt.Sprintf("Verified %d streams configured in %s.", count, cfgPath), color: ColorCyan}
 		}
 
 	case 3: // Clear cache
@@ -432,7 +433,10 @@ func (m Model) handleSelect() (tea.Model, tea.Cmd) {
 					deleted++
 				}
 			}
-			return actionDoneMsg{msg: fmt.Sprintf("Cache cleared: %d files removed.", deleted), color: ColorCyan}
+			return actionDoneMsg{
+				msg:   fmt.Sprintf("API cache cleared: %d temporary files removed. Channels configuration untouched.", deleted),
+				color: ColorCyan,
+			}
 		}
 
 	case 4: // Check for updates
@@ -496,9 +500,9 @@ func (m Model) View() string {
 
 	var content strings.Builder
 
-	// 1. Braille ASCII Header with Vertical Gradient
-	for i, line := range brailleBall {
-		colorIdx := (i * len(gradientColors)) / len(brailleBall)
+	// 1. Kickoff ANSI Shadow Block Header with Vertical Gradient
+	for i, line := range asciiLogoLines {
+		colorIdx := (i * len(gradientColors)) / len(asciiLogoLines)
 		lineStyle := lipgloss.NewStyle().
 			Foreground(gradientColors[colorIdx]).
 			Bold(true).
