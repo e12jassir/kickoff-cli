@@ -104,16 +104,7 @@ func renderMainMenu(m Model) string {
 					prefix = "   › "
 				}
 
-				var itemText string
-				if m.noEmoji {
-					itemText = fmt.Sprintf("%s%s", prefix, league.Name)
-				} else {
-					emoji := league.Emoji
-					if emoji == "" {
-						emoji = "⚽"
-					}
-					itemText = fmt.Sprintf("%s%s  %s", prefix, emoji, league.Name)
-				}
+				itemText := fmt.Sprintf("%s%s", prefix, league.Name)
 				if isLeagueSelected {
 					lines = append(lines, MenuItemSelected.Render(itemText))
 				} else {
@@ -167,14 +158,7 @@ func renderMainMenu(m Model) string {
 
 func renderBrowsing(m Model) string {
 	curr := m.CurrentLeague()
-	var headerText string
-	if m.noEmoji {
-		headerText = fmt.Sprintf("KICKOFF · %s", curr.Name)
-	} else if curr.Emoji == "" {
-		headerText = fmt.Sprintf("⚽ KICKOFF · %s", curr.Name)
-	} else {
-		headerText = fmt.Sprintf("⚽ KICKOFF · %s %s", curr.Emoji, curr.Name)
-	}
+	headerText := fmt.Sprintf("KICKOFF · %s", curr.Name)
 
 	var statusBadge string
 	if len(m.matches) > 0 && m.matches[0].IsOffline {

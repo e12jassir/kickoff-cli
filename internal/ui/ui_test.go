@@ -1088,8 +1088,11 @@ func TestModel_NoEmoji(t *testing.T) {
 	mDefault := NewModel(client, cat, p)
 	mDefault.expandedCats[mDefault.categories[0]] = true
 	viewDefault := mDefault.View()
-	if !strings.Contains(viewDefault, "🏆") && !strings.Contains(viewDefault, "⚽") {
-		t.Errorf("expected emojis in default view with expanded category")
+	if strings.Contains(viewDefault, "🏆") {
+		t.Errorf("did not expect trophy emoji in menu view:\n%s", viewDefault)
+	}
+	if !strings.Contains(viewDefault, "UEFA Champions League") {
+		t.Errorf("expected league name in menu view:\n%s", viewDefault)
 	}
 
 	mNoEmoji := NewModel(client, cat, p).WithNoEmoji(true)
