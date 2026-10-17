@@ -2,46 +2,91 @@ package catalog
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/e12jassir/kickoff-cli/internal/locale"
 	"github.com/e12jassir/kickoff-cli/internal/model"
+	"github.com/e12jassir/kickoff-cli/internal/parrilla"
 	"github.com/e12jassir/kickoff-cli/internal/tvguide"
 )
 
 // mockTestStreams provides dummy endpoints for testing without distributing copyrighted URLs.
 var mockTestStreams = map[string]string{
-	"espn1":       "http://example.invalid/espn1.m3u8",
-	"espn2":       "http://example.invalid/espn2.m3u8",
-	"espn3":       "http://example.invalid/espn3.m3u8",
-	"espn4":       "http://example.invalid/espn4.m3u8",
-	"espn5":       "http://example.invalid/espn5.m3u8",
-	"espn6":       "http://example.invalid/espn6.m3u8",
-	"espn7":       "http://example.invalid/espn7.m3u8",
-	"espn_extra":  "http://example.invalid/espnextra.m3u8",
-	"fox1":        "http://example.invalid/fox1.m3u8",
-	"fox2":        "http://example.invalid/fox2.m3u8",
-	"fox3":        "http://example.invalid/fox3.m3u8",
-	"tyc":         "http://example.invalid/tyc.m3u8",
-	"win":         "http://example.invalid/win.m3u8",
-	"win_plus":    "http://example.invalid/winplus.m3u8",
-	"caracol":     "http://example.invalid/caracol.m3u8",
-	"caracol_hd2": "http://example.invalid/caracolhd2.m3u8",
-	"rcn":         "http://example.invalid/rcn.m3u8",
-	"rcn_hd2":     "http://example.invalid/rcnhd2.m3u8",
-	"realmadrid":  "https://example.invalid/rmtv/master.m3u8",
-	"teledeporte": "https://example.invalid/tdp/tdp_main.m3u8",
+	"espn1":          "http://example.invalid/espn1.m3u8",
+	"espn2":          "http://example.invalid/espn2.m3u8",
+	"espn3":          "http://example.invalid/espn3.m3u8",
+	"espn4":          "http://example.invalid/espn4.m3u8",
+	"espn5":          "http://example.invalid/espn5.m3u8",
+	"espn6":          "http://example.invalid/espn6.m3u8",
+	"espn7":          "http://example.invalid/espn7.m3u8",
+	"dsports":        "http://example.invalid/dsports.m3u8",
+	"dsports2":       "http://example.invalid/dsports2.m3u8",
+	"dsports4":       "http://example.invalid/dsports4.m3u8",
+	"dsports_plus":   "http://example.invalid/dsportsplus.m3u8",
+	"claro_sports":   "http://example.invalid/clarosports.m3u8",
+	"tyc":            "http://example.invalid/tyc.m3u8",
+	"win":            "http://example.invalid/win.m3u8",
+	"win_plus":       "http://example.invalid/winplus.m3u8",
+	"win_sports_mas": "http://example.invalid/winsportsmas.m3u8",
+	"caracol":        "http://example.invalid/caracol.m3u8",
+	"caracol_hd2":    "http://example.invalid/caracolhd2.m3u8",
+	"gol_caracol":    "http://example.invalid/golcaracol.m3u8",
+	"rcn":            "http://example.invalid/rcn.m3u8",
+	"rcn_hd2":        "http://example.invalid/rcnhd2.m3u8",
+	"realmadrid":     "https://example.invalid/rmtv/master.m3u8",
+	"teledeporte":    "https://example.invalid/tdp/tdp_main.m3u8",
 }
 
 func newTestCatalog(opts ...Option) *Catalog {
-	allOpts := append([]Option{WithConfigFile(filepath.Join(os.TempDir(), "nonexistent_kickoff_channels.json")), WithStreams(mockTestStreams)}, opts...)
+	allOpts := append([]Option{
+		WithConfigFile(filepath.Join(os.TempDir(), "nonexistent_kickoff_channels.json")),
+		WithStreams(mockTestStreams),
+		WithParrilla(offlineParrilla{}),
+	}, opts...)
 	return New(allOpts...)
+}
+
+// parrillaFake is a deterministic, offline parrilla fetcher for tests. It records
+// how many times Fetch was called so per-day caching can be asserted.
+type parrillaFake struct {
+	mu    sync.Mutex
+	snap  parrilla.Snapshot
+	err   error
+	calls int
+}
+
+func (f *parrillaFake) Fetch(ctx context.Context, date time.Time) (parrilla.Snapshot, error) {
+	f.mu.Lock()
+	f.calls++
+	f.mu.Unlock()
+	if f.err != nil {
+		return parrilla.Snapshot{}, f.err
+	}
+	return f.snap, nil
+}
+
+func (f *parrillaFake) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
+// offlineParrilla keeps the shared test catalog offline: the parrilla tier then
+// degrades to nothing exactly as it does when the Gol Caracol source is
+// unreachable, so existing expectations are unaffected.
+type offlineParrilla struct{}
+
+func (offlineParrilla) Fetch(ctx context.Context, date time.Time) (parrilla.Snapshot, error) {
+	return parrilla.Snapshot{}, errors.New("parrilla offline in tests")
 }
 
 func TestSanitizeURL(t *testing.T) {
@@ -105,6 +150,10 @@ func TestSanitizeURL(t *testing.T) {
 	}
 }
 
+// TestCatalog_GetChannels pins the evidence-only contract: channels are resolved
+// ONLY from verified evidence (ESPN broadcast metadata for the specific match, or
+// a TV guide hit). With no evidence the catalog must return nothing instead of
+// guessing.
 func TestCatalog_GetChannels(t *testing.T) {
 	cat := newTestCatalog()
 
@@ -117,93 +166,125 @@ func TestCatalog_GetChannels(t *testing.T) {
 		mustNotContain   string
 	}{
 		{
-			name: "La Liga: Real Madrid returns standard competitive broadcast without Real Madrid TV",
-			match: model.Match{
-				LeagueKey: "laliga",
-				Title:     "Real Madrid vs Valencia",
-			},
-			expectedChannels: []string{"ESPN 1 HD", "ESPN 1 HD"},
-			expectedProfiles: []string{"720p", "1080p"},
-			mustContainURL:   "espn1.m3u8",
-			mustNotContain:   "rmtv",
-		},
-		{
-			name: "Club Friendly: Real Madrid TV resolved only when explicitly in official broadcasts",
-			match: model.Match{
-				ID:         "friendly-rm-1",
-				LeagueKey:  "friendly",
-				Title:      "Real Madrid vs AC Milan",
-				Broadcasts: []string{"Real Madrid TV"},
-			},
-			expectedChannels: []string{"Real Madrid TV"},
-			expectedProfiles: []string{"1080p"},
-			mustContainURL:   "example.invalid",
-			mustNotContain:   "espn",
-		},
-		{
-			name: "La Liga: Real Madrid live match does not inject Real Madrid TV without official broadcast",
-			match: model.Match{
-				ID:        "live-laliga-rm",
-				LeagueKey: "laliga",
-				Title:     "Real Madrid vs Sevilla",
-				SlotIndex: 0,
-			},
-			expectedChannels: []string{"ESPN 1 HD", "ESPN 1 HD"},
-			expectedProfiles: []string{"720p", "1080p"},
-			mustContainURL:   "espn1.m3u8",
-			mustNotContain:   "rmtv",
-		},
-		{
-			name: "Premier League: returns ESPN 1 HD (720p & 1080p)",
-			match: model.Match{
-				LeagueKey: "premier",
-				Title:     "Chelsea vs Liverpool",
-			},
-			expectedChannels: []string{"ESPN 1 HD", "ESPN 1 HD"},
-			expectedProfiles: []string{"720p", "1080p"},
-		},
-		{
-			name: "Argentina: returns TyC Sports HD and ESPN 1 HD",
-			match: model.Match{
-				LeagueKey: "argentina",
-				Title:     "Boca Juniors vs River Plate",
-			},
-			expectedChannels: []string{"TyC Sports HD", "ESPN 1 HD"},
-			expectedProfiles: []string{"1080p", "720p"},
-			mustContainURL:   "tyc.m3u8",
-		},
-		{
-			name: "Unknown league fallback returns distinct slot ESPN channel without Fox Sports 1 HD",
+			name: "No evidence: unknown league returns no channels",
 			match: model.Match{
 				LeagueKey: "unknown-league-key",
 				Title:     "Team A vs Team B",
 			},
-			expectedChannels: []string{"ESPN 1 HD", "ESPN 1 HD"},
-			expectedProfiles: []string{"720p", "1080p"},
-			mustContainURL:   "espn1.m3u8",
-			mustNotContain:   "fox1.m3u8",
+			expectedChannels: []string{},
+			expectedProfiles: []string{},
 		},
 		{
-			name: "Colombia: returns authentic Colombian channels and never falls back to generic ESPN",
+			name: "No evidence: La Liga match without broadcasts returns no channels",
+			match: model.Match{
+				LeagueKey: "laliga",
+				Title:     "Real Madrid vs Valencia",
+			},
+			expectedChannels: []string{},
+			expectedProfiles: []string{},
+		},
+		{
+			name: "No evidence: Colombia match without broadcasts returns no channels",
 			match: model.Match{
 				ID:        "col-match-1",
 				LeagueKey: "colombia",
 				Title:     "Millonarios vs Santa Fe",
 			},
-			expectedChannels: []string{"Win+ Fútbol", "Win Sports HD", "Caracol TV HD", "Canal RCN HD"},
-			expectedProfiles: []string{"1080p", "1080p", "1080p", "1080p"},
-			mustContainURL:   "winplus.m3u8",
+			expectedChannels: []string{},
+			expectedProfiles: []string{},
+		},
+		{
+			name: "No evidence: Argentina match without broadcasts returns no channels",
+			match: model.Match{
+				LeagueKey: "argentina",
+				Title:     "Boca Juniors vs River Plate",
+			},
+			expectedChannels: []string{},
+			expectedProfiles: []string{},
+		},
+		{
+			name: "No evidence: SlotIndex must never fabricate an ESPN channel",
+			match: model.Match{
+				ID:        "simul-1",
+				LeagueKey: "champions",
+				Title:     "AEK Athens vs Shakhtar Donetsk",
+				SlotIndex: 1,
+			},
+			expectedChannels: []string{},
+			expectedProfiles: []string{},
+		},
+		{
+			name: "Official broadcasts: ESPN 4 resolves a configured dual profile",
+			match: model.Match{
+				ID:         "live-espn-4",
+				LeagueKey:  "champions",
+				Title:      "Atalanta vs Arsenal",
+				Broadcasts: []string{"ESPN 4"},
+			},
+			expectedChannels: []string{"ESPN 4 HD", "ESPN 4 HD"},
+			expectedProfiles: []string{"720p", "1080p"},
+			mustContainURL:   "espn4.m3u8",
+		},
+		{
+			name: "Official broadcasts: DSports resolves DSports HD",
+			match: model.Match{
+				ID:         "live-dsports",
+				LeagueKey:  "argentina",
+				Title:      "Boca Juniors vs River Plate",
+				Broadcasts: []string{"DSports"},
+			},
+			expectedChannels: []string{"DSports HD"},
+			expectedProfiles: []string{"1080p"},
+			mustContainURL:   "dsports.m3u8",
+		},
+		{
+			name: "Official broadcasts: DSports+ resolves the DSports+ key",
+			match: model.Match{
+				ID:         "live-dsports-plus",
+				LeagueKey:  "libertadores",
+				Title:      "Flamengo vs Palmeiras",
+				Broadcasts: []string{"DSports+"},
+			},
+			expectedChannels: []string{"DSports+"},
+			expectedProfiles: []string{"1080p"},
+			mustContainURL:   "dsportsplus.m3u8",
+		},
+		{
+			name: "Official broadcasts: Claro Sports resolves Claro Sports",
+			match: model.Match{
+				ID:         "live-claro",
+				LeagueKey:  "ligamx",
+				Title:      "America vs Chivas",
+				Broadcasts: []string{"Claro Sports"},
+			},
+			expectedChannels: []string{"Claro Sports"},
+			expectedProfiles: []string{"1080p"},
+			mustContainURL:   "clarosports.m3u8",
+		},
+		{
+			name: "Official broadcasts: Win Sports Más resolves its key plus Win feeds",
+			match: model.Match{
+				ID:         "live-win-mas",
+				LeagueKey:  "colombia",
+				Title:      "America de Cali vs Deportivo Cali",
+				Broadcasts: []string{"Win Sports Más"},
+			},
+			expectedChannels: []string{"Win Sports Más", "Win+ Fútbol", "Win Sports HD"},
+			expectedProfiles: []string{"1080p", "1080p", "1080p"},
+			mustContainURL:   "winsportsmas.m3u8",
 			mustNotContain:   "espn",
 		},
 		{
-			name: "Colombia: legacy synthetic struct returns authentic channels",
+			name: "Official broadcasts: Gol Caracol resolves its key plus Caracol feeds",
 			match: model.Match{
-				LeagueKey: "colombia",
-				Title:     "Junior vs Nacional",
+				ID:         "live-gol-caracol",
+				LeagueKey:  "international",
+				Title:      "Colombia vs Brasil",
+				Broadcasts: []string{"Gol Caracol"},
 			},
-			expectedChannels: []string{"Win+ Fútbol", "Win Sports HD", "Caracol TV HD", "Canal RCN HD"},
-			expectedProfiles: []string{"1080p", "1080p", "1080p", "1080p"},
-			mustContainURL:   "winplus.m3u8",
+			expectedChannels: []string{"Gol Caracol", "Caracol TV HD", "Caracol HD2"},
+			expectedProfiles: []string{"1080p", "1080p", "1080p"},
+			mustContainURL:   "golcaracol.m3u8",
 			mustNotContain:   "espn",
 		},
 		{
@@ -212,7 +293,7 @@ func TestCatalog_GetChannels(t *testing.T) {
 				ID:         "live-caracol-1",
 				LeagueKey:  "international",
 				Title:      "Colombia vs Brasil",
-				Broadcasts: []string{"Gol Caracol"},
+				Broadcasts: []string{"Caracol"},
 			},
 			expectedChannels: []string{"Caracol TV HD", "Caracol HD2"},
 			expectedProfiles: []string{"1080p", "1080p"},
@@ -246,80 +327,17 @@ func TestCatalog_GetChannels(t *testing.T) {
 			mustNotContain:   "espn",
 		},
 		{
-			name: "Official broadcasts: Fox Sports 1 verified from FS1 metadata without duplicate guessing",
+			name: "Official broadcasts: Real Madrid TV resolved only when explicitly in broadcasts",
 			match: model.Match{
-				ID:         "live-fox-1",
-				LeagueKey:  "champions",
-				Title:      "Aston Villa vs Fenerbahce",
-				Broadcasts: []string{"FS1"},
+				ID:         "friendly-rm-1",
+				LeagueKey:  "friendly",
+				Title:      "Real Madrid vs AC Milan",
+				Broadcasts: []string{"Real Madrid TV"},
 			},
-			expectedChannels: []string{"Fox Sports 1 HD"},
+			expectedChannels: []string{"Real Madrid TV"},
 			expectedProfiles: []string{"1080p"},
-			mustContainURL:   "fox1.m3u8",
+			mustContainURL:   "example.invalid",
 			mustNotContain:   "espn",
-		},
-		{
-			name: "Official broadcasts: Fox Sports 2 verified resolution",
-			match: model.Match{
-				ID:         "live-fox-2",
-				LeagueKey:  "bundesliga",
-				Title:      "Bayern Munich vs Leverkusen",
-				Broadcasts: []string{"Fox Sports 2"},
-			},
-			expectedChannels: []string{"Fox Sports 2", "Fox Sports 2"},
-			expectedProfiles: []string{"720p", "1080p"},
-			mustContainURL:   "fox2.m3u8",
-			mustNotContain:   "espn",
-		},
-		{
-			name: "Official broadcasts: CBSSN/Paramount falls through to slot ESPN channel when no US stream configured",
-			match: model.Match{
-				ID:         "live-cbs-fallback",
-				LeagueKey:  "champions",
-				Title:      "Borussia Dortmund vs Bodo/Glimt",
-				Broadcasts: []string{"CBSSN", "Paramount+"},
-				SlotIndex:  0,
-			},
-			expectedChannels: []string{"ESPN 1 HD", "ESPN 1 HD"},
-			expectedProfiles: []string{"720p", "1080p"},
-			mustContainURL:   "espn1.m3u8",
-		},
-		{
-			name: "Simultaneous matches without broadcasts: Slot 0 maps to ESPN 1 HD without Fox Sports collision",
-			match: model.Match{
-				ID:        "simul-1",
-				LeagueKey: "champions",
-				Title:     "AEK Athens vs Shakhtar Donetsk",
-				SlotIndex: 0,
-			},
-			expectedChannels: []string{"ESPN 1 HD", "ESPN 1 HD"},
-			expectedProfiles: []string{"720p", "1080p"},
-			mustContainURL:   "espn1.m3u8",
-			mustNotContain:   "fox1.m3u8",
-		},
-		{
-			name: "Simultaneous matches without broadcasts: Slot 1 maps to ESPN 2 HD without collision",
-			match: model.Match{
-				ID:        "simul-2",
-				LeagueKey: "champions",
-				Title:     "Slovan Bratislava vs VfB Stuttgart",
-				SlotIndex: 1,
-			},
-			expectedChannels: []string{"ESPN 2 HD", "ESPN 2 HD"},
-			expectedProfiles: []string{"720p", "1080p"},
-			mustContainURL:   "espn2.m3u8",
-			mustNotContain:   "fox1.m3u8",
-		},
-		{
-			name: "Slot exceeds available linear channels returns no channels for honest placeholder",
-			match: model.Match{
-				ID:        "simul-8",
-				LeagueKey: "champions",
-				Title:     "Team Overload A vs Team Overload B",
-				SlotIndex: 7,
-			},
-			expectedChannels: []string{},
-			expectedProfiles: []string{},
 		},
 		{
 			name: "Official broadcast not in catalog returns no synthetic channels",
@@ -374,7 +392,170 @@ func TestCatalog_GetChannels(t *testing.T) {
 					}
 				}
 			}
+
+			wantPlayable := len(tt.expectedChannels) > 0
+			if got := cat.HasPlayableSource(tt.match); got != wantPlayable {
+				t.Errorf("HasPlayableSource = %v, want %v", got, wantPlayable)
+			}
 		})
+	}
+}
+
+// TestCatalog_ESPNExtraRule pins the 2024-02-15 Latin American rebrand: Fox Sports
+// was discontinued and ESPN Extra was renamed to ESPN 4 in Colombia. Legacy
+// "ESPN Extra" broadcast metadata must resolve to the espn4 key and must never
+// fall through to the generic "espn" needle (espn1). The specific needle also has
+// to leave the other ESPN 2..7 rules and the bare "ESPN" rule untouched.
+func TestCatalog_ESPNExtraRule(t *testing.T) {
+	cat := newTestCatalog()
+
+	tests := []struct {
+		name        string
+		broadcast   string
+		wantName    string
+		wantURLPart string
+	}{
+		{"ESPN Extra maps to ESPN 4 after the rename", "ESPN Extra", "ESPN 4 HD", "espn4.m3u8"},
+		{"ESPN Extra needle is case-insensitive", "espn extra", "ESPN 4 HD", "espn4.m3u8"},
+		{"bare ESPN still maps to ESPN 1", "ESPN", "ESPN 1 HD", "espn1.m3u8"},
+		{"ESPN 2 behaviour unchanged", "ESPN 2", "ESPN 2 HD", "espn2.m3u8"},
+		{"ESPN Deportes behaviour unchanged", "ESPN Deportes", "ESPN 2 HD", "espn2.m3u8"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			match := model.Match{
+				ID:         "espn-extra",
+				LeagueKey:  "champions",
+				Title:      "Team A vs Team B",
+				Broadcasts: []string{tt.broadcast},
+			}
+			chs := cat.GetChannels(match)
+			if len(chs) == 0 {
+				t.Fatalf("broadcast %q: expected a channel, got none", tt.broadcast)
+			}
+			if chs[0].Name != tt.wantName {
+				t.Errorf("broadcast %q: expected primary channel %q, got %q", tt.broadcast, tt.wantName, chs[0].Name)
+			}
+			if !strings.Contains(chs[0].URL, tt.wantURLPart) {
+				t.Errorf("broadcast %q: expected URL containing %q, got %q", tt.broadcast, tt.wantURLPart, chs[0].URL)
+			}
+		})
+	}
+}
+
+// TestCatalog_NoGuessFallback proves the SlotIndex de-duplication counter is not
+// treated as broadcast truth: a counter is not evidence, so no channel is emitted.
+func TestCatalog_NoGuessFallback(t *testing.T) {
+	cat := newTestCatalog()
+
+	for _, slot := range []int{0, 1, 2, 5, 7} {
+		match := model.Match{
+			ID:        fmt.Sprintf("simul-%d", slot),
+			LeagueKey: "champions",
+			Title:     "Team A vs Team B",
+			SlotIndex: slot,
+		}
+		if chs := cat.GetChannels(match); len(chs) != 0 {
+			t.Fatalf("slot %d: expected no channels without evidence, got %d", slot, len(chs))
+		}
+		if cat.HasPlayableSource(match) {
+			t.Fatalf("slot %d: expected HasPlayableSource=false without evidence", slot)
+		}
+	}
+}
+
+// TestCatalog_PlayabilityGate proves a match aired only on a channel key we have
+// no configured URL for yields nothing, and that the same match becomes playable
+// once the key is configured.
+func TestCatalog_PlayabilityGate(t *testing.T) {
+	match := model.Match{
+		ID:         "gate-1",
+		LeagueKey:  "champions",
+		Title:      "Arsenal vs Chelsea",
+		Broadcasts: []string{"ESPN 4"},
+	}
+
+	// Only espn1 is configured; ESPN 4 is not playable.
+	unplayable := New(
+		WithConfigFile(filepath.Join(t.TempDir(), "none.json")),
+		WithStreams(map[string]string{"espn1": "http://example.invalid/espn1.m3u8"}),
+		WithParrilla(offlineParrilla{}),
+	)
+	if chs := unplayable.GetChannels(match); len(chs) != 0 {
+		t.Fatalf("expected no channels for an unconfigured key, got %d", len(chs))
+	}
+	if unplayable.HasPlayableSource(match) {
+		t.Fatalf("expected HasPlayableSource=false when the only key has no configured URL")
+	}
+
+	// The same match is playable once ESPN 4 has a configured URL.
+	playable := New(
+		WithConfigFile(filepath.Join(t.TempDir(), "none.json")),
+		WithStreams(map[string]string{"espn4": "http://example.invalid/espn4.m3u8"}),
+		WithParrilla(offlineParrilla{}),
+	)
+	chs := playable.GetChannels(match)
+	if len(chs) == 0 {
+		t.Fatalf("expected channels for a configured key, got none")
+	}
+	if !playable.HasPlayableSource(match) {
+		t.Fatalf("expected HasPlayableSource=true for a configured key")
+	}
+}
+
+// TestCatalog_OverridesTakePrecedence proves the user's explicit custom_rules and
+// league_channels still win over any catalog evidence.
+func TestCatalog_OverridesTakePrecedence(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "channels.json")
+	cfgContent := `{
+		"league_channels": {
+			"champions": [
+				{"name": "League Override", "url": "https://example.invalid/override.m3u8", "resolution": "1080p"}
+			]
+		},
+		"custom_rules": [
+			{
+				"league": "premier",
+				"pattern": "(?i)Arsenal",
+				"channels": [
+					{"name": "Custom Rule Channel", "url": "https://example.invalid/custom.m3u8", "resolution": "1080p"}
+				]
+			}
+		]
+	}`
+	if err := os.WriteFile(cfgPath, []byte(cfgContent), 0o600); err != nil {
+		t.Fatalf("failed to write test config: %v", err)
+	}
+
+	cat := New(WithConfigFile(cfgPath), WithStreams(mockTestStreams), WithParrilla(offlineParrilla{}))
+
+	// A custom rule wins even when ESPN metadata lists a different broadcaster.
+	ruleMatch := model.Match{
+		LeagueKey:  "premier",
+		Title:      "Arsenal vs Chelsea",
+		Broadcasts: []string{"ESPN 4"},
+	}
+	ruleChs := cat.GetChannels(ruleMatch)
+	if len(ruleChs) != 1 || ruleChs[0].Name != "Custom Rule Channel" {
+		t.Fatalf("expected custom rule channel to win, got %+v", ruleChs)
+	}
+	if !cat.HasPlayableSource(ruleMatch) {
+		t.Errorf("expected custom rule channel to count as a playable source")
+	}
+
+	// A league override wins for a league without a matching custom rule.
+	leagueMatch := model.Match{
+		LeagueKey:  "champions",
+		Title:      "Bayern Munich vs Real Madrid",
+		Broadcasts: []string{"ESPN 1"},
+	}
+	leagueChs := cat.GetChannels(leagueMatch)
+	if len(leagueChs) != 1 || leagueChs[0].Name != "League Override" {
+		t.Fatalf("expected league override to win, got %+v", leagueChs)
+	}
+	if !cat.HasPlayableSource(leagueMatch) {
+		t.Errorf("expected league override channel to count as a playable source")
 	}
 }
 
@@ -408,6 +589,9 @@ func TestCatalog_CBSOfficialBroadcasts(t *testing.T) {
 	}
 }
 
+// TestDiagnostic_LiveTVGuideResolution is a live, network-dependent diagnostic.
+// It only reports; it never asserts a guess. When no guide is available (offline)
+// it skips, because the catalog now correctly returns nothing without evidence.
 func TestDiagnostic_LiveTVGuideResolution(t *testing.T) {
 	guideSvc := tvguide.NewService()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -415,6 +599,9 @@ func TestDiagnostic_LiveTVGuideResolution(t *testing.T) {
 
 	_ = guideSvc.Refresh(ctx)
 	guides := guideSvc.Guides()
+	if len(guides) == 0 {
+		t.Skip("TV guide unavailable (offline); live resolution diagnostic skipped")
+	}
 
 	t.Logf("=== LIVE TV GUIDE DIAGNOSTIC ===")
 	t.Logf("Channels crawled: %d", len(guides))
@@ -437,22 +624,11 @@ func TestDiagnostic_LiveTVGuideResolution(t *testing.T) {
 			HomeTeam:  model.Competitor{DisplayName: "Feyenoord Rotterdam"},
 			AwayTeam:  model.Competitor{DisplayName: "Como"},
 		},
-		{
-			LeagueKey: "champions",
-			Title:     "AS Roma vs Real Madrid",
-			HomeTeam:  model.Competitor{DisplayName: "AS Roma"},
-			AwayTeam:  model.Competitor{DisplayName: "Real Madrid"},
-		},
 	}
 
 	for _, m := range sampleMatches {
 		chs := cat.GetChannels(m)
-		if len(chs) == 0 {
-			t.Errorf("[%s] expected channels, got none", m.Title)
-			continue
-		}
-		t.Logf("✓ %s -> Primary: %s (%s, Rec: %v), Total: %d signals",
-			m.Title, chs[0].Name, chs[0].Resolution, chs[0].Recommended, len(chs))
+		t.Logf("• %s -> %d signals resolved from verified guide evidence", m.Title, len(chs))
 	}
 }
 
@@ -559,7 +735,7 @@ func TestCatalog_ExternalConfig_LeagueAliases(t *testing.T) {
 		t.Fatalf("failed to write test config: %v", err)
 	}
 
-	cat := New(WithConfigFile(cfgPath))
+	cat := New(WithConfigFile(cfgPath), WithParrilla(offlineParrilla{}))
 
 	testCases := []struct {
 		leagueKey    string
@@ -784,4 +960,198 @@ func TestCatalog_AdjacentChannelsAndM3UFallback(t *testing.T) {
 	if len(cat2.m3uChannels) == 0 {
 		t.Errorf("expected adjacent signals.m3u to be loaded into m3uChannels, got 0")
 	}
+}
+
+// newParrillaMatch builds a fixed-kickoff fixture for parrilla tests. The kickoff
+// is expressed in the display timezone so the local calendar day (and therefore
+// the per-day cache key) is stable regardless of the host timezone.
+func newParrillaMatch(broadcasts []string) model.Match {
+	return model.Match{
+		ID:         "parrilla-fixture",
+		LeagueKey:  "champions",
+		Title:      "Arsenal vs Chelsea",
+		HomeTeam:   model.Competitor{DisplayName: "Arsenal"},
+		AwayTeam:   model.Competitor{DisplayName: "Chelsea"},
+		StartTime:  time.Date(2026, time.October, 17, 14, 0, 0, 0, locale.Location()),
+		Broadcasts: broadcasts,
+	}
+}
+
+// parrillaSnap builds a one-entry snapshot for the fixture returned by
+// newParrillaMatch, carrying the given published channel names (nil means the
+// entry is still "por definir").
+func parrillaSnap(channels []string) parrilla.Snapshot {
+	return parrilla.Snapshot{
+		Date: "2026-10-17",
+		Entries: []parrilla.Entry{{
+			Competition: "Premier League",
+			HomeTeam:    "Arsenal",
+			AwayTeam:    "Chelsea",
+			Raw:         "Arsenal vs. Chelsea",
+			StartLocal:  "2:00 p.m.",
+			StartMins:   14 * 60,
+			Channels:    channels,
+		}},
+	}
+}
+
+// TestCatalog_ParrillaTier covers the three core parrilla outcomes: a both-teams
+// playable entry is emitted, a "por definir" entry emits nothing, and a listing
+// whose channels have no resolvable URL emits nothing.
+func TestCatalog_ParrillaTier(t *testing.T) {
+	t.Run("both teams with a playable entry emits the channel", func(t *testing.T) {
+		cat := newTestCatalog(WithParrilla(&parrillaFake{snap: parrillaSnap([]string{"ESPN 2"})}))
+
+		match := newParrillaMatch(nil)
+		chs := cat.GetChannels(match)
+		if len(chs) != 1 || chs[0].Name != "ESPN 2" {
+			t.Fatalf("expected the parrilla entry channel ESPN 2, got %+v", chs)
+		}
+		if !cat.HasPlayableSource(match) {
+			t.Fatalf("expected HasPlayableSource=true for a configured parrilla channel")
+		}
+	})
+
+	t.Run("empty channel list (por definir) emits nothing", func(t *testing.T) {
+		cat := newTestCatalog(WithParrilla(&parrillaFake{snap: parrillaSnap(nil)}))
+
+		match := newParrillaMatch(nil)
+		if chs := cat.GetChannels(match); len(chs) != 0 {
+			t.Fatalf("expected no channels for a por-definir entry, got %+v", chs)
+		}
+		if cat.HasPlayableSource(match) {
+			t.Fatalf("expected HasPlayableSource=false for a por-definir entry")
+		}
+	})
+
+	t.Run("unknown and unconfigured streaming channels emit nothing", func(t *testing.T) {
+		// "Disney+ Premium" is not a known channel, and "DSports+" is known but
+		// its stream key is not configured in this catalog. Neither may resolve.
+		cat := New(
+			WithConfigFile(filepath.Join(t.TempDir(), "none.json")),
+			WithStreams(map[string]string{"espn2": "http://example.invalid/espn2.m3u8"}),
+			WithParrilla(&parrillaFake{snap: parrillaSnap([]string{"Disney+ Premium", "DSports+"})}),
+		)
+
+		match := newParrillaMatch(nil)
+		if chs := cat.GetChannels(match); len(chs) != 0 {
+			t.Fatalf("expected no channels when no listed channel has a URL, got %+v", chs)
+		}
+		if cat.HasPlayableSource(match) {
+			t.Fatalf("expected HasPlayableSource=false when no listed channel has a URL")
+		}
+	})
+}
+
+// TestCatalog_ParrillaSnapshotFetchedOncePerDay proves the daily parrilla is
+// fetched at most once per local day, even across many resolutions.
+func TestCatalog_ParrillaSnapshotFetchedOncePerDay(t *testing.T) {
+	fake := &parrillaFake{snap: parrillaSnap([]string{"ESPN 2"})}
+	cat := newTestCatalog(WithParrilla(fake))
+
+	match := newParrillaMatch(nil)
+	for i := 0; i < 5; i++ {
+		if chs := cat.GetChannels(match); len(chs) != 1 {
+			t.Fatalf("call %d: expected the parrilla channel, got %+v", i, chs)
+		}
+	}
+
+	// A different fixture on the same local day must reuse the same snapshot.
+	other := newParrillaMatch(nil)
+	other.ID = "parrilla-fixture-2"
+	other.Title = "Liverpool vs Everton"
+	other.HomeTeam = model.Competitor{DisplayName: "Liverpool"}
+	other.AwayTeam = model.Competitor{DisplayName: "Everton"}
+	_ = cat.GetChannels(other)
+
+	if got := fake.callCount(); got != 1 {
+		t.Fatalf("expected exactly 1 parrilla fetch for the whole local day, got %d", got)
+	}
+}
+
+// TestCatalog_ParrillaPrecedence pins the tier order: user custom_rules and league
+// overrides still win (without even fetching the parrilla), ESPN metadata outranks
+// the parrilla, and an unplayable non-US ESPN broadcaster falls through to it.
+func TestCatalog_ParrillaPrecedence(t *testing.T) {
+	t.Run("custom rule wins and parrilla is never fetched", func(t *testing.T) {
+		cfgPath := filepath.Join(t.TempDir(), "channels.json")
+		cfgContent := `{
+			"custom_rules": [
+				{
+					"league": "champions",
+					"pattern": "(?i)Arsenal",
+					"channels": [
+						{"name": "Rule Wins", "url": "https://example.invalid/rule.m3u8", "resolution": "1080p"}
+					]
+				}
+			]
+		}`
+		if err := os.WriteFile(cfgPath, []byte(cfgContent), 0o600); err != nil {
+			t.Fatalf("failed to write config: %v", err)
+		}
+
+		fake := &parrillaFake{snap: parrillaSnap([]string{"ESPN 2"})}
+		cat := New(WithConfigFile(cfgPath), WithStreams(mockTestStreams), WithParrilla(fake))
+
+		chs := cat.GetChannels(newParrillaMatch(nil))
+		if len(chs) != 1 || chs[0].Name != "Rule Wins" {
+			t.Fatalf("expected the custom rule channel to win, got %+v", chs)
+		}
+		if got := fake.callCount(); got != 0 {
+			t.Fatalf("expected the parrilla never to be fetched for a user rule, got %d calls", got)
+		}
+	})
+
+	t.Run("league override wins and parrilla is never fetched", func(t *testing.T) {
+		cfgPath := filepath.Join(t.TempDir(), "channels.json")
+		cfgContent := `{
+			"league_channels": {
+				"champions": [
+					{"name": "League Override", "url": "https://example.invalid/override.m3u8", "resolution": "1080p"}
+				]
+			}
+		}`
+		if err := os.WriteFile(cfgPath, []byte(cfgContent), 0o600); err != nil {
+			t.Fatalf("failed to write config: %v", err)
+		}
+
+		fake := &parrillaFake{snap: parrillaSnap([]string{"ESPN 2"})}
+		cat := New(WithConfigFile(cfgPath), WithStreams(mockTestStreams), WithParrilla(fake))
+
+		chs := cat.GetChannels(newParrillaMatch(nil))
+		if len(chs) != 1 || chs[0].Name != "League Override" {
+			t.Fatalf("expected the league override to win, got %+v", chs)
+		}
+		if got := fake.callCount(); got != 0 {
+			t.Fatalf("expected the parrilla never to be fetched for a league override, got %d calls", got)
+		}
+	})
+
+	t.Run("ESPN metadata outranks parrilla", func(t *testing.T) {
+		fake := &parrillaFake{snap: parrillaSnap([]string{"ESPN 2"})}
+		cat := newTestCatalog(WithParrilla(fake))
+
+		chs := cat.GetChannels(newParrillaMatch([]string{"ESPN 4"}))
+		if len(chs) == 0 {
+			t.Fatalf("expected ESPN 4 to resolve from metadata")
+		}
+		for _, ch := range chs {
+			if ch.Name != "ESPN 4 HD" {
+				t.Fatalf("expected only ESPN 4 HD, got %s", ch.Name)
+			}
+		}
+		if got := fake.callCount(); got != 0 {
+			t.Fatalf("expected the parrilla to be skipped when ESPN metadata resolves, got %d calls", got)
+		}
+	})
+
+	t.Run("unplayable non-US broadcast falls through to parrilla", func(t *testing.T) {
+		fake := &parrillaFake{snap: parrillaSnap([]string{"ESPN 2"})}
+		cat := newTestCatalog(WithParrilla(fake))
+
+		chs := cat.GetChannels(newParrillaMatch([]string{"DAZN 1 Bar HD"}))
+		if len(chs) != 1 || chs[0].Name != "ESPN 2" {
+			t.Fatalf("expected parrilla ESPN 2 when ESPN lists only unplayable DAZN, got %+v", chs)
+		}
+	})
 }

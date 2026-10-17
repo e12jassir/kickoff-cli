@@ -14,7 +14,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/e12jassir/kickoff-cli/internal/locale"
 	"github.com/e12jassir/kickoff-cli/internal/model"
+	"github.com/e12jassir/kickoff-cli/internal/parrilla"
 	"github.com/e12jassir/kickoff-cli/internal/tvguide"
 )
 
@@ -23,6 +25,16 @@ const (
 	StreamRealMadrid    = "https://rmtv.akamaized.net/hls/live/2043153/rmtv-es-web/master.m3u8"
 	StreamTeledeporte   = "https://rtvelivestream.akamaized.net/rtvesec/tdp/tdp_main.m3u8"
 	maxPlaylistReadSize = 50 * 1024 * 1024 // 50MB bounded read for remote playlists
+
+	// parrillaFetchTimeout bounds a single daily parrilla fetch so a slow or
+	// unreachable Noticias Caracol endpoint cannot stall match resolution
+	// indefinitely. The snapshot is cached per local date on success AND failure.
+	parrillaFetchTimeout = 10 * time.Second
+
+	// parrillaMatchWindowMinutes mirrors the tvguide assumption that a fixture
+	// stays on air for two hours from kickoff. It is used only to prefer the
+	// correct parrilla entry for a fixture, never to promote a candidate.
+	parrillaMatchWindowMinutes = 120
 )
 
 // Optional US stream endpoints (configurable via environment variables).
@@ -79,6 +91,16 @@ func WithTVGuide(svc *tvguide.Service) Option {
 	}
 }
 
+// WithParrilla sets a custom Gol Caracol parrilla fetcher. The default is
+// parrilla.NewGolCaracol(); tests inject a fake to stay offline and deterministic.
+func WithParrilla(fetcher parrilla.Fetcher) Option {
+	return func(c *Catalog) {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		c.parrillaFetcher = fetcher
+	}
+}
+
 // WithConfigFile sets a custom path for the channels configuration file.
 func WithConfigFile(path string) Option {
 	return func(c *Catalog) {
@@ -120,6 +142,15 @@ type Catalog struct {
 	m3uChannels     []M3UChannel
 	configPath      string
 	tvGuide         *tvguide.Service
+
+	// parrilla is the Gol Caracol daily schedule fetcher: the authoritative
+	// per-match source of which channel airs each fixture in Colombia (T1).
+	// parrillaMu serializes cache misses so a given local date is fetched at most
+	// once even under concurrent match resolution, and parrillaCache holds the
+	// parsed snapshot per date (including negative, failed results).
+	parrillaFetcher parrilla.Fetcher
+	parrillaCache   map[string]parrilla.Snapshot
+	parrillaMu      sync.Mutex
 }
 
 type customMatchRule struct {
@@ -140,6 +171,8 @@ func New(opts ...Option) *Catalog {
 		leagueOverrides: make(map[string][]model.Channel),
 		userStreams:     make(map[string]string),
 		tvGuide:         tvguide.NewService(),
+		parrillaFetcher: parrilla.NewGolCaracol(),
+		parrillaCache:   make(map[string]parrilla.Snapshot),
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -481,11 +514,19 @@ var officialEndpointRules = []officialEndpointRule{
 	{[]string{"espn 4", "espn4"}, "espn4", "ESPN 4 HD", true},
 	{[]string{"espn 3", "espn3"}, "espn3", "ESPN 3 HD", true},
 	{[]string{"espn 2", "espn2", "espn deportes"}, "espn2", "ESPN 2 HD", true},
-	{[]string{"espn extra"}, "espn_extra", "ESPN Extra", true},
+	// Fox Sports was discontinued in Latin America on 2024-02-15 and ESPN Extra was
+	// renamed to ESPN 4 in Colombia. This explicit needle must precede the generic
+	// "espn" needle below; otherwise legacy "ESPN Extra" metadata would fall through
+	// to espn1, which is wrong.
+	{[]string{"espn extra"}, "espn4", "ESPN 4 HD", true},
 	{[]string{"espn"}, "espn1", "ESPN 1 HD", true},
-	{[]string{"fox sports 3", "fs3"}, "fox3", "Fox Sports 3", true},
-	{[]string{"fox sports 2", "fs2"}, "fox2", "Fox Sports 2", true},
-	{[]string{"fox sports 1", "fs1", "fox deportes", "fox sports", "fox"}, "fox1", "Fox Sports 1 HD", false},
+	// DSports family (Argentina/Colombia football). The specific channel needles
+	// must precede the generic "dsports" needle for first-match-wins ordering.
+	{[]string{"dsports 4", "dsports4"}, "dsports4", "DSports 4 HD", false},
+	{[]string{"dsports 2", "dsports2"}, "dsports2", "DSports 2 HD", false},
+	{[]string{"dsports+", "dsports plus"}, "dsports_plus", "DSports+", false},
+	{[]string{"dsports"}, "dsports", "DSports HD", false},
+	{[]string{"claro sports", "claro_sports"}, "claro_sports", "Claro Sports", false},
 	{[]string{"tyc"}, "tyc", "TyC Sports HD", false},
 }
 
@@ -546,7 +587,13 @@ func (c *Catalog) resolveFromOfficialBroadcasts(broadcasts []string) []model.Cha
 		bl := strings.ToLower(strings.TrimSpace(b))
 
 		// Compound national broadcasters emit a primary plus a secondary channel.
-		if containsAny(bl, "caracol", "gol caracol") {
+		if containsAny(bl, "gol caracol") {
+			c.appendSingleEndpoint(&result, "gol_caracol", "Gol Caracol", len(result) == 0)
+			c.appendSingleEndpoint(&result, "caracol", "Caracol TV HD", len(result) == 0)
+			c.appendSingleEndpoint(&result, "caracol_hd2", "Caracol HD2", false)
+			continue
+		}
+		if containsAny(bl, "caracol") {
 			c.appendSingleEndpoint(&result, "caracol", "Caracol TV HD", len(result) == 0)
 			c.appendSingleEndpoint(&result, "caracol_hd2", "Caracol HD2", false)
 			continue
@@ -554,6 +601,12 @@ func (c *Catalog) resolveFromOfficialBroadcasts(broadcasts []string) []model.Cha
 		if containsAny(bl, "rcn", "canal rcn", "deportes rcn") {
 			c.appendSingleEndpoint(&result, "rcn", "Canal RCN HD", len(result) == 0)
 			c.appendSingleEndpoint(&result, "rcn_hd2", "RCN HD2", false)
+			continue
+		}
+		if containsAny(bl, "win sports mas", "win sports más", "win mas", "win más") {
+			c.appendSingleEndpoint(&result, "win_sports_mas", "Win Sports Más", len(result) == 0)
+			c.appendSingleEndpoint(&result, "win_plus", "Win+ Fútbol", len(result) == 0)
+			c.appendSingleEndpoint(&result, "win", "Win Sports HD", false)
 			continue
 		}
 		if containsAny(bl, "win", "win sports", "win+") {
@@ -618,48 +671,11 @@ func hasUSBroadcast(broadcasts []string) bool {
 	return false
 }
 
-func (c *Catalog) espnBySlot(slot int) (name, url string, ok bool) {
-	slots := []struct {
-		name    string
-		streamK string
-	}{
-		{"ESPN 1 HD", "espn1"},
-		{"ESPN 2 HD", "espn2"},
-		{"ESPN 3 HD", "espn3"},
-		{"ESPN 4 HD", "espn4"},
-		{"ESPN 5 HD", "espn5"},
-		{"ESPN 6 HD", "espn6"},
-		{"ESPN 7 HD", "espn7"},
-	}
-	if slot < 0 || slot >= len(slots) {
-		return "", "", false
-	}
-	u, found := c.endpointOrM3U(slots[slot].streamK, slots[slot].name)
-	if !found {
-		return "", "", false
-	}
-	return slots[slot].name, u, true
-}
-
 // m3uSnapshot returns the current M3U channel slice under the read lock.
 func (c *Catalog) m3uSnapshot() []M3UChannel {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.m3uChannels
-}
-
-// endpointOrM3U resolves a channel URL by configured endpoint key, falling back to a
-// best-effort M3U playlist match by channel name. The M3U fallback exists because users
-// may supply playlists instead of per-key endpoints; without it those channels would be
-// unresolvable even when present in the playlist.
-func (c *Catalog) endpointOrM3U(key, m3uName string) (string, bool) {
-	if u, ok := c.StreamEndpoint(key); ok {
-		return u, true
-	}
-	if m3u, found := MatchM3UChannel(m3uName, c.m3uSnapshot()); found {
-		return m3u.URL, true
-	}
-	return "", false
 }
 
 func (c *Catalog) buildChannelsForTarget(target tvguide.ChannelTarget) []model.Channel {
@@ -704,8 +720,6 @@ func (c *Catalog) buildChannelsForTarget(target tvguide.ChannelTarget) []model.C
 
 	switch {
 	case strings.HasPrefix(target.Name, "ESPN"):
-		return makeDualProfile(target.Name, cleanURL, true)
-	case strings.HasPrefix(target.Name, "Fox"):
 		return makeDualProfile(target.Name, cleanURL, true)
 	case target.Name == "Win+ Fútbol":
 		var list []model.Channel
@@ -804,14 +818,30 @@ func (c *Catalog) GetChannels(match model.Match) []model.Channel {
 		if len(candidates) > 0 {
 			return c.filterAndDeduplicate(candidates)
 		}
-		// If an event specifically has US metadata (cbssn/paramount/golazo/peacock/etc) without a configured US stream,
-		// fall through gracefully to the verified ESPN channel if user has configured it.
-		if !hasUSBroadcast(match.Broadcasts) {
-			return nil
-		}
+		// Metadata named a broadcaster but none of its stream keys are configured
+		// (e.g. DAZN). Do not stop here: the Gol Caracol parrilla below is
+		// independent, Colombia-authoritative evidence for this same fixture. An
+		// unplayable non-US broadcaster only rules out the generic TV guide crawl
+		// (see the guard after the parrilla tier), never the parrilla itself.
 	}
 
-	// 3. TV Guide Crawler resolution
+	// 3. Gol Caracol daily parrilla (T1): the authoritative per-match Colombian
+	// broadcast listing. It sits below ESPN's own metadata (real per-match
+	// evidence) but above the generic TV guide crawl, and it never invents a
+	// channel: entries still marked "por definir" and channels without a
+	// configured stream URL yield nothing.
+	if parrillaChs := c.resolveFromParrilla(match); len(parrillaChs) > 0 {
+		return parrillaChs
+	}
+
+	// 4. TV Guide Crawler resolution. A non-US broadcaster that ESPN already
+	// named and that we cannot play is the end of the line: there is no
+	// independent evidence to contradict it. US broadcasters remain the
+	// exception, because the Colombian TV guide is independent evidence that may
+	// still resolve a playable feed.
+	if len(match.Broadcasts) > 0 && !hasUSBroadcast(match.Broadcasts) {
+		return nil
+	}
 	if tvGuide != nil {
 		if target, found := tvGuide.ResolveMatch(match); found {
 			candidates := c.buildChannelsForTarget(target)
@@ -821,62 +851,175 @@ func (c *Catalog) GetChannels(match model.Match) []model.Channel {
 		}
 	}
 
-	// 4. Fallback resolution based on user configured channels
+	// No verified evidence for this match. Never guess a channel: an unverified
+	// channel is strictly worse than none, because it sends the user to the wrong
+	// feed. Return an empty result.
+	return nil
+}
+
+// resolveFromParrilla resolves a match through the Gol Caracol daily parrilla.
+//
+// It matches entries with the same BOTH-teams rule the tvguide package uses
+// (tvguide.MatchScore), preferring the entry whose published start time falls in
+// the match window, and emits only channels that map to a configured stream URL.
+// When the schedule is unreachable it returns nothing so lower tiers can run.
+func (c *Catalog) resolveFromParrilla(match model.Match) []model.Channel {
+	snap, ok := c.parrillaSnapshot(parrillaDay(match))
+	if !ok {
+		return nil
+	}
+
+	entry, found := matchParrillaEntry(snap, match)
+	// An empty channel list is the honest "por definir" state: emit nothing
+	// rather than guess.
+	if !found || len(entry.Channels) == 0 {
+		return nil
+	}
+
 	var candidates []model.Channel
+	for _, name := range entry.Channels {
+		key, _, known := parrilla.CanonicalChannel(name)
+		if !known {
+			continue
+		}
+		url, configured := c.StreamEndpoint(key)
+		if !configured {
+			continue
+		}
+		if ch, valid := makeSingleChannel(name, url, "1080p", "max", len(candidates) == 0); valid {
+			candidates = append(candidates, ch)
+		}
+	}
+	return c.filterAndDeduplicate(candidates)
+}
 
-	switch leagueKey {
-	case "colombia":
-		if u, ok := c.endpointOrM3U("win_plus", "Win+ Fútbol"); ok {
-			if ch, valid := makeSingleChannel("Win+ Fútbol", u, "1080p", "max", len(candidates) == 0); valid {
-				candidates = append(candidates, ch)
-			}
-		}
-		if u, ok := c.endpointOrM3U("win", "Win Sports"); ok {
-			if ch, valid := makeSingleChannel("Win Sports HD", u, "1080p", "max", false); valid {
-				candidates = append(candidates, ch)
-			}
-		}
-		if u, ok := c.endpointOrM3U("caracol", "Caracol TV"); ok {
-			if ch, valid := makeSingleChannel("Caracol TV HD", u, "1080p", "max", false); valid {
-				candidates = append(candidates, ch)
-			}
-		}
-		if u, ok := c.endpointOrM3U("rcn", "Canal RCN"); ok {
-			if ch, valid := makeSingleChannel("Canal RCN HD", u, "1080p", "max", false); valid {
-				candidates = append(candidates, ch)
-			}
-		}
+// parrillaDay returns the local calendar date whose Gol Caracol schedule applies
+// to a match: its kickoff day in the display timezone, or today when the kickoff
+// is unknown. The times published in the parrilla are Colombian local times.
+func parrillaDay(match model.Match) time.Time {
+	loc := locale.Location()
+	if match.StartTime.IsZero() {
+		return time.Now().In(loc)
+	}
+	return match.StartTime.In(loc)
+}
 
-	case "argentina":
-		tycURL, hasTyC := c.endpointOrM3U("tyc", "TyC Sports")
-		if match.SlotIndex == 0 {
-			if hasTyC {
-				if ch, valid := makeSingleChannel("TyC Sports HD", tycURL, "1080p", "max", true); valid {
-					candidates = append(candidates, ch)
-				}
-			}
-			slotName, slotURL, ok := c.espnBySlot(0)
-			if ok {
-				if ch, valid := makeSingleChannel(slotName, slotURL, "720p", "min", false); valid {
-					candidates = append(candidates, ch)
-				}
-			}
-		} else {
-			slotName, slotURL, ok := c.espnBySlot(match.SlotIndex)
-			if ok {
-				candidates = append(candidates, makeDualProfile(slotName, slotURL, true)...)
-			}
-		}
+// parrillaSnapshot returns the cached parrilla snapshot for a date, fetching it at
+// most once per local calendar day. A failed fetch is cached too (negative
+// cache), so a broken source is retried on the next day instead of on every match.
+func (c *Catalog) parrillaSnapshot(date time.Time) (parrilla.Snapshot, bool) {
+	key := date.In(locale.Location()).Format("2006-01-02")
 
-	default:
-		// Champions League, Premier League, La Liga, Serie A, Bundesliga, Ligue 1, Brasileirao, Libertadores, etc.
-		slotName, slotURL, ok := c.espnBySlot(match.SlotIndex)
-		if ok {
-			candidates = append(candidates, makeDualProfile(slotName, slotURL, true)...)
+	c.mu.RLock()
+	fetcher := c.parrillaFetcher
+	cached, ok := c.parrillaCache[key]
+	c.mu.RUnlock()
+	if ok {
+		return cached, true
+	}
+	if fetcher == nil {
+		return parrilla.Snapshot{}, false
+	}
+
+	// Serialize cache misses: without this, two concurrent resolutions before the
+	// first fetch completes would both hit the network. The double-check settles
+	// whichever caller lost the race.
+	c.parrillaMu.Lock()
+	defer c.parrillaMu.Unlock()
+
+	c.mu.RLock()
+	fetcher = c.parrillaFetcher
+	cached, ok = c.parrillaCache[key]
+	c.mu.RUnlock()
+	if ok {
+		return cached, true
+	}
+	if fetcher == nil {
+		return parrilla.Snapshot{}, false
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), parrillaFetchTimeout)
+	defer cancel()
+	snap, err := fetcher.Fetch(ctx, date)
+	if err != nil {
+		// Degrade gracefully: cache the empty result and let lower tiers run.
+		snap = parrilla.Snapshot{Date: key}
+	}
+
+	c.mu.Lock()
+	if c.parrillaCache == nil {
+		c.parrillaCache = make(map[string]parrilla.Snapshot)
+	}
+	c.parrillaCache[key] = snap
+	c.mu.Unlock()
+
+	return snap, true
+}
+
+// matchParrillaEntry finds the parrilla entry for a match. Team matching reuses
+// tvguide.MatchScore, which requires BOTH teams (or the full fixture title) to be
+// identified; a single team never matches. When several entries match, the one
+// whose published start time overlaps the match window wins; if none overlaps and
+// the match is unambiguous, that single entry is used.
+func matchParrillaEntry(snap parrilla.Snapshot, match model.Match) (parrilla.Entry, bool) {
+	matchMins, hasTime := localClockMinutes(match.StartTime)
+
+	matchedCount := 0
+	var first, inWindow *parrilla.Entry
+	for i := range snap.Entries {
+		entry := &snap.Entries[i]
+		title := strings.TrimSpace(entry.Raw)
+		if title == "" {
+			title = fmt.Sprintf("%s vs %s", entry.HomeTeam, entry.AwayTeam)
+		}
+		if ok, _ := tvguide.MatchScore(title, match); !ok {
+			continue
+		}
+		matchedCount++
+		if first == nil {
+			first = entry
+		}
+		if hasTime && entry.StartMins >= 0 && parrillaWindowOverlap(entry.StartMins, matchMins) {
+			if inWindow == nil {
+				inWindow = entry
+			}
 		}
 	}
 
-	return c.filterAndDeduplicate(candidates)
+	if inWindow != nil {
+		return *inWindow, true
+	}
+	if matchedCount == 1 {
+		return *first, true
+	}
+	return parrilla.Entry{}, false
+}
+
+// localClockMinutes converts a timestamp into minutes since local midnight.
+func localClockMinutes(t time.Time) (int, bool) {
+	if t.IsZero() {
+		return 0, false
+	}
+	lt := t.In(locale.Location())
+	return lt.Hour()*60 + lt.Minute(), true
+}
+
+// parrillaWindowOverlap reports whether a parrilla entry starting at programStart
+// overlaps the match window starting at matchStart. It mirrors the tvguide
+// intervalsOverlap helper: both intervals last parrillaMatchWindowMinutes and
+// midnight wrap-around is tolerated.
+func parrillaWindowOverlap(programStart, matchStart int) bool {
+	const dur = parrillaMatchWindowMinutes
+	for _, shiftA := range [...]int{-1440, 0, 1440} {
+		a1, a2 := programStart+shiftA, programStart+dur+shiftA
+		for _, shiftB := range [...]int{-1440, 0, 1440} {
+			b1, b2 := matchStart+shiftB, matchStart+dur+shiftB
+			if a1 < b2 && b1 < a2 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (c *Catalog) filterAndDeduplicate(candidates []model.Channel) []model.Channel {
@@ -890,6 +1033,14 @@ func (c *Catalog) filterAndDeduplicate(candidates []model.Channel) []model.Chann
 	c.mu.RLock()
 	hasProbes := len(c.streamAlive) > 0
 	for _, ch := range candidates {
+		cleanURL, err := SanitizeURL(ch.URL)
+		if err != nil {
+			// Playability gate: a channel with no resolvable stream URL is not a
+			// playable option and must never be emitted as one.
+			continue
+		}
+		ch.URL = cleanURL
+
 		key := ch.URL + "|" + ch.Resolution
 		if seen[key] {
 			continue
@@ -917,4 +1068,36 @@ func (c *Catalog) filterAndDeduplicate(candidates []model.Channel) []model.Chann
 	}
 
 	return final
+}
+
+// HasPlayableSource reports whether GetChannels yields at least one channel the
+// user can actually play, i.e. a channel whose stream URL resolves. The UI uses
+// this to decide visibility under the product rule: a match aired only on
+// channels we cannot play (for example Disney+ Premium only, with no Disney+
+// configured) is neither shown nor mentioned anywhere.
+func (c *Catalog) HasPlayableSource(match model.Match) bool {
+	for _, ch := range c.GetChannels(match) {
+		if _, err := SanitizeURL(ch.URL); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// HasConfiguredStreams reports whether the user has ANY usable stream source
+// configured: a non-empty channels.json "streams" entry, a programmatic stream, or
+// a loaded M3U playlist.
+//
+// The UI uses it as a safety valve: when nothing is configured, the visibility
+// rule would filter out every fixture and leave the app empty, so the TUI shows an
+// actionable configuration hint instead of a silent empty list.
+func (c *Catalog) HasConfiguredStreams() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	for _, u := range c.userStreams {
+		if strings.TrimSpace(u) != "" {
+			return true
+		}
+	}
+	return len(c.m3uChannels) > 0
 }
