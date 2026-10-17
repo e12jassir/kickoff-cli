@@ -2265,5 +2265,3 @@ func TestMainMenu_SingleCursorAndEscAccordion(t *testing.T) {
 		t.Errorf("expected category to collapse after second Esc")
 	}
 }
-
-

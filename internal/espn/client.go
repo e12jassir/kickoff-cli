@@ -1908,4 +1908,3 @@ func extractCoachName(c *rawCoach) string {
 	}
 	return ""
 }
-

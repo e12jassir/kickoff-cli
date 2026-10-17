@@ -625,4 +625,3 @@ func TestNewNotifier(t *testing.T) {
 		t.Errorf("unexpected error from notifier: %v", err)
 	}
 }
-

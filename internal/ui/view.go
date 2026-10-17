@@ -26,7 +26,6 @@ func (m Model) View() string {
 	return renderBrowsing(m)
 }
 
-
 func renderStartup(m Model) string {
 	logo := AsciiLogoStyle.Render(AsciiLogo)
 	subtitle := SubtitleStyle.Render("Terminal Live Football • Cargando Competiciones...")
