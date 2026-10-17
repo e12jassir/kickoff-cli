@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -1451,5 +1452,146 @@ func TestClient_ProbeFunctions_UseDoWithRetry(t *testing.T) {
 	}
 	if pastAttempts.Load() < 2 {
 		t.Errorf("expected at least 2 attempts for past probe due to retry, got %d", pastAttempts.Load())
+	}
+}
+
+// roundTripFunc adapts a function into an http.RoundTripper so tests can
+// intercept requests without touching the network.
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+// readScoreboardFixture loads a recorded ESPN scoreboard response. The fixture
+// was captured live from
+// https://site.api.espn.com/apis/site/v2/sports/soccer/eng.1/scoreboard?lang=en
+// and both events carry broadcasts[] and geoBroadcasts[] metadata.
+func readScoreboardFixture(t *testing.T) []byte {
+	t.Helper()
+	fixture, err := os.ReadFile(filepath.Join("testdata", "scoreboard_eng1_broadcasts.json"))
+	if err != nil {
+		t.Fatalf("failed to read recorded fixture: %v", err)
+	}
+	return fixture
+}
+
+// TestClient_FetchMatches_BroadcastsFromRecordedFixture guards that ESPN
+// broadcast metadata survives parsing and reaches model.Match.Broadcasts.
+// The fixture has two distinct events; each broadcast name is reported by both
+// broadcasts[].names and geoBroadcasts[].media.shortName, so the assertions
+// also cover de-duplication.
+func TestClient_FetchMatches_BroadcastsFromRecordedFixture(t *testing.T) {
+	fixture := readScoreboardFixture(t)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(fixture)
+	}))
+	defer server.Close()
+
+	fixedNow := time.Date(2026, 10, 17, 12, 0, 0, 0, time.FixedZone("America/Bogota", -5*3600))
+	client := NewClient(
+		WithBaseURL(server.URL),
+		WithCacheDir(t.TempDir()),
+		WithNow(func() time.Time { return fixedNow }),
+		WithRetryBackoff(func() time.Duration { return 0 }),
+	)
+
+	matches, err := client.FetchMatches(context.Background(), "premier")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(matches) != 2 {
+		t.Fatalf("expected 2 matches from fixture, got %d", len(matches))
+	}
+
+	want := map[string][]string{
+		"401878771": {"USA Net", "Universo"},
+		"401879262": {"Peacock"},
+	}
+	for _, m := range matches {
+		expected, ok := want[m.ID]
+		if !ok {
+			t.Fatalf("unexpected match id %s", m.ID)
+		}
+		if len(m.Broadcasts) != len(expected) {
+			t.Fatalf("match %s: expected broadcasts %v, got %v", m.ID, expected, m.Broadcasts)
+		}
+		for i := range expected {
+			if m.Broadcasts[i] != expected[i] {
+				t.Errorf("match %s broadcast[%d]: expected %q, got %q", m.ID, i, expected[i], m.Broadcasts[i])
+			}
+		}
+	}
+}
+
+// TestClient_ScoreboardQueryParams_PreserveBroadcasts is the regression guard
+// for the erased-broadcasts bug: ESPN drops the broadcasts[]/geoBroadcasts[]
+// arrays when the scoreboard is requested with region=co combined with lang=es.
+// The client must request lang=en and must not send lang=es or a region param.
+// The baseURL deliberately contains "espn.com" so the query-param branch runs,
+// while a custom transport serves the recorded fixture locally.
+func TestClient_ScoreboardQueryParams_PreserveBroadcasts(t *testing.T) {
+	fixture := readScoreboardFixture(t)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(fixture)
+	}))
+	defer server.Close()
+
+	var mu sync.Mutex
+	var mainQuery string
+
+	httpClient := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if !strings.Contains(req.URL.RawQuery, "dates=") {
+			mu.Lock()
+			mainQuery = req.URL.RawQuery
+			mu.Unlock()
+		}
+		req.URL.Scheme = "http"
+		req.URL.Host = strings.TrimPrefix(server.URL, "http://")
+		return http.DefaultTransport.RoundTrip(req)
+	})}
+
+	fixedNow := time.Date(2026, 10, 17, 12, 0, 0, 0, time.FixedZone("America/Bogota", -5*3600))
+	client := NewClient(
+		WithBaseURL("https://site.api.espn.com/apis/site/v2/sports/soccer"),
+		WithHTTPClient(httpClient),
+		WithCacheDir(t.TempDir()),
+		WithNow(func() time.Time { return fixedNow }),
+		WithRetryBackoff(func() time.Duration { return 0 }),
+	)
+
+	matches, err := client.FetchMatches(context.Background(), "premier")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	mu.Lock()
+	q := mainQuery
+	mu.Unlock()
+
+	if q == "" {
+		t.Fatalf("expected to observe the main scoreboard request query")
+	}
+	if !strings.Contains(q, "lang=en") {
+		t.Errorf("expected lang=en in ESPN scoreboard query, got %q", q)
+	}
+	if strings.Contains(q, "lang=es") {
+		t.Errorf("lang=es erases broadcasts and must never be sent, got %q", q)
+	}
+	if strings.Contains(q, "region=") {
+		t.Errorf("region param must not be sent (it combines with lang=es to erase broadcasts and is inert with lang=en), got %q", q)
+	}
+
+	if len(matches) == 0 {
+		t.Fatalf("expected matches parsed from fixture")
+	}
+	for _, m := range matches {
+		if len(m.Broadcasts) == 0 {
+			t.Errorf("match %s lost its ESPN broadcasts", m.ID)
+		}
 	}
 }

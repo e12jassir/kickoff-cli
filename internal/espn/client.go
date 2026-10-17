@@ -699,7 +699,21 @@ func (c *Client) FetchMatches(ctx context.Context, leagueKey string) ([]model.Ma
 	leagueCode := LeagueCode(leagueKey)
 	endpoint := fmt.Sprintf("%s/%s/scoreboard", c.baseURL, leagueCode)
 	if strings.Contains(c.baseURL, "espn.com") {
-		endpoint += "?region=co&lang=es"
+		// ESPN scoreboard query params (verified live on 2026-10-17 against
+		// https://site.api.espn.com/apis/site/v2/sports/soccer/<league>/scoreboard):
+		//
+		//   ?region=co&lang=es -> competitions[].broadcasts and geoBroadcasts are EMPTY
+		//   ?lang=en           -> both arrays populate from names / media.shortName
+		//
+		// The erase trigger is the region+lang=es combination: region=co/ar/mx
+		// with lang=es wipe the broadcasts, while lang=es alone or ANY region
+		// with lang=en keep them. This endpoint is byte-identical across region
+		// values once lang=en is set, so omitting region loses no region-specific
+		// data. We therefore request lang=en and drop region. Broadcast metadata
+		// is the strongest evidence tier in the channel catalog, so it must never
+		// be dropped. Localization loss is negligible: team displayNames are
+		// identical between lang=es and lang=en for the leagues in use.
+		endpoint += "?lang=en"
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
@@ -1044,7 +1058,8 @@ func (c *Client) fetchRecentPastScoreboardEvents(ctx context.Context, leagueCode
 			dateStr := now.AddDate(0, 0, -offset).Format("20060102")
 			endpoint := fmt.Sprintf("%s/%s/scoreboard?dates=%s", c.baseURL, leagueCode, dateStr)
 			if strings.Contains(c.baseURL, "espn.com") {
-				endpoint += "&region=co&lang=es"
+				// Same broadcast-preserving params as FetchMatches: see the comment there.
+				endpoint += "&lang=en"
 			}
 
 			req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, endpoint, nil)
@@ -1110,7 +1125,8 @@ func (c *Client) fetchUpcomingScoreboardEvents(ctx context.Context, leagueCode s
 			dateStr := now.AddDate(0, 0, offset).Format("20060102")
 			endpoint := fmt.Sprintf("%s/%s/scoreboard?dates=%s", c.baseURL, leagueCode, dateStr)
 			if strings.Contains(c.baseURL, "espn.com") {
-				endpoint += "&region=co&lang=es"
+				// Same broadcast-preserving params as FetchMatches: see the comment there.
+				endpoint += "&lang=en"
 			}
 
 			req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, endpoint, nil)

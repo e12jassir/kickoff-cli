@@ -85,7 +85,7 @@ func (d *DemoClient) FetchMatches(ctx context.Context, leagueKey string) ([]mode
 			LeagueKey:  leagueKey,
 			Referee:    "Clément Turpin",
 			Attendance: 75000,
-			Broadcasts: []string{"ESPN 2", "Fox Sports 2"},
+			Broadcasts: []string{"ESPN 2", "ESPN 6"},
 			SlotIndex:  1,
 		},
 		{
@@ -101,7 +101,7 @@ func (d *DemoClient) FetchMatches(ctx context.Context, leagueKey string) ([]mode
 				State:       "pre",
 			},
 			LeagueKey:  leagueKey,
-			Broadcasts: []string{"ESPN 3", "Fox Sports 3"},
+			Broadcasts: []string{"ESPN 3", "ESPN 7"},
 			SlotIndex:  2,
 		},
 	}, nil
