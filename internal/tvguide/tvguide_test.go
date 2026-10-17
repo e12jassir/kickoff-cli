@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -565,4 +566,406 @@ func TestResolveMatch_TimeAwareReplayDisqualification(t *testing.T) {
 	if targetVilla.Name != "ESPN 3 HD" {
 		t.Errorf("expected Aston Villa to resolve to ESPN 3 HD (live at 13:40), but got %s", targetVilla.Name)
 	}
+}
+
+// TestMatchScore_NoPartialEvidenceOrCollisions proves the two compounding
+// defects are closed at the scoring layer: a single team name is never enough,
+// and two distinct clubs that share a token (Bayer/Bayern, FC Barcelona/Barcelona
+// SC) never cross-match.
+func TestMatchScore_NoPartialEvidenceOrCollisions(t *testing.T) {
+	bayern := model.Match{
+		HomeTeam: model.Competitor{DisplayName: "Bayern Munich"},
+		AwayTeam: model.Competitor{DisplayName: "VfB Stuttgart"},
+	}
+	bayer := model.Match{
+		HomeTeam: model.Competitor{DisplayName: "Bayer Leverkusen"},
+		AwayTeam: model.Competitor{DisplayName: "VfB Stuttgart"},
+	}
+	barcelona := model.Match{
+		HomeTeam: model.Competitor{DisplayName: "FC Barcelona"},
+		AwayTeam: model.Competitor{DisplayName: "Liga de Quito"},
+	}
+	barcelonaSC := model.Match{
+		HomeTeam: model.Competitor{DisplayName: "Barcelona SC"},
+		AwayTeam: model.Competitor{DisplayName: "Liga de Quito"},
+	}
+
+	tests := []struct {
+		name        string
+		guideTitle  string
+		match       model.Match
+		shouldMatch bool
+	}{
+		{
+			name:        "Bayer Leverkusen guide must not match a Bayern Munich fixture",
+			guideTitle:  "Bayer Leverkusen vs VfB Stuttgart",
+			match:       bayern,
+			shouldMatch: false,
+		},
+		{
+			name:        "Bayern Munich guide must not match a Bayer Leverkusen fixture",
+			guideTitle:  "Bayern Munich vs VfB Stuttgart",
+			match:       bayer,
+			shouldMatch: false,
+		},
+		{
+			name:        "Barcelona SC guide must not match an FC Barcelona fixture",
+			guideTitle:  "Barcelona SC vs Liga de Quito",
+			match:       barcelona,
+			shouldMatch: false,
+		},
+		{
+			name:        "FC Barcelona guide must not match a Barcelona SC fixture",
+			guideTitle:  "FC Barcelona vs Liga de Quito",
+			match:       barcelonaSC,
+			shouldMatch: false,
+		},
+		{
+			name:        "a title with only one of the two teams must not match",
+			guideTitle:  "Liverpool vs Manchester United",
+			match:       model.Match{HomeTeam: model.Competitor{DisplayName: "Liverpool"}, AwayTeam: model.Competitor{DisplayName: "Chelsea"}},
+			shouldMatch: false,
+		},
+		{
+			name:        "a title with both teams matches",
+			guideTitle:  "Feyenoord vs Como",
+			match:       model.Match{HomeTeam: model.Competitor{DisplayName: "Feyenoord Rotterdam"}, AwayTeam: model.Competitor{DisplayName: "Como"}},
+			shouldMatch: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			matched, score := MatchScore(tt.guideTitle, tt.match)
+			if matched != tt.shouldMatch {
+				t.Fatalf("MatchScore(%q) matched=%v (score %d), want matched=%v", tt.guideTitle, matched, score, tt.shouldMatch)
+			}
+			if matched && score < minMatchScore {
+				t.Errorf("accepted candidate scored %d, below minMatchScore %d", score, minMatchScore)
+			}
+		})
+	}
+}
+
+// TestClubAliasTableIntegrity guards the canonical identity table: every key
+// must already be in Normalize()d form (otherwise it is unreachable, because
+// lookups are always performed on normalized input) and every club must have a
+// non-empty id.
+func TestClubAliasTableIntegrity(t *testing.T) {
+	for key, id := range clubAliases {
+		if id == "" {
+			t.Errorf("alias %q maps to an empty club id", key)
+		}
+		if got := Normalize(key); got != key {
+			t.Errorf("alias key %q is not normalized (Normalize = %q), so it can never match", key, got)
+		}
+	}
+
+	// Clubs that collapse onto shared tokens after normalization must each carry
+	// a canonical id, otherwise they can never resolve.
+	for _, name := range []string{
+		"Santa Fe", "Independiente Santa Fe", "Real Madrid", "Atlético Madrid",
+		"Inter Milan", "Inter de Milán", "FC Barcelona", "Barcelona SC",
+		"Bayern Munich", "Bayer Leverkusen", "Atlético Nacional",
+		"América de Cali", "Deportivo Cali", "Manchester United",
+		"Manchester City", "AC Milan", "Sporting CP", "Paris Saint-Germain",
+	} {
+		if canonicalClubID(Normalize(name)) == "" {
+			t.Errorf("expected a canonical club id for %q", name)
+		}
+	}
+}
+
+// TestMatchScore_CanonicalClubIdentity proves the canonical-id step fixes the
+// over-decline regression (Santa Fe, Inter de Milán, París Saint-Germain,
+// multi-word generic names) WITHOUT reopening the false positives it was
+// introduced to close (FC Barcelona vs Barcelona SC, Bayern vs Bayer, Real
+// Madrid vs Atlético Madrid, Inter Milan vs Inter Miami, single-team titles).
+func TestMatchScore_CanonicalClubIdentity(t *testing.T) {
+	tests := []struct {
+		name        string
+		guideTitle  string
+		match       model.Match
+		shouldMatch bool
+	}{
+		// --- Regressions that must now resolve ---
+		{
+			name:        "Santa Fe resolves when the other side is distinctive",
+			guideTitle:  "Santa Fe vs Once Caldas",
+			match:       model.Match{HomeTeam: model.Competitor{DisplayName: "Santa Fe"}, AwayTeam: model.Competitor{DisplayName: "Once Caldas"}},
+			shouldMatch: true,
+		},
+		{
+			name:        "Independiente Santa Fe (full name) resolves too",
+			guideTitle:  "Independiente Santa Fe vs Once Caldas",
+			match:       model.Match{HomeTeam: model.Competitor{DisplayName: "Santa Fe"}, AwayTeam: model.Competitor{DisplayName: "Once Caldas"}},
+			shouldMatch: true,
+		},
+		{
+			name:        "parrilla spelling Inter de Milán matches ESPN Inter Milan",
+			guideTitle:  "Inter de Milán vs Napoli",
+			match:       model.Match{HomeTeam: model.Competitor{DisplayName: "Inter Milan"}, AwayTeam: model.Competitor{DisplayName: "Napoli"}},
+			shouldMatch: true,
+		},
+		{
+			name:        "ESPN Inter Milan matches parrilla Inter de Milán",
+			guideTitle:  "Inter Milan vs Napoli",
+			match:       model.Match{HomeTeam: model.Competitor{DisplayName: "Inter de Milán"}, AwayTeam: model.Competitor{DisplayName: "Napoli"}},
+			shouldMatch: true,
+		},
+		{
+			name:        "Gol Caracol París Saint-Germain matches ESPN Paris Saint-Germain",
+			guideTitle:  "Manchester City vs. Paris Saint-Germain",
+			match:       model.Match{HomeTeam: model.Competitor{DisplayName: "Manchester City"}, AwayTeam: model.Competitor{DisplayName: "París Saint-Germain"}},
+			shouldMatch: true,
+		},
+		{
+			name:        "ESPN Paris Saint-Germain matches Gol Caracol París Saint-Germain",
+			guideTitle:  "Manchester City vs. París Saint-Germain",
+			match:       model.Match{HomeTeam: model.Competitor{DisplayName: "Manchester City"}, AwayTeam: model.Competitor{DisplayName: "Paris Saint-Germain"}},
+			shouldMatch: true,
+		},
+		{
+			name:        "Bayern Múnich matches Bayern Munich",
+			guideTitle:  "Bayern Múnich vs Borussia Dortmund",
+			match:       model.Match{HomeTeam: model.Competitor{DisplayName: "Bayern Munich"}, AwayTeam: model.Competitor{DisplayName: "Borussia Dortmund"}},
+			shouldMatch: true,
+		},
+		{
+			name:        "Real Madrid resolves when the other side is distinctive",
+			guideTitle:  "Roma vs. Real Madrid",
+			match:       model.Match{HomeTeam: model.Competitor{DisplayName: "AS Roma"}, AwayTeam: model.Competitor{DisplayName: "Real Madrid"}},
+			shouldMatch: true,
+		},
+		{
+			name:        "Atlético Nacional resolves with Boyacá Chicó",
+			guideTitle:  "Boyaca Chicó vs. Atlético Nacional",
+			match:       model.Match{HomeTeam: model.Competitor{DisplayName: "Boyacá Chicó"}, AwayTeam: model.Competitor{DisplayName: "Atletico Nacional"}},
+			shouldMatch: true,
+		},
+		{
+			name:        "Deportivo Alavés matches Alavés",
+			guideTitle:  "Alavés vs Sevilla",
+			match:       model.Match{HomeTeam: model.Competitor{DisplayName: "Deportivo Alavés"}, AwayTeam: model.Competitor{DisplayName: "Sevilla"}},
+			shouldMatch: true,
+		},
+		{
+			name:        "RCD Espanyol matches Espanyol",
+			guideTitle:  "RCD Espanyol vs Atlético Madrid",
+			match:       model.Match{HomeTeam: model.Competitor{DisplayName: "Espanyol"}, AwayTeam: model.Competitor{DisplayName: "Atlético Madrid"}},
+			shouldMatch: true,
+		},
+		{
+			name:        "Betis matches Real Betis",
+			guideTitle:  "Betis vs Sevilla",
+			match:       model.Match{HomeTeam: model.Competitor{DisplayName: "Real Betis"}, AwayTeam: model.Competitor{DisplayName: "Sevilla"}},
+			shouldMatch: true,
+		},
+		{
+			name:        "Villarreal CF matches Villarreal",
+			guideTitle:  "Villarreal CF vs Real Madrid",
+			match:       model.Match{HomeTeam: model.Competitor{DisplayName: "Villarreal"}, AwayTeam: model.Competitor{DisplayName: "Real Madrid"}},
+			shouldMatch: true,
+		},
+
+		// --- Collisions and single-team evidence that must STILL decline ---
+		{
+			name:        "Santa Fe alone still never resolves",
+			guideTitle:  "Santa Fe",
+			match:       model.Match{HomeTeam: model.Competitor{DisplayName: "Santa Fe"}, AwayTeam: model.Competitor{DisplayName: "Once Caldas"}},
+			shouldMatch: false,
+		},
+		{
+			name:        "Barcelona SC guide must not match an FC Barcelona fixture",
+			guideTitle:  "Barcelona SC vs Liga de Quito",
+			match:       model.Match{HomeTeam: model.Competitor{DisplayName: "FC Barcelona"}, AwayTeam: model.Competitor{DisplayName: "Liga de Quito"}},
+			shouldMatch: false,
+		},
+		{
+			name:        "FC Barcelona guide must not match a Barcelona SC fixture",
+			guideTitle:  "FC Barcelona vs Liga de Quito",
+			match:       model.Match{HomeTeam: model.Competitor{DisplayName: "Barcelona SC"}, AwayTeam: model.Competitor{DisplayName: "Liga de Quito"}},
+			shouldMatch: false,
+		},
+		{
+			name:        "Bayer Leverkusen guide must not match a Bayern Munich fixture",
+			guideTitle:  "Bayer Leverkusen vs VfB Stuttgart",
+			match:       model.Match{HomeTeam: model.Competitor{DisplayName: "Bayern Munich"}, AwayTeam: model.Competitor{DisplayName: "VfB Stuttgart"}},
+			shouldMatch: false,
+		},
+		{
+			name:        "Bayern Munich guide must not match a Bayer Leverkusen fixture",
+			guideTitle:  "Bayern Munich vs VfB Stuttgart",
+			match:       model.Match{HomeTeam: model.Competitor{DisplayName: "Bayer Leverkusen"}, AwayTeam: model.Competitor{DisplayName: "VfB Stuttgart"}},
+			shouldMatch: false,
+		},
+		{
+			name:        "Real Madrid guide must not match an Atlético Madrid fixture",
+			guideTitle:  "Real Madrid vs Sevilla",
+			match:       model.Match{HomeTeam: model.Competitor{DisplayName: "Atlético Madrid"}, AwayTeam: model.Competitor{DisplayName: "Sevilla"}},
+			shouldMatch: false,
+		},
+		{
+			name:        "Atlético Madrid guide must not match a Real Madrid fixture",
+			guideTitle:  "Atlético Madrid vs Sevilla",
+			match:       model.Match{HomeTeam: model.Competitor{DisplayName: "Real Madrid"}, AwayTeam: model.Competitor{DisplayName: "Sevilla"}},
+			shouldMatch: false,
+		},
+		{
+			name:        "Inter Miami guide must not match an Inter Milan fixture",
+			guideTitle:  "Inter Miami vs Napoli",
+			match:       model.Match{HomeTeam: model.Competitor{DisplayName: "Inter Milan"}, AwayTeam: model.Competitor{DisplayName: "Napoli"}},
+			shouldMatch: false,
+		},
+		{
+			name:        "AC Milan guide must not match an Inter Milan fixture",
+			guideTitle:  "AC Milan vs Lazio",
+			match:       model.Match{HomeTeam: model.Competitor{DisplayName: "Inter Milan"}, AwayTeam: model.Competitor{DisplayName: "Lazio"}},
+			shouldMatch: false,
+		},
+		{
+			name:        "a title with only one of the two teams must not match",
+			guideTitle:  "Real Madrid",
+			match:       model.Match{HomeTeam: model.Competitor{DisplayName: "Real Madrid"}, AwayTeam: model.Competitor{DisplayName: "Sevilla"}},
+			shouldMatch: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			matched, score := MatchScore(tt.guideTitle, tt.match)
+			if matched != tt.shouldMatch {
+				t.Fatalf("MatchScore(%q) matched=%v (score %d), want matched=%v", tt.guideTitle, matched, score, tt.shouldMatch)
+			}
+		})
+	}
+}
+
+// TestResolveMatch_RejectsPartialEvidenceAndAmbiguity proves the caller never
+// promotes a weak candidate on timing and declines when the evidence conflicts.
+func TestResolveMatch_RejectsPartialEvidenceAndAmbiguity(t *testing.T) {
+	loc, err := time.LoadLocation("America/Bogota")
+	if err != nil {
+		t.Fatalf("failed to load timezone: %v", err)
+	}
+
+	t.Run("correct both-teams title without time beats wrong single-team title with perfect timing", func(t *testing.T) {
+		svc := NewService()
+		svc.SetGuides([]ChannelGuide{
+			{
+				Name: "ESPN Wrong HD",
+				Slug: "espn_wrong",
+				Entries: []ProgramEntry{
+					// Only one team named, but perfectly timed to the kickoff.
+					{Title: "Feyenoord", StartTime: "13:58", EndTime: "16:00"},
+				},
+			},
+			{
+				Name: "ESPN Right HD",
+				Slug: "espn_right",
+				// Both teams named, but no time metadata at all.
+				Programs: []string{"Feyenoord vs. Como"},
+			},
+		})
+
+		match := model.Match{
+			HomeTeam: model.Competitor{DisplayName: "Feyenoord Rotterdam"},
+			AwayTeam: model.Competitor{DisplayName: "Como"},
+		}
+
+		target, found := svc.ResolveMatch(match)
+		if !found {
+			t.Fatalf("expected the both-teams channel to resolve")
+		}
+		if target.Name != "ESPN Right HD" {
+			t.Fatalf("expected ESPN Right HD, got %q", target.Name)
+		}
+	})
+
+	t.Run("wrong single-team title within five minutes of kickoff must not resolve", func(t *testing.T) {
+		svc := NewService()
+		svc.SetGuides([]ChannelGuide{
+			{
+				Name: "ESPN Wrong HD",
+				Slug: "espn_wrong",
+				Entries: []ProgramEntry{
+					{Title: "Feyenoord", StartTime: "14:00", EndTime: "16:00"},
+				},
+			},
+		})
+
+		match := model.Match{
+			StartTime: time.Date(2026, 10, 14, 14, 0, 0, 0, loc),
+			HomeTeam:  model.Competitor{DisplayName: "Feyenoord Rotterdam"},
+			AwayTeam:  model.Competitor{DisplayName: "Como"},
+		}
+
+		if target, found := svc.ResolveMatch(match); found {
+			t.Fatalf("single-team title must not resolve, got %q", target.Name)
+		}
+	})
+
+	t.Run("a far replay that does not overlap the match window is disqualified", func(t *testing.T) {
+		svc := NewService()
+		svc.SetGuides([]ChannelGuide{
+			{
+				Name: "ESPN Replay HD",
+				Slug: "espn_replay",
+				Entries: []ProgramEntry{
+					// Correct teams, but the programme is an 8-hour-away replay.
+					{Title: "Feyenoord vs. Como", StartTime: "22:00", EndTime: "00:00"},
+				},
+			},
+		})
+
+		match := model.Match{
+			StartTime: time.Date(2026, 10, 14, 14, 0, 0, 0, loc),
+			HomeTeam:  model.Competitor{DisplayName: "Feyenoord Rotterdam"},
+			AwayTeam:  model.Competitor{DisplayName: "Como"},
+		}
+
+		if target, found := svc.ResolveMatch(match); found {
+			t.Fatalf("non-overlapping replay must be disqualified, got %q", target.Name)
+		}
+	})
+
+	t.Run("two channels tied on the top score is ambiguous and declines", func(t *testing.T) {
+		svc := NewService()
+		svc.SetGuides([]ChannelGuide{
+			{Name: "ESPN A HD", Slug: "espn_a", Programs: []string{"Feyenoord vs. Como"}},
+			{Name: "ESPN B HD", Slug: "espn_b", Programs: []string{"Feyenoord vs. Como"}},
+		})
+
+		match := model.Match{
+			HomeTeam: model.Competitor{DisplayName: "Feyenoord Rotterdam"},
+			AwayTeam: model.Competitor{DisplayName: "Como"},
+		}
+
+		if target, found := svc.ResolveMatch(match); found {
+			t.Fatalf("ambiguous tie must decline, got %q", target.Name)
+		}
+	})
+}
+
+// TestNormalize_ConcurrentSafe guards against sharing stateful transformers
+// across goroutines. RemoveAccents is reachable from the TUI update loop and
+// from concurrent fetch goroutines, so it must be safe to call in parallel.
+// Run under -race to be meaningful.
+func TestNormalize_ConcurrentSafe(t *testing.T) {
+	const workers = 64
+	var wg sync.WaitGroup
+	wg.Add(workers)
+	for i := 0; i < workers; i++ {
+		go func(n int) {
+			defer wg.Done()
+			for j := 0; j < 200; j++ {
+				if got := RemoveAccents("Atlético Múnich Ñandú Çedilla"); got != "Atletico Munich Nandu Cedilla" {
+					t.Errorf("RemoveAccents = %q", got)
+					return
+				}
+				_ = Normalize("París Saint-Germain vs. Boyacá Chicó")
+			}
+		}(i)
+	}
+	wg.Wait()
 }

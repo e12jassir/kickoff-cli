@@ -18,6 +18,20 @@ import (
 
 const (
 	DefaultCacheTTL = 4 * time.Hour
+
+	// minMatchScore is the MatchScore a candidate must reach to be considered.
+	// MatchScore only returns this value (or the full-title 10) when BOTH teams
+	// are identified or the full fixture title is matched; a single-team hit
+	// scores zero, so a lone team name can never resolve a channel.
+	minMatchScore = 5
+
+	// matchWindowMinutes is how long a fixture is assumed to be on air from
+	// kickoff. A guide programme must overlap that window to be eligible.
+	matchWindowMinutes = 120
+
+	// defaultEntryMinutes is the assumed programme length when the guide entry
+	// has a start time but no usable end time.
+	defaultEntryMinutes = 120
 )
 
 // Service coordinates fetching, caching, and matching of TV programming.
@@ -308,9 +322,57 @@ func parseClockMinutes(tStr string) (int, bool) {
 	return 0, false
 }
 
+// intervalsOverlap reports whether two half-open minute intervals on a 24h clock
+// intersect, tolerating midnight wrap-around. Interval endpoints may extend past
+// 1440; every interval is compared against shifted copies of the other.
+func intervalsOverlap(s1, e1, s2, e2 int) bool {
+	for _, shiftA := range [...]int{-1440, 0, 1440} {
+		a1, a2 := s1+shiftA, e1+shiftA
+		for _, shiftB := range [...]int{-1440, 0, 1440} {
+			b1, b2 := s2+shiftB, e2+shiftB
+			if a1 < b2 && b1 < a2 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// programmeOverlapsMatch reports whether a guide programme overlaps the match
+// window starting at matchStartMins. It returns hasTime=false when the entry
+// carries no usable start time, in which case timing must not be used to
+// disqualify the candidate. Timing can only disqualify here; it never promotes a
+// candidate (there are no timing bonuses).
+func programmeOverlapsMatch(entry ProgramEntry, matchStartMins int) (overlaps, hasTime bool) {
+	start, ok := parseClockMinutes(entry.StartTime)
+	if !ok {
+		return false, false
+	}
+
+	dur := defaultEntryMinutes
+	if end, ok := parseClockMinutes(entry.EndTime); ok {
+		dur = end - start
+		if dur <= 0 {
+			dur += 24 * 60
+		}
+	}
+
+	return intervalsOverlap(start, start+dur, matchStartMins, matchStartMins+matchWindowMinutes), true
+}
+
 // ResolveMatch matches an ESPN match against today's TV guide listings.
-// If multiple channels match, the entry with the highest confidence score and
-// temporal alignment to the match start time is selected, discarding distant replays.
+//
+// Acceptance is deliberately strict:
+//   - A candidate is eligible only when MatchScore reports BOTH teams
+//     identified or a full fixture-title match (score >= minMatchScore). A
+//     single team name never qualifies.
+//   - Timing is a gate, not a score. When the match and programme both carry a
+//     start time, the programme must overlap the match window; a programme that
+//     does not overlap is disqualified. Timing never adds points, so a perfect
+//     time slot can never lift a weak candidate above a correct one.
+//   - If two different channels share the top score, the result is ambiguous
+//     and the call declines rather than picking one. Unverified behaviour is
+//     strictly better than a wrong channel.
 func (s *Service) ResolveMatch(match model.Match) (ChannelTarget, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -327,8 +389,32 @@ func (s *Service) ResolveMatch(match model.Match) (ChannelTarget, bool) {
 	}
 
 	bestScore := 0
+	bestSlugs := make(map[string]struct{})
 	var bestTarget ChannelTarget
-	found := false
+
+	// consider records an eligible candidate. Ties across distinct channels are
+	// tracked so an ambiguous result can be declined at the end.
+	consider := func(guide ChannelGuide, score int) {
+		if score < minMatchScore {
+			return
+		}
+		target := ChannelTarget{
+			Name:      guide.Name,
+			Slug:      guide.Slug,
+			StreamURL: guide.StreamURL,
+		}
+		switch {
+		case score > bestScore:
+			bestScore = score
+			bestSlugs = map[string]struct{}{guide.Slug: {}}
+			bestTarget = target
+		case score == bestScore:
+			bestSlugs[guide.Slug] = struct{}{}
+			if bestTarget.Slug == "" {
+				bestTarget = target
+			}
+		}
+	}
 
 	for _, guide := range s.guides {
 		if len(guide.Entries) > 0 {
@@ -338,70 +424,34 @@ func (s *Service) ResolveMatch(match model.Match) (ChannelTarget, bool) {
 					continue
 				}
 
-				effectiveScore := baseScore
-
+				// Time gate: a programme that does not overlap the match window
+				// is disqualified. If it carries no usable time, it cannot be
+				// disqualified on timing and remains eligible.
 				if hasMatchTime && entry.StartTime != "" {
-					entryMins, ok := parseClockMinutes(entry.StartTime)
-					if ok {
-						diff := entryMins - matchMins
-						if diff < 0 {
-							diff = -diff
-						}
-						if diff > 12*60 {
-							diff = 24*60 - diff
-						}
-
-						// Disqualify replays scheduled far away (>2.5h) when not live now
-						if diff > 150 && !entry.IsLiveNow {
-							continue
-						}
-
-						if diff <= 60 {
-							effectiveScore += 6
-						} else if diff <= 120 {
-							effectiveScore += 3
-						}
+					overlaps, hasTime := programmeOverlapsMatch(entry, matchMins)
+					if hasTime && !overlaps {
+						continue
 					}
 				}
 
-				if entry.IsLiveNow {
-					effectiveScore += 4
-				}
-
-				if effectiveScore > bestScore {
-					bestScore = effectiveScore
-					bestTarget = ChannelTarget{
-						Name:      guide.Name,
-						Slug:      guide.Slug,
-						StreamURL: guide.StreamURL,
-					}
-					found = true
-				}
+				consider(guide, baseScore)
 			}
 			continue
 		}
 
-		// Fallback for flat program titles without time metadata
+		// Fallback for flat program titles without time metadata. There is no
+		// time to gate on, so eligibility rests entirely on MatchScore.
 		for _, prog := range guide.Programs {
 			matched, score := MatchScore(prog, match)
-			if matched && score > bestScore {
-				bestScore = score
-				bestTarget = ChannelTarget{
-					Name:      guide.Name,
-					Slug:      guide.Slug,
-					StreamURL: guide.StreamURL,
-				}
-				found = true
-				if score >= 10 {
-					break
-				}
+			if matched {
+				consider(guide, score)
 			}
 		}
 	}
 
-	if found && bestScore >= 2 {
-		return bestTarget, true
+	if bestScore < minMatchScore || len(bestSlugs) > 1 {
+		return ChannelTarget{}, false
 	}
 
-	return ChannelTarget{}, false
+	return bestTarget, true
 }
