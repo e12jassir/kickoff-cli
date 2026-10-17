@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -64,6 +65,13 @@ func main() {
 		lipgloss.SetColorProfile(termenv.Ascii)
 	}
 
+	if strings.HasSuffix(filepath.Base(os.Args[0]), "kickoff-setup") {
+		if err := updater.RunSetup(version); err != nil {
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+
 	runDemo := false
 
 	if len(os.Args) > 1 {
@@ -109,7 +117,7 @@ func main() {
 			}
 			os.Exit(0)
 		case "setup":
-			if err := updater.RunSetup(); err != nil {
+			if err := updater.RunSetup(version); err != nil {
 				os.Exit(1)
 			}
 			os.Exit(0)

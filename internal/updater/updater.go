@@ -14,12 +14,13 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/e12jassir/kickoff-cli/internal/setup"
 )
 
 const (
@@ -505,121 +506,12 @@ func SelfUpdate(ctx context.Context, repo, currentVersion string) error {
 	return nil
 }
 
-// RunSetup diagnoses system dependencies, configurations, and environment prerequisites.
-func RunSetup() error {
-	fmt.Println("kickoff setup — Checking environment and dependencies")
-	fmt.Println(strings.Repeat("─", 55))
-
-	var warnings []string
-
-	// 1. MPV binary
-	mpvBin := "mpv"
-	if exe, err := os.Executable(); err == nil {
-		dir := filepath.Dir(exe)
-		if runtime.GOOS == "windows" {
-			for _, cand := range []string{"mpv.exe", "mpvnet.exe", "mpv"} {
-				candidate := filepath.Join(dir, cand)
-				if _, err := os.Stat(candidate); err == nil {
-					mpvBin = candidate
-					break
-				}
-			}
-		} else {
-			candidate := filepath.Join(dir, "mpv")
-			if _, err := os.Stat(candidate); err == nil {
-				mpvBin = candidate
-			}
-		}
+// RunSetup diagnoses system dependencies and runs the interactive configuration & diagnostics TUI.
+func RunSetup(ver ...string) error {
+	v := "v0.2.2"
+	if len(ver) > 0 && ver[0] != "" {
+		v = ver[0]
 	}
-
-	mpvPath, err := exec.LookPath(mpvBin)
-	if err != nil && runtime.GOOS == "windows" {
-		for _, cand := range []string{"mpv.exe", "mpvnet.exe", "mpv"} {
-			if p, e := exec.LookPath(cand); e == nil {
-				mpvPath = p
-				err = nil
-				break
-			}
-		}
-	}
-
-	if err != nil {
-		fmt.Println("✗ mpv: NOT FOUND")
-		if runtime.GOOS == "windows" {
-			warnings = append(warnings, "mpv is required to play streams. Install it with 'winget install mpv.net' in PowerShell or place mpv.exe next to kickoff.exe")
-		} else {
-			warnings = append(warnings, "mpv is required to play streams. Install it with 'sudo pacman -S mpv' (Arch), 'sudo apt install mpv' (Ubuntu/Debian) or 'brew install mpv' (macOS)")
-		}
-	} else {
-		out, _ := exec.Command(mpvPath, "--version").Output()
-		firstLine := strings.Split(string(out), "\n")[0]
-		if filepath.Dir(mpvPath) == filepath.Dir(os.Args[0]) {
-			fmt.Printf("✓ mpv (local portable): %s (%s)\n", mpvPath, firstLine)
-		} else {
-			fmt.Printf("✓ mpv: %s (%s)\n", mpvPath, firstLine)
-		}
-	}
-
-	// 2. FFprobe (optional but recommended)
-	if ffPath, err := exec.LookPath("ffprobe"); err == nil {
-		fmt.Printf("✓ ffprobe: %s\n", ffPath)
-	} else {
-		fmt.Println("• ffprobe: Not installed (optional)")
-	}
-
-	// 3. Emoji fonts on Linux
-	if runtime.GOOS == "linux" {
-		if fcPath, err := exec.LookPath("fc-list"); err == nil {
-			out, _ := exec.Command(fcPath, ":", "family").Output()
-			outStr := strings.ToLower(string(out))
-			if strings.Contains(outStr, "emoji") || strings.Contains(outStr, "noto color") {
-				fmt.Println("✓ Fonts: System fonts ready")
-			} else {
-				fmt.Println("• Fonts: Standard fonts detected")
-			}
-		}
-	}
-
-	// 4. Config Directory & channels.json
-	configBase, err := os.UserConfigDir()
-	if err != nil || configBase == "" {
-		if home, err := os.UserHomeDir(); err == nil {
-			configBase = filepath.Join(home, ".config")
-		}
-	}
-	if configBase != "" {
-		cfgDir := filepath.Join(configBase, "kickoff")
-		_ = os.MkdirAll(cfgDir, 0o755)
-		channelsCfg := filepath.Join(cfgDir, "channels.json")
-		if _, err := os.Stat(channelsCfg); err == nil {
-			fmt.Printf("✓ Channels configuration: %s\n", channelsCfg)
-		} else {
-			fmt.Printf("• Channels configuration: Built-in default (%s)\n", channelsCfg)
-		}
-	}
-
-	// 5. Cache Directory
-	cacheBase, err := os.UserCacheDir()
-	if err != nil || cacheBase == "" {
-		if home, err := os.UserHomeDir(); err == nil {
-			cacheBase = filepath.Join(home, ".cache")
-		}
-	}
-	if cacheBase != "" {
-		cacheDir := filepath.Join(cacheBase, "kickoff")
-		_ = os.MkdirAll(cacheDir, 0o755)
-		fmt.Printf("✓ Cache directory: %s\n", cacheDir)
-	}
-
-	fmt.Println(strings.Repeat("─", 55))
-	if len(warnings) > 0 {
-		fmt.Println("Warnings:")
-		for _, w := range warnings {
-			fmt.Printf("  • %s\n", w)
-		}
-		return errors.New("incomplete dependencies")
-	}
-
-	fmt.Println("All set! kickoff is configured and ready.")
-	return nil
+	return setup.Run(v)
 }
+
