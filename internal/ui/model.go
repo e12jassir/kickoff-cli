@@ -177,7 +177,7 @@ func (m Model) WithInitialState(st UIState) Model {
 // CurrentLeague returns the currently selected league.
 func (m Model) CurrentLeague() model.League {
 	if len(m.leagues) == 0 {
-		return model.League{Key: "champions", Name: "UEFA Champions League", Code: "uefa.champions", Emoji: "🏆", Category: "Torneos Internacionales"}
+		return model.League{Key: "champions", Name: "UEFA Champions League", Code: "uefa.champions", Category: "Torneos Internacionales"}
 	}
 	if m.activeTab < 0 || m.activeTab >= len(m.leagues) {
 		return m.leagues[0]

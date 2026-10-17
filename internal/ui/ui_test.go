@@ -457,7 +457,7 @@ func TestModel_Finished_Match_Modal(t *testing.T) {
 	if !strings.Contains(viewStr, "FINALIZADO") {
 		t.Errorf("expected modal to show 'FINALIZADO', got:\n%s", viewStr)
 	}
-	if !strings.Contains(viewStr, "[ ⏹ Transmisión finalizada • No hay señales activas ]") {
+	if !strings.Contains(viewStr, "[ Transmisión finalizada • No hay señales activas ]") {
 		t.Errorf("expected modal to inform match transmission finished, got:\n%s", viewStr)
 	}
 	if !strings.Contains(viewStr, "Resumen") || !strings.Contains(viewStr, "Estadísticas") || !strings.Contains(viewStr, "Alineaciones") {
@@ -704,13 +704,13 @@ func TestModel_Match_Events_And_Stats_Modal(t *testing.T) {
 	if !strings.Contains(viewTab0, "R. Lewandowski") || !strings.Contains(viewTab0, "38'") {
 		t.Errorf("expected view to contain goal scorer Lewandowski 38'")
 	}
-	if !strings.Contains(viewTab0, "Gavi") || !strings.Contains(viewTab0, "🟨") {
+	if !strings.Contains(viewTab0, "Gavi") || !strings.Contains(viewTab0, "[A]") {
 		t.Errorf("expected view to contain yellow card for Gavi")
 	}
 	if !strings.Contains(viewTab0, "Vinicius Jr") || !strings.Contains(viewTab0, "(pen.)") {
 		t.Errorf("expected view to contain penalty goal for Vinicius Jr")
 	}
-	if !strings.Contains(viewTab0, "Rüdiger") || !strings.Contains(viewTab0, "🟥") {
+	if !strings.Contains(viewTab0, "Rüdiger") || !strings.Contains(viewTab0, "[R]") {
 		t.Errorf("expected view to contain red card for Rüdiger")
 	}
 
@@ -1399,8 +1399,8 @@ func TestModel_ConnectingStream_PulseAnimation(t *testing.T) {
 	if !strings.Contains(view, "Conectando con ESPN 1 HD") {
 		t.Errorf("expected connecting message in view, got:\n%s", view)
 	}
-	if !strings.Contains(view, "📡") {
-		t.Errorf("expected radar antenna emoji in connecting view")
+	if !strings.Contains(view, "~") {
+		t.Errorf("expected wave symbol in connecting view")
 	}
 	if !strings.Contains(view, "1080p") {
 		t.Errorf("expected bitrate/resolution indicator in connecting view")

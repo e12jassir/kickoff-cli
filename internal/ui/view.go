@@ -124,10 +124,7 @@ func renderMainMenu(m Model) string {
 	var elements []string
 	elements = append(elements, logo, subtitle)
 	if m.updateAvailable != "" {
-		icon := "✨"
-		if m.noEmoji {
-			icon = "*"
-		}
+		icon := "*"
 		banner := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#00FF88")).
 			Bold(true).
@@ -201,7 +198,7 @@ func renderBrowsing(m Model) string {
 
 	// Connecting stream pulse overlay check
 	if m.state == StatePlaying && m.connecting {
-		pulseWaves := []string{"📡 ∿", "📡 ∿ ∿", "📡 ∿ ∿ ∿", "📡 ∿ ∿ ∿ ∿"}
+		pulseWaves := []string{"~", "~~", "~~~", "~~~~"}
 		wave := pulseWaves[m.pulseStep%len(pulseWaves)]
 		feedName := m.streamFeed
 		if feedName == "" {
@@ -285,11 +282,7 @@ func renderBrowsing(m Model) string {
 
 func renderTabPartidos(m Model, curr model.League) string {
 	if len(m.matches) == 0 {
-		emptyPrefix := "⚽ "
-		if m.noEmoji {
-			emptyPrefix = ""
-		}
-		emptyMsg := fmt.Sprintf("%sNo hay próximos partidos programados para %s.", emptyPrefix, curr.Name)
+		emptyMsg := fmt.Sprintf("No hay próximos partidos programados para %s.", curr.Name)
 		return MatchBoxStyle.Render(EmptyStateStyle.Render(emptyMsg))
 	}
 
@@ -379,11 +372,7 @@ func renderTabResumen(m Model, curr model.League) string {
 	// 1. League Leader Highlight from Standings if available
 	if m.standings != nil && len(m.standings.Entries) > 0 {
 		leader := m.standings.Entries[0]
-		icon := "🏆"
-		if m.noEmoji {
-			icon = "[1]"
-		}
-		leaderText := fmt.Sprintf("%s Líder de Liga: %s (%s pts • %s PJ • DG %s)", icon, leader.TeamName, leader.Points, leader.GamesPlayed, leader.PointDiff)
+		leaderText := fmt.Sprintf("[1] Líder de Liga: %s (%s pts • %s PJ • DG %s)", leader.TeamName, leader.Points, leader.GamesPlayed, leader.PointDiff)
 		lines = append(lines, lipgloss.NewStyle().Foreground(ColorHighlight).Bold(true).Render(leaderText))
 		lines = append(lines, "")
 	}
@@ -823,13 +812,10 @@ func renderChannelModal(match model.Match, channels []model.Channel, selectedIdx
 		modal.WriteString(ModalDivider.Render("────────────────────────────────────────────────────────────") + "\n\n")
 
 		if match.Status.Completed || strings.ToLower(match.Status.State) == "post" {
-			finishedBadge := lipgloss.NewStyle().Width(modalContentWidth).Align(lipgloss.Center).Foreground(ColorMuted).Render("[ ⏹ Transmisión finalizada • No hay señales activas ]")
+			finishedBadge := lipgloss.NewStyle().Width(modalContentWidth).Align(lipgloss.Center).Foreground(ColorMuted).Render("[ Transmisión finalizada • No hay señales activas ]")
 			modal.WriteString(finishedBadge + "\n")
 		} else if len(channels) == 0 {
-			emptyNoticeText := "[ ⚙️ Sin señales activas • Configura tus canales en ~/.config/kickoff/channels.json ]"
-			if noEmoji {
-				emptyNoticeText = "[ Sin señales activas • Configura tus canales en ~/.config/kickoff/channels.json ]"
-			}
+			emptyNoticeText := "[ Sin señales activas • Configura tus canales en ~/.config/kickoff/channels.json ]"
 			emptyNotice := lipgloss.NewStyle().Width(modalContentWidth).Align(lipgloss.Center).Foreground(ColorMuted).Render(emptyNoticeText)
 			modal.WriteString(emptyNotice + "\n")
 		} else {
@@ -879,10 +865,7 @@ func renderChannelModal(match model.Match, channels []model.Channel, selectedIdx
 		}
 
 		if match.Referee != "" {
-			refereeText := fmt.Sprintf("👤 Árbitro: %s", match.Referee)
-			if noEmoji {
-				refereeText = fmt.Sprintf("Árbitro: %s", match.Referee)
-			}
+			refereeText := fmt.Sprintf("Árbitro: %s", match.Referee)
 			modal.WriteString("\n" + lipgloss.NewStyle().Width(modalContentWidth).Align(lipgloss.Center).Foreground(ColorMuted).Render(refereeText) + "\n")
 		}
 
@@ -1242,11 +1225,11 @@ func renderTimeline(events []model.MatchEvent, homeTeamID string, modalContentWi
 		}
 		clkFmt := formatClock5(clockBadge)
 
-		icon := "⚽"
+		icon := "[G]"
 		if ev.IsRedCard {
-			icon = "🟥"
+			icon = "[R]"
 		} else if ev.IsYellow {
-			icon = "🟨"
+			icon = "[A]"
 		}
 
 		pName := strings.TrimSpace(ev.PlayerName)
