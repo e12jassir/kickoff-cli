@@ -82,7 +82,7 @@ if [ -n "$SPECIFIED_VERSION" ]; then
   CLEAN_VER="${SPECIFIED_VERSION#v}"
   TAG="v${CLEAN_VER}"
   PRIMARY_URL="https://github.com/${REPO}/releases/download/${TAG}/kickoff_${OS}_${ARCH}.tar.gz"
-  echo "⚽ Installing kickoff-cli ${TAG} for ${OS}/${ARCH}..."
+  echo "Installing kickoff-cli ${TAG} for ${OS}/${ARCH}..."
   CANDIDATE_URLS=(
     "$PRIMARY_URL"
     "https://github.com/${REPO}/releases/download/${TAG}/kickoff_${CLEAN_VER}_${OS}_${ARCH}.tar.gz"
@@ -91,7 +91,7 @@ if [ -n "$SPECIFIED_VERSION" ]; then
   )
 else
   PRIMARY_URL="https://github.com/${REPO}/releases/latest/download/kickoff_${OS}_${ARCH}.tar.gz"
-  echo "⚽ Installing kickoff-cli (latest) for ${OS}/${ARCH}..."
+  echo "Installing kickoff-cli (latest) for ${OS}/${ARCH}..."
   CANDIDATE_URLS=(
     "$PRIMARY_URL"
     "https://github.com/${REPO}/releases/latest/download/kickoff_macos_${ARCH}.tar.gz"
@@ -312,26 +312,26 @@ ensure_dependencies() {
   fi
 
   if [ "$need_mpv" -eq 0 ] && [ "$need_font" -eq 0 ]; then
-    echo "✨ System dependencies are up to date (mpv and emoji font ready)."
+    echo "System dependencies are up to date (mpv and fonts ready)."
     return 0
   fi
 
   echo ""
-  echo "🔍 Checking system dependencies..."
+  echo "Checking system dependencies..."
 
   if [ "$OS" = "darwin" ]; then
     if [ "$need_mpv" -eq 1 ]; then
       if command -v brew >/dev/null 2>&1; then
         if prompt_consent "mpv is missing. Install via Homebrew? [y/N]"; then
-          echo "📦 Installing mpv with Homebrew..."
-          brew install mpv || echo "⚠️  Could not install mpv automatically. Run: brew install mpv"
+          echo "Installing mpv with Homebrew..."
+          brew install mpv || echo "Warning: Could not install mpv automatically. Run: brew install mpv"
         else
-          echo "⚠️  Skipped mpv installation."
+          echo "Skipped mpv installation."
           echo "   You can install it manually: brew install mpv"
           echo "   Note: Kickoff core score tracking works without mpv."
         fi
       else
-        echo "⚠️  Homebrew not found. Install mpv manually to enable video playback: https://mpv.io"
+        echo "Warning: Homebrew not found. Install mpv manually to enable video playback: https://mpv.io"
         echo "   Note: Kickoff core score tracking works without mpv."
       fi
     fi
@@ -402,15 +402,15 @@ ensure_dependencies() {
     return 0
   fi
 
-  echo "📦 Missing dependencies detected on ${distro}: ${pkgs_to_install[*]}"
+  echo "Missing dependencies detected on ${distro}: ${pkgs_to_install[*]}"
 
   if ! prompt_consent "Install missing dependencies using sudo? [y/N]"; then
-    echo "⚠️  Skipping automatic dependency installation."
+    echo "Skipping automatic dependency installation."
     print_manual_instructions "$pkg_manager" "${pkgs_to_install[@]}"
     return 0
   fi
 
-  echo "🚀 Installing dependencies..."
+  echo "Installing dependencies..."
   local success=0
   case "$pkg_manager" in
     apt)
@@ -439,17 +439,17 @@ ensure_dependencies() {
       fi
       ;;
     *)
-      echo "⚠️  Package manager not recognized for ${distro}."
+      echo "Warning: Package manager not recognized for ${distro}."
       ;;
   esac
 
   if [ "$success" -eq 1 ]; then
-    echo "✅ Dependencies installed successfully."
+    echo "Dependencies installed successfully."
     if [ "$need_font" -eq 1 ] && command -v fc-cache >/dev/null 2>&1; then
       fc-cache -f >/dev/null 2>&1 || true
     fi
   else
-    echo "⚠️  Could not install dependencies automatically."
+    echo "Warning: Could not install dependencies automatically."
     print_manual_instructions "$pkg_manager" "${pkgs_to_install[@]}"
   fi
 }
@@ -458,13 +458,13 @@ ensure_dependencies
 
 if [ -n "$KICKOFF_SIGNALS_URL" ]; then
   echo ""
-  echo "📡 Importing configured signals pack..."
+  echo "Importing configured signals pack..."
   if "$INSTALL_DIR/kickoff" --help 2>&1 | grep -q "config import"; then
     "$INSTALL_DIR/kickoff" config import "$KICKOFF_SIGNALS_URL" || true
   else
-    echo "⚠️  Note: This version of kickoff does not support 'config import'. Skipping signals import."
+    echo "Note: This version of kickoff does not support 'config import'. Skipping signals import."
   fi
 fi
 
 echo ""
-echo "⚽ All set! Run 'kickoff' to get started."
+echo "All set! Run 'kickoff' to get started."

@@ -26,7 +26,11 @@ var (
 )
 
 func printVersion() {
-	fmt.Printf("kickoff version: %s (commit: %s, built at: %s)\n", version, commit, date)
+	v := version
+	if !strings.HasPrefix(v, "v") && v != "dev" {
+		v = "v" + v
+	}
+	fmt.Printf("kickoff %s\n", v)
 }
 
 func printHelp() {

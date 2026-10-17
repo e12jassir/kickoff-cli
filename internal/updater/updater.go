@@ -360,7 +360,7 @@ func ExtractBinaryFromTarGz(r io.Reader) ([]byte, error) {
 // SelfUpdate performs an in-place atomic update of the currently executing kickoff binary.
 func SelfUpdate(ctx context.Context, repo, currentVersion string) error {
 	cleanVer := strings.TrimPrefix(currentVersion, "v")
-	fmt.Printf("⚽ Checking for kickoff updates (current version: v%s)...\n", cleanVer)
+	fmt.Printf("Checking for kickoff updates (current version: v%s)...\n", cleanVer)
 
 	rel, newer, err := CheckForUpdate(ctx, repo, currentVersion)
 	if err != nil {
@@ -368,11 +368,11 @@ func SelfUpdate(ctx context.Context, repo, currentVersion string) error {
 	}
 
 	if !newer {
-		fmt.Printf("✓ kickoff is already at the latest version (%s). All up to date!\n", currentVersion)
+		fmt.Printf("✓ kickoff is already at the latest version (%s)\n", currentVersion)
 		return nil
 	}
 
-	fmt.Printf("✨ New version available: %s! Downloading update...\n", rel.TagName)
+	fmt.Printf("New version available: %s. Downloading update...\n", rel.TagName)
 
 	asset, err := FindAsset(rel, runtime.GOOS, runtime.GOARCH)
 	if err != nil {
@@ -500,14 +500,14 @@ func SelfUpdate(ctx context.Context, repo, currentVersion string) error {
 		_ = os.RemoveAll(cacheDir)
 	}
 
-	fmt.Printf("🎉 kickoff successfully updated to version %s!\n", rel.TagName)
+	fmt.Printf("kickoff successfully updated to version %s\n", rel.TagName)
 	fmt.Printf("Binary location: %s\n", exePath)
 	return nil
 }
 
 // RunSetup diagnoses system dependencies, configurations, and environment prerequisites.
 func RunSetup() error {
-	fmt.Println("⚽ kickoff setup — Checking environment and dependencies")
+	fmt.Println("kickoff setup — Checking environment and dependencies")
 	fmt.Println(strings.Repeat("─", 55))
 
 	var warnings []string
@@ -544,7 +544,7 @@ func RunSetup() error {
 	}
 
 	if err != nil {
-		fmt.Println("❌ mpv: NOT FOUND")
+		fmt.Println("✗ mpv: NOT FOUND")
 		if runtime.GOOS == "windows" {
 			warnings = append(warnings, "mpv is required to play streams. Install it with 'winget install mpv.net' in PowerShell or place mpv.exe next to kickoff.exe")
 		} else {
@@ -564,7 +564,7 @@ func RunSetup() error {
 	if ffPath, err := exec.LookPath("ffprobe"); err == nil {
 		fmt.Printf("✓ ffprobe: %s\n", ffPath)
 	} else {
-		fmt.Println("ℹ️  ffprobe: Not installed (optional)")
+		fmt.Println("• ffprobe: Not installed (optional)")
 	}
 
 	// 3. Emoji fonts on Linux
@@ -573,10 +573,9 @@ func RunSetup() error {
 			out, _ := exec.Command(fcPath, ":", "family").Output()
 			outStr := strings.ToLower(string(out))
 			if strings.Contains(outStr, "emoji") || strings.Contains(outStr, "noto color") {
-				fmt.Println("✓ Emoji fonts: Available on system")
+				fmt.Println("✓ Fonts: System fonts ready")
 			} else {
-				fmt.Println("⚠️  Emoji fonts: Not detected")
-				warnings = append(warnings, "Install emoji fonts (e.g. 'sudo pacman -S noto-fonts-emoji' or 'sudo apt install fonts-noto-color-emoji') to view flags and balls in the TUI, or run with --no-emoji")
+				fmt.Println("• Fonts: Standard fonts detected")
 			}
 		}
 	}
@@ -595,7 +594,7 @@ func RunSetup() error {
 		if _, err := os.Stat(channelsCfg); err == nil {
 			fmt.Printf("✓ Channels configuration: %s\n", channelsCfg)
 		} else {
-			fmt.Printf("ℹ️  Channels configuration: Built-in default (you can create %s for custom channels)\n", channelsCfg)
+			fmt.Printf("• Channels configuration: Built-in default (%s)\n", channelsCfg)
 		}
 	}
 
@@ -614,13 +613,13 @@ func RunSetup() error {
 
 	fmt.Println(strings.Repeat("─", 55))
 	if len(warnings) > 0 {
-		fmt.Println("⚠️  Warnings:")
+		fmt.Println("Warnings:")
 		for _, w := range warnings {
 			fmt.Printf("  • %s\n", w)
 		}
 		return errors.New("incomplete dependencies")
 	}
 
-	fmt.Println("🚀 All set! kickoff is configured and ready.")
+	fmt.Println("All set! kickoff is configured and ready.")
 	return nil
 }
