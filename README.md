@@ -25,8 +25,17 @@
 
 ## ⚡ Quick start
 
+**🐧 Linux &nbsp;/&nbsp; 🍏 macOS**
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/e12jassir/kickoff-cli/main/install.sh | bash
+kickoff
+```
+
+**🪟 Windows (PowerShell)**
+
+```powershell
+powershell -c "irm https://raw.githubusercontent.com/e12jassir/kickoff-cli/main/install.ps1 | iex"
 kickoff
 ```
 
@@ -75,11 +84,13 @@ Installs to `~/.local/bin` and sets up `mpv` and an emoji font if they're missin
 
 **🪟 Windows**
 
-Download `kickoff_*_windows_amd64.zip` from [Releases](https://github.com/e12jassir/kickoff-cli/releases), extract it and run:
+One-line installer via **PowerShell**:
 
 ```powershell
-.\kickoff.exe
+powershell -c "irm https://raw.githubusercontent.com/e12jassir/kickoff-cli/main/install.ps1 | iex"
 ```
+
+Or download `kickoff_windows_amd64.zip` from [Releases](https://github.com/e12jassir/kickoff-cli/releases), extract it and double-click `Instalar-Kickoff.bat` (automatically installs portable `mpv` if missing and creates a branded desktop shortcut).
 
 **🛠️ From source**
 
