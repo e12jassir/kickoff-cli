@@ -275,7 +275,24 @@ func (c *Catalog) loadExternalConfig() {
 
 	data, err := os.ReadFile(cfgPath)
 	if err != nil {
-		return
+		// Fallback: check next to executable (e.g. portable zip or local install)
+		if exe, exeErr := os.Executable(); exeErr == nil {
+			exeDirCfg := filepath.Join(filepath.Dir(exe), "channels.json")
+			if d, e := os.ReadFile(exeDirCfg); e == nil {
+				data = d
+				err = nil
+			}
+		}
+		// Fallback: check current working directory
+		if err != nil {
+			if d, e := os.ReadFile("channels.json"); e == nil {
+				data = d
+				err = nil
+			}
+		}
+		if err != nil {
+			return
+		}
 	}
 
 	var ext ExternalConfig
