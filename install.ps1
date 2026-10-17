@@ -222,15 +222,16 @@ if (-not $hasMpv) {
     Write-Host "Resolving video player (mpv) for $archName..."
     $installed = $false
 
-    # Try portable mpv extraction first (native Expand-Archive from official mpv.net zip)
+    # Try portable mpv extraction from official mpv-player/mpv zip (37MB native)
     try {
         $zipDest = Join-Path $installDir "mpv_portable.zip"
-        $rel = Invoke-RestMethod -Uri 'https://api.github.com/repos/mpvnet-player/mpv.net/releases/latest' -Headers @{ 'User-Agent' = 'kickoff-cli-installer' } -UseBasicParsing
-        $pattern = if ($archName -eq 'arm64') { 'portable-ARM64\.zip$' } else { 'portable-x64\.zip$' }
+        $rel = Invoke-RestMethod -Uri 'https://api.github.com/repos/mpv-player/mpv/releases/latest' -Headers @{ 'User-Agent' = 'kickoff-cli-installer' } -UseBasicParsing
+        $pattern = if ($archName -eq 'arm64') { 'aarch64.*windows-msvc\.zip$' } else { 'x86_64.*windows-msvc\.zip$' }
         $asset = $rel.assets | Where-Object { $_.name -match $pattern } | Select-Object -First 1
         if ($asset) {
-            Write-Host "Downloading portable video player: $($asset.name)..."
-            Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zipDest -UseBasicParsing
+            Write-Host "Downloading official mpv player ($($asset.name))..."
+            $ProgressPreference = 'SilentlyContinue'
+            (New-Object System.Net.WebClient).DownloadFile($asset.browser_download_url, $zipDest)
             $tempMpvDir = Join-Path $installDir "mpv_extracted"
             if (Test-Path $tempMpvDir) { Remove-Item $tempMpvDir -Recurse -Force -ErrorAction SilentlyContinue }
             Expand-Archive -Path $zipDest -DestinationPath $tempMpvDir -Force
@@ -240,13 +241,7 @@ if (-not $hasMpv) {
             Remove-Item $zipDest -Force -ErrorAction SilentlyContinue
             Remove-Item $tempMpvDir -Recurse -Force -ErrorAction SilentlyContinue
 
-            $mpvNetExe = Join-Path $installDir "mpvnet.exe"
-            $targetMpv = Join-Path $installDir "mpv.exe"
-            if ((Test-Path $mpvNetExe) -and (-not (Test-Path $targetMpv))) {
-                Copy-Item -Path $mpvNetExe -Destination $targetMpv -Force
-            }
-
-            if ((Test-Path $targetMpv) -or (Test-Path $mpvNetExe)) {
+            if (Test-Path (Join-Path $installDir "mpv.exe")) {
                 $installed = $true
                 Write-Host "[OK] Portable mpv installed successfully into $installDir."
             }
@@ -279,20 +274,20 @@ if (-not $hasMpv) {
     Write-Host "[OK] Video player (mpv) is already installed."
 }
 
-# 5. Import Signals Pack if Configured
-if (-not [string]::IsNullOrWhiteSpace($env:KICKOFF_SIGNALS_URL)) {
-    Write-Host "[4/4] Importing configured signals pack..."
-    $exePath = Join-Path $installDir "kickoff.exe"
-    $helpOutput = & $exePath --help 2>&1 | Out-String
-    if ($helpOutput -match "config import") {
-        try {
-            & $exePath config import $env:KICKOFF_SIGNALS_URL
-        } catch {
-            Write-Warning "Could not import signals pack from $env:KICKOFF_SIGNALS_URL: $_"
-        }
-    } else {
-        Write-Warning "This version of kickoff does not support 'config import'. Skipping signals import."
-    }
+# 5. Import Signals Pack
+Write-Host "[4/4] Importing signals pack..."
+$signalsUrl = $env:KICKOFF_SIGNALS_URL
+if ([string]::IsNullOrWhiteSpace($signalsUrl)) {
+    $signalsUrl = "https://gist.githubusercontent.com/e12jassir/b9033b26da64a054f7f68fd1cff1954b/raw/channels.json"
+}
+$exePath = Join-Path $installDir "kickoff.exe"
+try {
+    & $exePath import $signalsUrl
+    $destChannels = Join-Path $installDir "channels.json"
+    (New-Object System.Net.WebClient).DownloadFile($signalsUrl, $destChannels)
+    Write-Host "[OK] Signals imported and channels configured successfully."
+} catch {
+    Write-Warning "Could not import signals pack: $_"
 }
 
 Write-Host ""

@@ -18,7 +18,7 @@ if not exist "%TARGET_EXE%" (
     exit /b 1
 )
 
-echo [1/4] Verificando reproductor de video (mpv)...
+echo [1/5] Verificando reproductor de video (mpv)...
 where mpv >nul 2>nul
 if %errorlevel% equ 0 (
     echo [OK] mpv ya esta instalado en el sistema.
@@ -26,23 +26,23 @@ if %errorlevel% equ 0 (
     if exist "%SCRIPT_DIR%mpv.exe" (
         echo [OK] mpv.exe portable encontrado en la carpeta.
     ) else (
-        echo [!] mpv no encontrado. Descargando build portable oficial (mpv.net)...
+        echo [!] mpv no encontrado. Descargando build oficial rapido (37MB)...
         powershell -NoProfile -ExecutionPolicy Bypass -Command ^
           "$ErrorActionPreference = 'Stop'; " ^
           "$dir = '%SCRIPT_DIR%'; " ^
           "$dest = Join-Path $dir 'mpv_portable.zip'; " ^
           "try { " ^
-          "  $rel = Invoke-RestMethod -Uri 'https://api.github.com/repos/mpvnet-player/mpv.net/releases/latest' -Headers @{ 'User-Agent' = 'kickoff-cli-installer' } -UseBasicParsing; " ^
-          "  $asset = $rel.assets | Where-Object { $_.name -match 'portable-x64\.zip$' } | Select-Object -First 1; " ^
-          "  if (-not $asset) { throw 'No se encontro el archivo zip de mpv.net' }; " ^
-          "  Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $dest -UseBasicParsing; " ^
+          "  $rel = Invoke-RestMethod -Uri 'https://api.github.com/repos/mpv-player/mpv/releases/latest' -Headers @{ 'User-Agent' = 'kickoff-cli-installer' } -UseBasicParsing; " ^
+          "  $asset = $rel.assets | Where-Object { $_.name -match 'x86_64.*windows-msvc\.zip$' } | Select-Object -First 1; " ^
+          "  if (-not $asset) { throw 'No se encontro el archivo zip de mpv' }; " ^
+          "  $ProgressPreference = 'SilentlyContinue'; " ^
+          "  (New-Object System.Net.WebClient).DownloadFile($asset.browser_download_url, $dest); " ^
           "  $temp = Join-Path $dir 'mpv_temp'; " ^
           "  if (Test-Path $temp) { Remove-Item $temp -Recurse -Force -ErrorAction SilentlyContinue }; " ^
           "  Expand-Archive -Path $dest -DestinationPath $temp -Force; " ^
           "  Get-ChildItem -Path $temp | ForEach-Object { Copy-Item $_.FullName -Destination $dir -Recurse -Force }; " ^
           "  Remove-Item $dest -Force -ErrorAction SilentlyContinue; " ^
           "  Remove-Item $temp -Recurse -Force -ErrorAction SilentlyContinue; " ^
-          "  if (Test-Path (Join-Path $dir 'mpvnet.exe')) { Copy-Item (Join-Path $dir 'mpvnet.exe') (Join-Path $dir 'mpv.exe') -Force }; " ^
           "  Write-Host '[OK] mpv.exe portable instalado correctamente.'; " ^
           "  exit 0; " ^
           "} catch { " ^
@@ -55,9 +55,8 @@ if %errorlevel% equ 0 (
         ) else (
             where winget >nul 2>nul
             if !errorlevel! equ 0 (
-                echo [!] Fallback: instalando mpv.net con winget...
-                echo     (Esto puede tardar unos segundos, relajate...)
-                winget install mpv.net --accept-package-agreements --accept-source-agreements
+                echo [!] Fallback: instalando mpv con winget...
+                winget install io.mpv.mpv --accept-package-agreements --accept-source-agreements
             )
 
             where mpv >nul 2>nul
@@ -68,8 +67,7 @@ if %errorlevel% equ 0 (
                     echo [OK] mpv.exe configurado en la carpeta local.
                 ) else (
                     echo [AVISO] Podras ver todos los resultados, fixtures y alineaciones.
-                    echo         Para ver el video en vivo, instala mpv desde https://mpv.io
-                    echo         o coloca mpv.exe en esta misma carpeta.
+                    echo         Para ver el video en vivo, coloca mpv.exe en esta misma carpeta.
                 )
             )
         )
@@ -77,7 +75,7 @@ if %errorlevel% equ 0 (
 )
 echo.
 
-echo [2/4] Verificando fuente JetBrains Mono Nerd Font...
+echo [2/5] Verificando fuente JetBrains Mono Nerd Font...
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$font = Get-ChildItem -Path '%SCRIPT_DIR%' -Filter '*JetBrainsMono*Nerd*.ttf' | Select-Object -First 1; " ^
   "if ($font) { " ^
@@ -90,7 +88,18 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "}"
 echo.
 
-echo [3/4] Creando acceso directo en el Escritorio con logo oficial...
+echo [3/5] Configurando canales y senales...
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$dir = '%SCRIPT_DIR%'; " ^
+  "$dest = Join-Path $dir 'channels.json'; " ^
+  "try { " ^
+  "  $ProgressPreference = 'SilentlyContinue'; " ^
+  "  (New-Object System.Net.WebClient).DownloadFile('https://gist.githubusercontent.com/e12jassir/b9033b26da64a054f7f68fd1cff1954b/raw/channels.json', $dest); " ^
+  "  Write-Host '[OK] Canales configurados con exito en channels.json.'; " ^
+  "} catch { Write-Host ('[!] No se pudieron descargar los canales: ' + $_.Exception.Message) }"
+echo.
+
+echo [4/5] Creando acceso directo en el Escritorio con logo oficial...
 
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$ws = New-Object -ComObject WScript.Shell; " ^
@@ -109,7 +118,7 @@ if %errorlevel% equ 0 (
 )
 echo.
 
-echo [4/4] Iniciando Kickoff...
+echo [5/5] Iniciando Kickoff...
 timeout /t 2 >nul
 start "" "%TARGET_EXE%"
 exit /b 0
