@@ -190,67 +190,62 @@ try {
 
 # 4. Check Video Playback Dependency (mpv)
 Write-Host "[3/4] Checking video player dependencies..."
-$hasMpv = (Get-Command mpv.exe -ErrorAction SilentlyContinue) -or (Get-Command mpvnet.exe -ErrorAction SilentlyContinue)
+$hasMpv = (Get-Command mpv.exe -ErrorAction SilentlyContinue) -or (Get-Command mpvnet.exe -ErrorAction SilentlyContinue) -or (Test-Path (Join-Path $installDir "mpv.exe"))
 if (-not $hasMpv) {
-    $hasWinget = Get-Command winget.exe -ErrorAction SilentlyContinue
-    if ($hasWinget) {
-        $installMpv = $false
-        if ($Yes) {
-            $installMpv = $true
-        } else {
-            $response = Read-Host "mpv is recommended for video playback. Install mpv.net via winget? [Y/n]"
-            if ([string]::IsNullOrWhiteSpace($response) -or $response -match '^[Yy]') {
-                $installMpv = $true
+    Write-Host "Resolving video player (mpv) for $archName..."
+    $installed = $false
+
+    # Try portable mpv extraction first (native tar on Windows 10+ / 7-Zip)
+    try {
+        $dest = Join-Path $installDir "mpv_temp.7z"
+        $rel = Invoke-RestMethod -Uri 'https://api.github.com/repos/shinchiro/mpv-winbuild-cmake/releases/latest' -Headers @{ 'User-Agent' = 'kickoff-cli-installer' } -UseBasicParsing
+        $candidates = $rel.assets | Where-Object { $_.name -match 'x86_64' -and $_.name -match '\.7z$' }
+        $asset = $candidates | Where-Object { $_.name -notmatch 'v3' } | Select-Object -First 1
+        if (-not $asset) { $asset = $candidates | Select-Object -First 1 }
+        if ($asset) {
+            Write-Host "Downloading portable mpv: $($asset.name)..."
+            Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $dest -UseBasicParsing
+            $tar = (Get-Command tar.exe -ErrorAction SilentlyContinue).Source
+            if ($tar) {
+                & $tar -xf $dest -C $installDir 2>$null
+                if (Test-Path (Join-Path $installDir "mpv.exe")) { $installed = $true }
+            }
+            if (-not $installed) {
+                $sevenZip = (Get-Command 7z.exe -ErrorAction SilentlyContinue).Source
+                if (-not $sevenZip) { $p7 = Join-Path $env:ProgramFiles '7-Zip\7z.exe'; if (Test-Path $p7) { $sevenZip = $p7 } }
+                if ($sevenZip) {
+                    & $sevenZip x $dest ('-o' + $installDir) '-y' | Out-Null
+                    if (Test-Path (Join-Path $installDir "mpv.exe")) { $installed = $true }
+                }
+            }
+            Remove-Item $dest -Force -ErrorAction SilentlyContinue
+            if ($installed) {
+                Write-Host "[OK] Portable mpv installed successfully into $installDir."
             }
         }
+    } catch {
+        # Continue to winget fallback
+    }
 
-        if ($installMpv) {
+    # Fallback to winget if portable extraction did not succeed
+    if (-not $installed) {
+        $hasWinget = Get-Command winget.exe -ErrorAction SilentlyContinue
+        if ($hasWinget) {
             Write-Host "Installing mpv.net via winget..."
             try {
                 Start-Process -FilePath "winget" -ArgumentList "install mpv.net --accept-source-agreements --accept-package-agreements" -NoNewWindow -Wait
-                Write-Host "[OK] mpv.net installation completed."
+                if ((Get-Command mpv.exe -ErrorAction SilentlyContinue) -or (Get-Command mpvnet.exe -ErrorAction SilentlyContinue)) {
+                    $installed = $true
+                    Write-Host "[OK] mpv.net installed successfully via winget."
+                }
             } catch {
-                Write-Warning "Could not install mpv.net automatically via winget: $_"
-                Write-Host "You can install mpv manually from https://mpv.io or run 'winget install mpv.net'."
+                Write-Warning "Could not install mpv.net via winget: $_"
             }
-        } else {
-            Write-Host "Skipped mpv installation. Note: Kickoff score tracking works without mpv. Video playback requires mpv (https://mpv.io)."
         }
-    } else {
-        Write-Host "winget not found. Resolving portable mpv build for $archName..."
-        try {
-            $dest = Join-Path $installDir "mpv_temp.7z"
-            $rel = Invoke-RestMethod -Uri 'https://api.github.com/repos/shinchiro/mpv-winbuild-cmake/releases/latest' -Headers @{ 'User-Agent' = 'kickoff-cli-installer' } -UseBasicParsing
-            $candidates = $rel.assets | Where-Object { $_.name -match 'x86_64' -and $_.name -match '\.7z$' }
-            $asset = $candidates | Where-Object { $_.name -notmatch 'v3' } | Select-Object -First 1
-            if (-not $asset) { $asset = $candidates | Select-Object -First 1 }
-            if ($asset) {
-                Write-Host "Downloading portable mpv: $($asset.name)..."
-                Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $dest -UseBasicParsing
-                $extracted = $false
-                $tar = (Get-Command tar.exe -ErrorAction SilentlyContinue).Source
-                if ($tar) {
-                    & $tar -xf $dest -C $installDir 2>$null
-                    if (Test-Path (Join-Path $installDir "mpv.exe")) { $extracted = $true }
-                }
-                if (-not $extracted) {
-                    $sevenZip = (Get-Command 7z.exe -ErrorAction SilentlyContinue).Source
-                    if (-not $sevenZip) { $p7 = Join-Path $env:ProgramFiles '7-Zip\7z.exe'; if (Test-Path $p7) { $sevenZip = $p7 } }
-                    if ($sevenZip) {
-                        & $sevenZip x $dest ('-o' + $installDir) '-y' | Out-Null
-                        if (Test-Path (Join-Path $installDir "mpv.exe")) { $extracted = $true }
-                    }
-                }
-                Remove-Item $dest -Force -ErrorAction SilentlyContinue
-                if ($extracted) {
-                    Write-Host "[OK] Portable mpv installed successfully into $installDir."
-                } else {
-                    Write-Host "mpv is recommended for video playback. Please install mpv manually from https://mpv.io."
-                }
-            }
-        } catch {
-            Write-Host "mpv is recommended for video playback. Please install mpv manually from https://mpv.io."
-        }
+    }
+
+    if (-not $installed) {
+        Write-Warning "Could not install mpv automatically. Video playback requires mpv (https://mpv.io)."
     }
 } else {
     Write-Host "[OK] Video player (mpv) is already installed."
