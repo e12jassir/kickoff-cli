@@ -14,7 +14,6 @@ import (
 	"github.com/e12jassir/kickoff-cli/internal/catalog"
 )
 
-
 func backupExistingConfig(targetFile string) error {
 	if _, err := os.Stat(targetFile); err != nil {
 		if os.IsNotExist(err) {
@@ -72,7 +71,6 @@ func RunConfigImport(source string) error {
 	if source == "" {
 		return fmt.Errorf("source cannot be empty")
 	}
-
 
 	data, err := readSourceContent(source)
 	if err != nil {

@@ -785,4 +785,3 @@ func TestCatalog_AdjacentChannelsAndM3UFallback(t *testing.T) {
 		t.Errorf("expected adjacent signals.m3u to be loaded into m3uChannels, got 0")
 	}
 }
-

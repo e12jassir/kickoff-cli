@@ -503,4 +503,3 @@ func SelfUpdate(ctx context.Context, repo, currentVersion string) error {
 	fmt.Printf("Binary location: %s\n", exePath)
 	return nil
 }
-
