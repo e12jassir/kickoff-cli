@@ -32,6 +32,25 @@ const (
 	TabGoleadores
 )
 
+// playabilityResolver is the narrow slice of the catalog the TUI needs to enforce
+// the visibility rule: a fixture whose only broadcasts cannot be played is hidden
+// entirely, and a completely unconfigured catalog is surfaced as an actionable
+// hint instead of an empty list.
+//
+// It is deliberately separate from model.Resolver rather than folded into it: the
+// TUI is the only consumer of these methods, so keeping them out of the shared
+// interface avoids forcing the status bar's resolver (and every test fake) to
+// implement methods they never call. *catalog.Catalog satisfies this interface.
+type playabilityResolver interface {
+	// HasPlayableSource reports whether at least one emitted channel for the match
+	// resolves to a playable stream URL.
+	HasPlayableSource(match model.Match) bool
+	// HasConfiguredStreams reports whether the user configured any stream source at
+	// all, distinguishing "nothing playable because nothing is set up" from
+	// "nothing playable for this fixture".
+	HasConfiguredStreams() bool
+}
+
 // Model is the main Bubble Tea model for kickoff.
 type Model struct {
 	client  model.Client
@@ -57,6 +76,11 @@ type Model struct {
 	resumenCursor   int
 	selectedMatchID string
 	detailsLoaded   map[string]bool
+
+	// noStreamsConfigured records that the catalog has no stream source at all, so
+	// the upcoming-matches list was (correctly) filtered down to nothing. It drives
+	// an actionable configuration hint instead of a silent empty list.
+	noStreamsConfigured bool
 
 	standings     *model.LeagueStandings
 	standingsErr  error

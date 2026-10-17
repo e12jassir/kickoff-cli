@@ -2265,3 +2265,216 @@ func TestMainMenu_SingleCursorAndEscAccordion(t *testing.T) {
 		t.Errorf("expected category to collapse after second Esc")
 	}
 }
+
+// fakePlayabilityResolver implements model.Resolver plus the narrow
+// playabilityResolver interface the TUI type-asserts against. It keeps the
+// playability-gated visibility rule fully offline and deterministic: the
+// playable/configured answers and the emitted channels are caller-controlled.
+type fakePlayabilityResolver struct {
+	channels        []model.Channel
+	playable        bool
+	hasConfigured   bool
+	playableCalls   int
+	configuredCalls int
+}
+
+func (f *fakePlayabilityResolver) GetChannels(match model.Match) []model.Channel {
+	return f.channels
+}
+
+func (f *fakePlayabilityResolver) HasPlayableSource(match model.Match) bool {
+	f.playableCalls++
+	return f.playable
+}
+
+func (f *fakePlayabilityResolver) HasConfiguredStreams() bool {
+	f.configuredCalls++
+	return f.hasConfigured
+}
+
+// newBrowsingModel builds a browsing-state model with a usable terminal size so
+// the view renders normally instead of the "window too small" placeholder.
+func newBrowsingModel(cat model.Resolver) Model {
+	m := NewModel(&mockClient{}, cat, &mockPlayer{}).WithInitialState(StateBrowsing)
+	m.width = 100
+	m.height = 35
+	return m
+}
+
+func TestModel_PlayabilityGatedVisibility_FiltersUnplayableActiveMatch(t *testing.T) {
+	cat := &fakePlayabilityResolver{playable: false, hasConfigured: true}
+	m := newBrowsingModel(cat)
+
+	newM, _ := m.Update(matchesLoadedMsg{
+		leagueKey: m.CurrentLeague().Key,
+		matches: []model.Match{
+			{
+				ID:        "hidden-1",
+				Title:     "Hidden FC vs Nowhere United",
+				HomeTeam:  model.Competitor{DisplayName: "Hidden FC"},
+				AwayTeam:  model.Competitor{DisplayName: "Nowhere United"},
+				Status:    model.MatchStatus{State: "in", Description: "1T 10'"},
+				LeagueKey: m.CurrentLeague().Key,
+			},
+		},
+	})
+	m = newM.(Model)
+
+	// (a) The fixture is filtered out of the active list entirely.
+	if len(m.matches) != 0 {
+		t.Fatalf("expected unplayable active match to be filtered out, got %d active matches", len(m.matches))
+	}
+	if cat.playableCalls != 1 {
+		t.Errorf("expected HasPlayableSource to be consulted once, got %d", cat.playableCalls)
+	}
+
+	// It must be neither listed as a match nor mentioned as a channel-less match.
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m = newM.(Model)
+	view := m.View()
+	if strings.Contains(view, "Hidden FC") || strings.Contains(view, "Nowhere United") {
+		t.Errorf("filtered match must not be rendered anywhere, got:\n%s", view)
+	}
+	if !strings.Contains(view, "No hay próximos partidos programados") {
+		t.Errorf("expected empty upcoming list when the only match is unplayable, got:\n%s", view)
+	}
+}
+
+func TestModel_PlayabilityGatedVisibility_KeepsPlayableActiveMatch(t *testing.T) {
+	cat := &fakePlayabilityResolver{playable: true, hasConfigured: true}
+	m := newBrowsingModel(cat)
+
+	newM, _ := m.Update(matchesLoadedMsg{
+		leagueKey: m.CurrentLeague().Key,
+		matches: []model.Match{
+			{
+				ID:        "visible-1",
+				Title:     "Visible FC vs Shown United",
+				HomeTeam:  model.Competitor{DisplayName: "Visible FC"},
+				AwayTeam:  model.Competitor{DisplayName: "Shown United"},
+				Status:    model.MatchStatus{State: "in", Description: "1T 20'"},
+				LeagueKey: m.CurrentLeague().Key,
+			},
+		},
+	})
+	m = newM.(Model)
+
+	// (b) A playable active match stays in the list and renders.
+	if len(m.matches) != 1 || m.matches[0].ID != "visible-1" {
+		t.Fatalf("expected the playable active match to stay, got %+v", m.matches)
+	}
+
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m = newM.(Model)
+	if !strings.Contains(m.View(), "Visible FC") {
+		t.Errorf("expected playable match to render, got:\n%s", m.View())
+	}
+}
+
+func TestModel_PlayabilityGatedVisibility_CompletedNeverFiltered(t *testing.T) {
+	cat := &fakePlayabilityResolver{playable: false, hasConfigured: true}
+	m := newBrowsingModel(cat)
+
+	newM, _ := m.Update(matchesLoadedMsg{
+		leagueKey: m.CurrentLeague().Key,
+		matches: []model.Match{
+			{
+				ID:        "past-1",
+				Title:     "Finished FC vs Done United",
+				HomeTeam:  model.Competitor{DisplayName: "Finished FC", Score: "2"},
+				AwayTeam:  model.Competitor{DisplayName: "Done United", Score: "1"},
+				Status:    model.MatchStatus{State: "post", Completed: true, Description: "Final"},
+				LeagueKey: m.CurrentLeague().Key,
+			},
+		},
+	})
+	m = newM.(Model)
+
+	// (c) A completed fixture is history: it always reaches the past/resumen list
+	// even when the catalog cannot play it, and is never filtered.
+	if len(m.matches) != 0 {
+		t.Fatalf("expected no active matches, got %d", len(m.matches))
+	}
+	if len(m.pastMatches) != 1 || m.pastMatches[0].ID != "past-1" {
+		t.Fatalf("expected the completed match in pastMatches, got %+v", m.pastMatches)
+	}
+	if cat.playableCalls != 0 {
+		t.Errorf("completed matches must not be playability-checked, got %d calls", cat.playableCalls)
+	}
+
+	pms := m.ResumenMatches()
+	if len(pms) != 1 || pms[0].ID != "past-1" {
+		t.Fatalf("expected ResumenMatches to include the completed match, got %+v", pms)
+	}
+	if !strings.Contains(m.View(), "Finished FC") {
+		t.Errorf("expected completed match rendered in TabResumen, got:\n%s", m.View())
+	}
+}
+
+func TestModel_PlayabilityGatedVisibility_UnconfiguredStreamsNotice(t *testing.T) {
+	cat := &fakePlayabilityResolver{playable: false, hasConfigured: false}
+	m := newBrowsingModel(cat)
+
+	newM, _ := m.Update(matchesLoadedMsg{
+		leagueKey: m.CurrentLeague().Key,
+		matches: []model.Match{
+			{
+				ID:        "hidden-2",
+				Title:     "Hidden FC vs Nowhere United",
+				HomeTeam:  model.Competitor{DisplayName: "Hidden FC"},
+				AwayTeam:  model.Competitor{DisplayName: "Nowhere United"},
+				Status:    model.MatchStatus{State: "pre", Description: "Por jugar"},
+				LeagueKey: m.CurrentLeague().Key,
+			},
+		},
+	})
+	m = newM.(Model)
+
+	if !m.noStreamsConfigured {
+		t.Fatalf("expected noStreamsConfigured when the catalog has no stream source")
+	}
+
+	// (d) The safety valve renders an actionable hint, not a silent empty list.
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m = newM.(Model)
+	view := m.View()
+	if !strings.Contains(view, "No hay señales configuradas.") {
+		t.Errorf("expected configuration notice, got:\n%s", view)
+	}
+	if !strings.Contains(view, "~/.config/kickoff/channels.json") {
+		t.Errorf("expected configuration hint to point at channels.json, got:\n%s", view)
+	}
+	if strings.Contains(view, "Hidden FC") {
+		t.Errorf("filtered match must not leak into the unconfigured notice view, got:\n%s", view)
+	}
+}
+
+func TestModel_PlayabilityGatedVisibility_NonNarrowResolverNotFiltered(t *testing.T) {
+	// mockCatalog implements model.Resolver but NOT playabilityResolver: a match
+	// must flow through untouched, without panicking on the failed type assertion.
+	cat := &mockCatalog{channels: []model.Channel{{Name: "ESPN 1 HD", URL: "http://example.com/live.m3u8"}}}
+	m := newBrowsingModel(cat)
+
+	newM, _ := m.Update(matchesLoadedMsg{
+		leagueKey: m.CurrentLeague().Key,
+		matches: []model.Match{
+			{
+				ID:        "kept-1",
+				Title:     "Kept FC vs Retained United",
+				HomeTeam:  model.Competitor{DisplayName: "Kept FC"},
+				AwayTeam:  model.Competitor{DisplayName: "Retained United"},
+				Status:    model.MatchStatus{State: "in", Description: "1T 5'"},
+				LeagueKey: m.CurrentLeague().Key,
+			},
+		},
+	})
+	m = newM.(Model)
+
+	// (e) No filtering and no panic when the resolver opts out of the interface.
+	if len(m.matches) != 1 || m.matches[0].ID != "kept-1" {
+		t.Fatalf("expected the match to be kept for a non-narrow resolver, got %+v", m.matches)
+	}
+	if m.noStreamsConfigured {
+		t.Errorf("noStreamsConfigured must stay false when the resolver does not implement playabilityResolver")
+	}
+}

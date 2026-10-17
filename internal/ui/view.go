@@ -281,6 +281,18 @@ func renderBrowsing(m Model) string {
 }
 
 func renderTabPartidos(m Model, curr model.League) string {
+	// Safety valve: with no stream source configured at all, the visibility rule
+	// filters every fixture out. Never let that read as "no matches today" — point
+	// the user at the fix instead.
+	if m.noStreamsConfigured {
+		notice := strings.Join([]string{
+			"No hay señales configuradas.",
+			"Configura tus URLs de streaming en:",
+			"~/.config/kickoff/channels.json",
+		}, "\n")
+		return MatchBoxStyle.Render(EmptyStateStyle.Render(notice))
+	}
+
 	if len(m.matches) == 0 {
 		emptyMsg := fmt.Sprintf("No hay próximos partidos programados para %s.", curr.Name)
 		return MatchBoxStyle.Render(EmptyStateStyle.Render(emptyMsg))
