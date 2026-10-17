@@ -20,6 +20,7 @@ const (
 	StateChannelSelect
 	StatePlaying
 	StateError
+	StateTacticalBoard
 )
 
 // LeagueTab represents the 4 views per league.
@@ -259,7 +260,7 @@ func (m Model) WithDetailsLoaded(matchIDs ...string) Model {
 
 // CurrentSelectedMatch returns the currently selected match based on active modal anchor, tab, and bounds checks.
 func (m Model) CurrentSelectedMatch() (model.Match, bool) {
-	if (m.state == StateChannelSelect || m.state == StatePlaying) && m.selectedMatchID != "" {
+	if (m.state == StateChannelSelect || m.state == StatePlaying || m.state == StateTacticalBoard) && m.selectedMatchID != "" {
 		for _, mt := range m.matches {
 			if mt.ID == m.selectedMatchID {
 				return mt, true

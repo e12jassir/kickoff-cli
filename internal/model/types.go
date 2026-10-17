@@ -87,6 +87,7 @@ type Player struct {
 // TeamLineup represents the starting XI and bench for a team.
 type TeamLineup struct {
 	Formation string   `json:"formation"`
+	Coach     string   `json:"coach,omitempty"`
 	Starters  []Player `json:"starters"`
 	Bench     []Player `json:"bench"`
 }

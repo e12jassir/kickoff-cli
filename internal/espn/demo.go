@@ -145,6 +145,7 @@ func (d *DemoClient) FetchMatchDetails(ctx context.Context, leagueKey, eventID s
 		Lineups: &model.MatchLineups{
 			Home: model.TeamLineup{
 				Formation: "4-3-3",
+				Coach:     "Hansi Flick",
 				Starters: []model.Player{
 					{Jersey: "1", DisplayName: "M. ter Stegen", Position: "GK", IsStarter: true},
 					{Jersey: "23", DisplayName: "J. Koundé", Position: "DF", IsStarter: true},
@@ -158,9 +159,19 @@ func (d *DemoClient) FetchMatchDetails(ctx context.Context, leagueKey, eventID s
 					{Jersey: "9", DisplayName: "R. Lewandowski", Position: "FW", IsStarter: true},
 					{Jersey: "11", DisplayName: "Raphinha", Position: "FW", IsStarter: true},
 				},
+				Bench: []model.Player{
+					{Jersey: "13", DisplayName: "Iñaki Peña", Position: "GK", IsStarter: false},
+					{Jersey: "7", DisplayName: "Ferran Torres", Position: "FW", IsStarter: false},
+					{Jersey: "10", DisplayName: "Ansu Fati", Position: "FW", IsStarter: false},
+					{Jersey: "16", DisplayName: "Fermín López", Position: "MF", IsStarter: false},
+					{Jersey: "17", DisplayName: "Marc Casadó", Position: "MF", IsStarter: false},
+					{Jersey: "18", DisplayName: "Pau Víctor", Position: "FW", IsStarter: false},
+					{Jersey: "35", DisplayName: "Gerard Martín", Position: "DF", IsStarter: false},
+				},
 			},
 			Away: model.TeamLineup{
 				Formation: "4-2-3-1",
+				Coach:     "Carlo Ancelotti",
 				Starters: []model.Player{
 					{Jersey: "1", DisplayName: "T. Courtois", Position: "GK", IsStarter: true},
 					{Jersey: "2", DisplayName: "D. Carvajal", Position: "DF", IsStarter: true},
@@ -173,6 +184,15 @@ func (d *DemoClient) FetchMatchDetails(ctx context.Context, leagueKey, eventID s
 					{Jersey: "5", DisplayName: "J. Bellingham", Position: "MF", IsStarter: true},
 					{Jersey: "7", DisplayName: "Vinícius Jr", Position: "FW", IsStarter: true},
 					{Jersey: "9", DisplayName: "K. Mbappé", Position: "FW", IsStarter: true},
+				},
+				Bench: []model.Player{
+					{Jersey: "13", DisplayName: "A. Lunin", Position: "GK", IsStarter: false},
+					{Jersey: "10", DisplayName: "L. Modrić", Position: "MF", IsStarter: false},
+					{Jersey: "15", DisplayName: "A. Güler", Position: "MF", IsStarter: false},
+					{Jersey: "21", DisplayName: "Brahim Díaz", Position: "FW", IsStarter: false},
+					{Jersey: "16", DisplayName: "Endrick", Position: "FW", IsStarter: false},
+					{Jersey: "17", DisplayName: "Lucas Vázquez", Position: "DF", IsStarter: false},
+					{Jersey: "20", DisplayName: "Fran García", Position: "DF", IsStarter: false},
 				},
 			},
 		},

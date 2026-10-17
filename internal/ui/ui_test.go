@@ -796,17 +796,33 @@ func TestModel_Match_Events_And_Stats_Modal(t *testing.T) {
 		t.Errorf("expected formations badge in Tab 2, got:\n%s", viewTab2)
 	}
 
-	// Verify tactical pitch starters with jerseys and short names for home team
-	if !strings.Contains(viewTab2, "#1 STEG") || !strings.Contains(viewTab2, "#9 LEW") {
-		t.Errorf("expected tactical pitch starters in Tab 2, got:\n%s", viewTab2)
+	// Verify compact 2-column starters and action banner
+	if !strings.Contains(viewTab2, "c / Espacio: Ver Cancha Táctica Completa 2D") {
+		t.Errorf("expected action banner in Tab 2, got:\n%s", viewTab2)
+	}
+	if !strings.Contains(viewTab2, "M. ter Stegen") || !strings.Contains(viewTab2, "R. Lewandowski") {
+		t.Errorf("expected home starters in Tab 2, got:\n%s", viewTab2)
+	}
+	if !strings.Contains(viewTab2, "T. Courtois") || !strings.Contains(viewTab2, "Vinícius Jr") {
+		t.Errorf("expected away starters in Tab 2, got:\n%s", viewTab2)
 	}
 
-	// Toggle team in Tab 2 to Away team (Real Madrid)
-	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	// Transition to StateTacticalBoard with 'c'
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
 	m = newM.(Model)
-	viewTab2Away := m.View()
-	if !strings.Contains(viewTab2Away, "#1 COUR") || !strings.Contains(viewTab2Away, "#7 VINI") {
-		t.Errorf("expected away tactical pitch starters in Tab 2, got:\n%s", viewTab2Away)
+	if m.state != StateTacticalBoard {
+		t.Fatalf("expected StateTacticalBoard after 'c', got %d", m.state)
+	}
+	viewBoard := m.View()
+	if !strings.Contains(viewBoard, "PIZARRA TÁCTICA") && !strings.Contains(viewBoard, "CANCHA TÁCTICA") && !strings.Contains(viewBoard, "DETALLES Y BANCOS") {
+		t.Errorf("expected tactical board view, got:\n%s", viewBoard)
+	}
+
+	// Return to StateChannelSelect with 'esc'
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = newM.(Model)
+	if m.state != StateChannelSelect {
+		t.Fatalf("expected StateChannelSelect after esc, got %d", m.state)
 	}
 
 	// --- 4. DIRECT NUMERIC TAB SWITCHING ---
@@ -2017,4 +2033,142 @@ func TestModel_Esc_WhenLoading_StopsPlayer(t *testing.T) {
 		t.Errorf("expected player.Stop() to be called on Esc while loading")
 	}
 }
+
+func TestStateTacticalBoard_KeyTransitionsAndRendering(t *testing.T) {
+	cli := &mockClient{}
+	cat := &mockCatalog{}
+	pla := &mockPlayer{}
+	m := NewModel(cli, cat, pla)
+	m.width = 100
+	m.height = 35
+
+	match := model.Match{
+		ID:        "modal-tactical-test",
+		Title:     "FC Barcelona vs Real Madrid",
+		HomeTeam:  model.Competitor{ID: "home-1", DisplayName: "FC Barcelona"},
+		AwayTeam:  model.Competitor{ID: "away-1", DisplayName: "Real Madrid"},
+		Status:    model.MatchStatus{State: "in", Description: "60'"},
+		StartTime: time.Now(),
+		Lineups: &model.MatchLineups{
+			Home: model.TeamLineup{
+				Formation: "4-3-3",
+				Coach:     "Hansi Flick",
+				Starters: []model.Player{
+					{Jersey: "1", DisplayName: "M. ter Stegen", Position: "GK"},
+					{Jersey: "9", DisplayName: "R. Lewandowski", Position: "FW"},
+				},
+				Bench: []model.Player{
+					{Jersey: "13", DisplayName: "Iñaki Peña"},
+				},
+			},
+			Away: model.TeamLineup{
+				Formation: "4-2-3-1",
+				Coach:     "Carlo Ancelotti",
+				Starters: []model.Player{
+					{Jersey: "1", DisplayName: "T. Courtois", Position: "GK"},
+					{Jersey: "7", DisplayName: "Vinícius Jr", Position: "FW"},
+				},
+				Bench: []model.Player{
+					{Jersey: "13", DisplayName: "A. Lunin"},
+				},
+			},
+		},
+	}
+
+	m.state = StateBrowsing
+	m.matches = []model.Match{match}
+	m.matchCursor = 0
+	m.leagueTab = TabPartidos
+
+	// Enter Channel modal
+	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newM.(Model)
+	if m.state != StateChannelSelect {
+		t.Fatalf("expected StateChannelSelect, got %d", m.state)
+	}
+
+	// Switch to Tab 2 (Alineaciones)
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m = newM.(Model)
+	if m.modalTab != 2 {
+		t.Fatalf("expected modalTab 2, got %d", m.modalTab)
+	}
+
+	// Verify action banner in compact view
+	compactView := m.View()
+	if !strings.Contains(compactView, "[ c / Espacio: Ver Cancha Táctica Completa 2D ]") {
+		t.Errorf("expected action banner in compact view, got:\n%s", compactView)
+	}
+
+	// 1. Press 'space' -> Enter StateTacticalBoard
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	m = newM.(Model)
+	if m.state != StateTacticalBoard {
+		t.Fatalf("expected StateTacticalBoard after space, got %d", m.state)
+	}
+
+	// Verify full tactical board rendering
+	fullView := m.View()
+	if !strings.Contains(fullView, "DT: Hansi Flick") {
+		t.Errorf("expected 'DT: Hansi Flick' in tactical board view, got:\n%s", fullView)
+	}
+	if !strings.Contains(fullView, "DT: Carlo Ancelotti") {
+		t.Errorf("expected 'DT: Carlo Ancelotti' in tactical board view, got:\n%s", fullView)
+	}
+	if !strings.Contains(fullView, "[esc / c: Volver]") {
+		t.Errorf("expected '[esc / c: Volver]' in tactical board view, got:\n%s", fullView)
+	}
+
+	// 2. Press 'c' inside StateTacticalBoard -> Return to StateChannelSelect
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	m = newM.(Model)
+	if m.state != StateChannelSelect {
+		t.Fatalf("expected StateChannelSelect after 'c' inside tactical board, got %d", m.state)
+	}
+
+	// 3. Press 'c' inside StateChannelSelect (Tab 2) -> Re-enter StateTacticalBoard
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	m = newM.(Model)
+	if m.state != StateTacticalBoard {
+		t.Fatalf("expected StateTacticalBoard after 'c' in modalTab 2, got %d", m.state)
+	}
+
+	// 4. Press 'backspace' inside StateTacticalBoard -> Return to StateChannelSelect
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	m = newM.(Model)
+	if m.state != StateChannelSelect {
+		t.Fatalf("expected StateChannelSelect after backspace inside tactical board, got %d", m.state)
+	}
+
+	// 5. Re-enter StateTacticalBoard via space
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	m = newM.(Model)
+	if m.state != StateTacticalBoard {
+		t.Fatalf("expected StateTacticalBoard after space rune, got %d", m.state)
+	}
+
+	// 6. Press 'esc' inside StateTacticalBoard -> Return to StateChannelSelect
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = newM.(Model)
+	if m.state != StateChannelSelect {
+		t.Fatalf("expected StateChannelSelect after esc inside tactical board, got %d", m.state)
+	}
+
+	// 7. Quit cleanly with 'q'
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	m = newM.(Model)
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	if cmd == nil {
+		t.Errorf("expected tea.Quit cmd on 'q' in StateTacticalBoard")
+	}
+
+	// 8. Quit cleanly with 'ctrl+c'
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	m = newM.(Model)
+	_, cmd = m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if cmd == nil {
+		t.Errorf("expected tea.Quit cmd on 'ctrl+c' in StateTacticalBoard")
+	}
+}
+
 

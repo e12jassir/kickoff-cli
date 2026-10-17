@@ -794,3 +794,461 @@ func RenderTacticalPitch(match model.Match, teamIdx int, width int, noEmoji bool
 
 	return lipgloss.JoinVertical(lipgloss.Center, topSection, "", body)
 }
+
+// FormatPitchPlayerName normalizes player display names into standard concise pitch representation.
+func FormatPitchPlayerName(fullName string) string {
+	fullName = strings.TrimSpace(fullName)
+	if fullName == "" {
+		return "Jugador"
+	}
+	clean := fullName
+	for _, suffix := range []string{" Jr.", " Jr", " II", " III", " Sr.", " Sr"} {
+		if strings.HasSuffix(strings.ToLower(clean), strings.ToLower(suffix)) {
+			lower := strings.ToLower(clean)
+			if strings.Contains(lower, "vini") {
+				return "Vini Jr"
+			}
+			clean = strings.TrimSpace(clean[:len(clean)-len(suffix)]) + " Jr"
+			break
+		}
+	}
+	lower := strings.ToLower(fullName)
+	switch {
+	case strings.Contains(lower, "vinícius") || strings.Contains(lower, "vinicius"):
+		return "Vini Jr"
+	case strings.Contains(lower, "lamine yamal"):
+		return "Yamal"
+	case strings.Contains(lower, "ter stegen"):
+		return "ter Stegen"
+	case strings.Contains(lower, "de jong"):
+		return "de Jong"
+	}
+
+	words := strings.Fields(fullName)
+	if len(words) >= 2 && len(words[0]) <= 2 && strings.HasSuffix(words[0], ".") {
+		return strings.Join(words[1:], " ")
+	}
+	if len(words) > 2 {
+		return words[len(words)-1]
+	}
+	return fullName
+}
+
+// FormatPitchPlayerLabel formats player info as: Name (Jersey) [Badge].
+func FormatPitchPlayerLabel(p model.Player, badge string, maxLen int) string {
+	name := FormatPitchPlayerName(p.DisplayName)
+	jerseyPart := ""
+	if p.Jersey != "" {
+		jerseyPart = "(" + p.Jersey + ")"
+	}
+	var base string
+	if jerseyPart != "" {
+		base = name + " " + jerseyPart
+	} else {
+		base = name
+	}
+	if badge != "" {
+		base = base + " " + badge
+	}
+	if maxLen > 0 && lipgloss.Width(base) > maxLen {
+		availForName := maxLen - lipgloss.Width(jerseyPart) - lipgloss.Width(badge) - 2
+		if availForName >= 3 {
+			r := []rune(name)
+			if len(r) > availForName {
+				name = string(r[:availForName-1]) + "."
+			}
+			if jerseyPart != "" {
+				base = name + " " + jerseyPart
+			} else {
+				base = name
+			}
+			if badge != "" {
+				base = base + " " + badge
+			}
+		}
+	}
+	return base
+}
+
+// renderSymmetricalPitchRow renders one row of players with mathematical symmetry.
+// Line 1: Player Name (Jersey) [Badge] centered in slot [i*slotWidth, (i+1)*slotWidth]
+// Line 2: Player dot ● centered in the same slot DIRECTLY BELOW player name.
+func renderSymmetricalPitchRow(players []model.Player, events []model.MatchEvent, interiorWidth int, isHome bool, noEmoji bool) (string, string) {
+	n := len(players)
+	if n == 0 {
+		emptyLine := "│" + strings.Repeat(" ", interiorWidth) + "│"
+		return emptyLine, emptyLine
+	}
+
+	slotWidth := interiorWidth / n
+
+	// Color styles
+	textColor := lipgloss.Color("#38BDF8") // cyan for Home
+	dotColor := lipgloss.Color("#38BDF8")
+	if !isHome {
+		textColor = lipgloss.Color("#F59E0B") // amber for Away
+		dotColor = lipgloss.Color("#F59E0B")
+	}
+
+	var l1Builder, l2Builder strings.Builder
+	l1Builder.WriteString("│")
+	l2Builder.WriteString("│")
+
+	dotChar := "●"
+	if noEmoji {
+		dotChar = "o"
+	}
+
+	for i := 0; i < n; i++ {
+		p := players[i]
+		w := slotWidth
+		if i == n-1 {
+			w = interiorWidth - (n-1)*slotWidth
+		}
+
+		// Line 1: Player Name (Jersey) [Badge]
+		badge := PlayerEventBadge(p, events, noEmoji)
+		label := FormatPitchPlayerLabel(p, badge, w-1)
+		styledLabel := lipgloss.NewStyle().Foreground(textColor).Bold(true).Render(label)
+		visW := lipgloss.Width(styledLabel)
+		padL1 := (w - visW) / 2
+		if padL1 < 0 {
+			padL1 = 0
+		}
+		padR1 := w - visW - padL1
+		if padR1 < 0 {
+			padR1 = 0
+		}
+		l1Builder.WriteString(strings.Repeat(" ", padL1) + styledLabel + strings.Repeat(" ", padR1))
+
+		// Line 2: Player dot ● directly below
+		styledDot := lipgloss.NewStyle().Foreground(dotColor).Render(dotChar)
+		dotVisW := lipgloss.Width(styledDot)
+		padL2 := (w - dotVisW) / 2
+		if padL2 < 0 {
+			padL2 = 0
+		}
+		padR2 := w - dotVisW - padL2
+		if padR2 < 0 {
+			padR2 = 0
+		}
+		l2Builder.WriteString(strings.Repeat(" ", padL2) + styledDot + strings.Repeat(" ", padR2))
+	}
+
+	l1Builder.WriteString("│")
+	l2Builder.WriteString("│")
+
+	return l1Builder.String(), l2Builder.String()
+}
+
+func formatBenchPlayer(p model.Player) string {
+	j := ""
+	if p.Jersey != "" {
+		j = "#" + p.Jersey + " "
+	}
+	name := p.DisplayName
+	if name == "" {
+		name = "Jugador"
+	}
+	pos := ""
+	if p.Position != "" {
+		pos = " (" + p.Position + ")"
+	}
+	return j + name + pos
+}
+
+// RenderFullTacticalBoard renders the full-screen symmetrical 2D tactical pitch with dual teams and right sidebar.
+func RenderFullTacticalBoard(match model.Match, totalWidth, totalHeight int, noEmoji bool) string {
+	homeName := match.HomeTeam.DisplayName
+	if homeName == "" {
+		homeName = match.HomeTeam.Name
+	}
+	if homeName == "" {
+		homeName = "Local"
+	}
+
+	awayName := match.AwayTeam.DisplayName
+	if awayName == "" {
+		awayName = match.AwayTeam.Name
+	}
+	if awayName == "" {
+		awayName = "Visitante"
+	}
+
+	var homeLineup, awayLineup model.TeamLineup
+	if match.Lineups != nil {
+		homeLineup = match.Lineups.Home
+		awayLineup = match.Lineups.Away
+	}
+
+	if match.Lineups == nil || (len(homeLineup.Starters) == 0 && len(awayLineup.Starters) == 0) {
+		boxW := 68
+		if totalWidth < boxW+4 {
+			boxW = totalWidth - 4
+		}
+		if boxW < 40 {
+			boxW = 40
+		}
+		intW := boxW - 2
+		var sb strings.Builder
+		sb.WriteString("┌─── PIZARRA TÁCTICA 2D " + strings.Repeat("─", max(1, intW-24)) + "┐\n")
+		sb.WriteString("│" + strings.Repeat(" ", intW) + "│\n")
+		notice := "Alineaciones no disponibles aún para este encuentro."
+		sb.WriteString("│" + lipgloss.NewStyle().Width(intW).Align(lipgloss.Center).Foreground(ColorMuted).Italic(true).Render(notice) + "│\n")
+		sb.WriteString("│" + strings.Repeat(" ", intW) + "│\n")
+		hint := "[ esc / c: Volver ]"
+		sb.WriteString("│" + lipgloss.NewStyle().Width(intW).Align(lipgloss.Center).Foreground(ColorHighlight).Render(hint) + "│\n")
+		sb.WriteString("└" + strings.Repeat("─", intW) + "┘")
+		return sb.String()
+	}
+
+	homeForm := homeLineup.Formation
+	awayForm := awayLineup.Formation
+	homeLines, derivedHome := buildPitchRows(homeLineup, match.Events, 48, noEmoji)
+	awayLines, derivedAway := buildPitchRows(awayLineup, match.Events, 48, noEmoji)
+	if homeForm == "" {
+		homeForm = derivedHome
+	}
+	if awayForm == "" {
+		awayForm = derivedAway
+	}
+
+	isSideBySide := totalWidth >= 96
+	pitchWidth := 68
+	sideWidth := 28
+
+	if isSideBySide {
+		if totalWidth >= 104 {
+			pitchWidth = 72
+			sideWidth = 30
+		} else if totalWidth >= 100 {
+			pitchWidth = 70
+			sideWidth = 28
+		}
+	} else {
+		pitchWidth = totalWidth - 4
+		if pitchWidth > 72 {
+			pitchWidth = 72
+		}
+		if pitchWidth < 48 {
+			pitchWidth = 48
+		}
+		sideWidth = pitchWidth
+	}
+
+	// 1. Build Grand Pitch Box
+	pitchIntW := pitchWidth - 2
+	title := fmt.Sprintf(" %s (%s) vs %s (%s) ", homeName, homeForm, awayName, awayForm)
+	if lipgloss.Width(title) > pitchIntW-4 {
+		title = " PIZARRA TÁCTICA 2D "
+	}
+	pTopBorder := "┌" + strings.Repeat("─", 2) + title + strings.Repeat("─", max(1, pitchIntW-lipgloss.Width(title)-2)) + "┐"
+
+	goalAreaW := 18
+	if goalAreaW > pitchIntW-4 {
+		goalAreaW = pitchIntW - 4
+	}
+	gPadL := (pitchIntW - goalAreaW) / 2
+	gPadR := pitchIntW - goalAreaW - gPadL
+	topGoal := "│" + strings.Repeat(" ", gPadL) + "┌" + strings.Repeat("─", goalAreaW-2) + "┐" + strings.Repeat(" ", gPadR) + "│"
+	botGoal := "│" + strings.Repeat(" ", gPadL) + "└" + strings.Repeat("─", goalAreaW-2) + "┘" + strings.Repeat(" ", gPadR) + "│"
+
+	var pitchSb []string
+	pitchSb = append(pitchSb, pTopBorder)
+	pitchSb = append(pitchSb, topGoal)
+
+	// Top Half: Home Team (GK at top, DEF, MID, FWD at center line)
+	for _, row := range homeLines {
+		l1, l2 := renderSymmetricalPitchRow(row, match.Events, pitchIntW, true, noEmoji)
+		pitchSb = append(pitchSb, l1, l2)
+	}
+
+	// Midfield Divider: ──────────────────────────(   ●   )──────────────────────────
+	circleStr := "(   ●   )"
+	if noEmoji {
+		circleStr = "(   o   )"
+	}
+	cw := lipgloss.Width(circleStr)
+	dashL := (pitchIntW - cw) / 2
+	dashR := pitchIntW - cw - dashL
+	midfieldLine := "│" + strings.Repeat("─", dashL) + circleStr + strings.Repeat("─", dashR) + "│"
+	pitchSb = append(pitchSb, midfieldLine)
+
+	// Bottom Half: Away Team (FWD below center line, MID, DEF, GK at bottom)
+	for i := len(awayLines) - 1; i >= 0; i-- {
+		l1, l2 := renderSymmetricalPitchRow(awayLines[i], match.Events, pitchIntW, false, noEmoji)
+		pitchSb = append(pitchSb, l1, l2)
+	}
+
+	pitchSb = append(pitchSb, botGoal)
+	pitchSb = append(pitchSb, "└"+strings.Repeat("─", pitchIntW)+"┘")
+
+	// 2. Build Sidebar ("DETALLES Y BANCOS")
+	sideIntW := sideWidth - 2
+	sTitle := " DETALLES Y BANCOS "
+	if lipgloss.Width(sTitle) > sideIntW-2 {
+		sTitle = " DETALLES "
+	}
+	sTopBorder := "┌" + strings.Repeat("─", 2) + sTitle + strings.Repeat("─", max(1, sideIntW-lipgloss.Width(sTitle)-2)) + "┐"
+
+	renderSideLine := func(text string, style lipgloss.Style) string {
+		trunc := truncateModalText(text, sideIntW-2)
+		styled := style.Width(sideIntW - 2).Render(trunc)
+		return "│ " + styled + " │"
+	}
+	sDivider := "├" + strings.Repeat("─", sideIntW) + "┤"
+
+	var sideSb []string
+	sideSb = append(sideSb, sTopBorder)
+
+	// Home Team Details & Bench
+	homeHeader := fmt.Sprintf("%s (%s)", homeName, homeForm)
+	sideSb = append(sideSb, renderSideLine(homeHeader, lipgloss.NewStyle().Foreground(lipgloss.Color("#38BDF8")).Bold(true)))
+	if homeLineup.Coach != "" {
+		sideSb = append(sideSb, renderSideLine("DT: "+homeLineup.Coach, lipgloss.NewStyle().Foreground(ColorMuted)))
+	}
+	sideSb = append(sideSb, renderSideLine("SUPLENTES:", CategoryHeaderStyle))
+	if len(homeLineup.Bench) == 0 {
+		sideSb = append(sideSb, renderSideLine("Sin suplentes", lipgloss.NewStyle().Foreground(ColorMuted).Italic(true)))
+	} else {
+		limit := 5
+		if len(homeLineup.Bench) < limit {
+			limit = len(homeLineup.Bench)
+		}
+		for k := 0; k < limit; k++ {
+			sideSb = append(sideSb, renderSideLine(formatBenchPlayer(homeLineup.Bench[k]), lipgloss.NewStyle().Foreground(ColorTextMuted)))
+		}
+		if len(homeLineup.Bench) > limit {
+			sideSb = append(sideSb, renderSideLine(fmt.Sprintf("... +%d más", len(homeLineup.Bench)-limit), lipgloss.NewStyle().Foreground(ColorMuted).Italic(true)))
+		}
+	}
+
+	sideSb = append(sideSb, sDivider)
+
+	// Away Team Details & Bench
+	awayHeader := fmt.Sprintf("%s (%s)", awayName, awayForm)
+	sideSb = append(sideSb, renderSideLine(awayHeader, lipgloss.NewStyle().Foreground(lipgloss.Color("#F59E0B")).Bold(true)))
+	if awayLineup.Coach != "" {
+		sideSb = append(sideSb, renderSideLine("DT: "+awayLineup.Coach, lipgloss.NewStyle().Foreground(ColorMuted)))
+	}
+	sideSb = append(sideSb, renderSideLine("SUPLENTES:", CategoryHeaderStyle))
+	if len(awayLineup.Bench) == 0 {
+		sideSb = append(sideSb, renderSideLine("Sin suplentes", lipgloss.NewStyle().Foreground(ColorMuted).Italic(true)))
+	} else {
+		limit := 5
+		if len(awayLineup.Bench) < limit {
+			limit = len(awayLineup.Bench)
+		}
+		for k := 0; k < limit; k++ {
+			sideSb = append(sideSb, renderSideLine(formatBenchPlayer(awayLineup.Bench[k]), lipgloss.NewStyle().Foreground(ColorTextMuted)))
+		}
+		if len(awayLineup.Bench) > limit {
+			sideSb = append(sideSb, renderSideLine(fmt.Sprintf("... +%d más", len(awayLineup.Bench)-limit), lipgloss.NewStyle().Foreground(ColorMuted).Italic(true)))
+		}
+	}
+
+	sideSb = append(sideSb, sDivider)
+
+	// Venue & Referee
+	if match.Venue != "" {
+		vText := "🏟️ " + match.Venue
+		if noEmoji {
+			vText = "Estadio: " + match.Venue
+		}
+		sideSb = append(sideSb, renderSideLine(vText, VenueStyle))
+	}
+	if match.Referee != "" {
+		rText := "👤 " + match.Referee
+		if noEmoji {
+			rText = "Árbitro: " + match.Referee
+		}
+		sideSb = append(sideSb, renderSideLine(rText, lipgloss.NewStyle().Foreground(ColorMuted)))
+	}
+
+	// Highlights
+	if len(match.Events) > 0 {
+		sideSb = append(sideSb, renderSideLine("DESTACADOS:", CategoryHeaderStyle))
+		evLimit := 3
+		if len(match.Events) < evLimit {
+			evLimit = len(match.Events)
+		}
+		for k := 0; k < evLimit; k++ {
+			ev := match.Events[k]
+			evBadge := "⚽"
+			if ev.IsRedCard || strings.Contains(strings.ToLower(ev.Type), "red") {
+				evBadge = "🟥"
+				if noEmoji {
+					evBadge = "[R]"
+				}
+			} else if (ev.IsPenalty && ev.IsScoring) || (ev.IsScoring && strings.Contains(strings.ToLower(ev.Type), "pen")) {
+				evBadge = "⚽P"
+				if noEmoji {
+					evBadge = "[GP]"
+				}
+			} else if ev.IsScoring || strings.Contains(strings.ToLower(ev.Type), "goal") {
+				evBadge = "⚽"
+				if noEmoji {
+					evBadge = "[G]"
+				}
+			} else if ev.IsYellow || strings.Contains(strings.ToLower(ev.Type), "yellow") {
+				evBadge = "🟨"
+				if noEmoji {
+					evBadge = "[A]"
+				}
+			}
+			clk := ev.Clock
+			if clk == "" && ev.ClockValue > 0 {
+				clk = fmt.Sprintf("%.0f'", ev.ClockValue/60)
+			}
+			evText := fmt.Sprintf("%s %s %s", evBadge, clk, ev.PlayerName)
+			sideSb = append(sideSb, renderSideLine(evText, lipgloss.NewStyle().Foreground(ColorHighlight)))
+		}
+	}
+
+	sideSb = append(sideSb, sDivider)
+	footerHint := "[esc / c: Volver]"
+	sideSb = append(sideSb, renderSideLine(footerHint, lipgloss.NewStyle().Foreground(ColorHighlight).Bold(true).Align(lipgloss.Center)))
+	sideSb = append(sideSb, "└"+strings.Repeat("─", sideIntW)+"┘")
+
+	// 3. Line count harmonization
+	if isSideBySide {
+		if len(pitchSb) > len(sideSb) {
+			diff := len(pitchSb) - len(sideSb)
+			emptySide := "│" + strings.Repeat(" ", sideIntW) + "│"
+			insertIdx := len(sideSb) - 3
+			if insertIdx < 1 {
+				insertIdx = 1
+			}
+			newSide := make([]string, 0, len(sideSb)+diff)
+			newSide = append(newSide, sideSb[:insertIdx]...)
+			for k := 0; k < diff; k++ {
+				newSide = append(newSide, emptySide)
+			}
+			newSide = append(newSide, sideSb[insertIdx:]...)
+			sideSb = newSide
+		} else if len(sideSb) > len(pitchSb) {
+			diff := len(sideSb) - len(pitchSb)
+			emptyPitch := "│" + strings.Repeat(" ", pitchIntW) + "│"
+			insertIdx := len(pitchSb) - 2
+			if insertIdx < 1 {
+				insertIdx = 1
+			}
+			newPitch := make([]string, 0, len(pitchSb)+diff)
+			newPitch = append(newPitch, pitchSb[:insertIdx]...)
+			for k := 0; k < diff; k++ {
+				newPitch = append(newPitch, emptyPitch)
+			}
+			newPitch = append(newPitch, pitchSb[insertIdx:]...)
+			pitchSb = newPitch
+		}
+
+		pitchBox := strings.Join(pitchSb, "\n")
+		sideBox := strings.Join(sideSb, "\n")
+		return lipgloss.JoinHorizontal(lipgloss.Top, pitchBox, "  ", sideBox)
+	}
+
+	pitchBox := strings.Join(pitchSb, "\n")
+	sideBox := strings.Join(sideSb, "\n")
+	return lipgloss.JoinVertical(lipgloss.Center, pitchBox, "", sideBox)
+}
+

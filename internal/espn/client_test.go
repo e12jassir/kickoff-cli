@@ -689,6 +689,7 @@ func TestClient_FetchMatchDetails(t *testing.T) {
 				{
 					"team": {"id": "10", "displayName": "Barcelona"},
 					"formation": "4-3-3",
+					"coach": {"displayName": "Hansi Flick"},
 					"roster": [
 						{"starter": true, "jersey": "1", "position": {"abbreviation": "GK"}, "athlete": {"displayName": "M. ter Stegen"}},
 						{"starter": true, "jersey": "23", "position": {"abbreviation": "DF"}, "athlete": {"displayName": "J. Koundé"}},
@@ -708,6 +709,7 @@ func TestClient_FetchMatchDetails(t *testing.T) {
 				{
 					"team": {"id": "20", "displayName": "Real Madrid"},
 					"formation": "4-2-3-1",
+					"coaches": [{"displayName": "Carlo Ancelotti"}],
 					"roster": [
 						{"starter": true, "jersey": "1", "position": {"abbreviation": "GK"}, "athlete": {"displayName": "T. Courtois"}},
 						{"starter": true, "jersey": "2", "position": {"abbreviation": "DF"}, "athlete": {"displayName": "D. Carvajal"}},
@@ -779,6 +781,14 @@ func TestClient_FetchMatchDetails(t *testing.T) {
 	}
 	if lineups.Away.Formation != "4-2-3-1" {
 		t.Errorf("expected Away formation 4-2-3-1, got %s", lineups.Away.Formation)
+	}
+
+	// Verify coaches
+	if lineups.Home.Coach != "Hansi Flick" {
+		t.Errorf("expected Home coach 'Hansi Flick', got %q", lineups.Home.Coach)
+	}
+	if lineups.Away.Coach != "Carlo Ancelotti" {
+		t.Errorf("expected Away coach 'Carlo Ancelotti', got %q", lineups.Away.Coach)
 	}
 
 	// Verify starters

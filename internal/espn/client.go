@@ -112,6 +112,16 @@ type rawRoster struct {
 	Team      *rawTeam        `json:"team"`
 	Formation string          `json:"formation"`
 	Roster    []rawRosterItem `json:"roster"`
+	Coaches   []rawCoach      `json:"coaches"`
+	Coach     *rawCoach       `json:"coach"`
+}
+
+type rawCoach struct {
+	FirstName   string    `json:"firstName"`
+	LastName    string    `json:"lastName"`
+	FullName    string    `json:"fullName"`
+	DisplayName string    `json:"displayName"`
+	Coach       *rawCoach `json:"coach"`
 }
 
 type rawRosterItem struct {
@@ -1344,6 +1354,18 @@ func (c *Client) FetchMatchDetails(ctx context.Context, leagueKey, eventID strin
 			if r == nil {
 				return model.TeamLineup{}
 			}
+			var coachName string
+			if r.Coach != nil {
+				coachName = extractCoachName(r.Coach)
+			}
+			if coachName == "" && len(r.Coaches) > 0 {
+				for _, c := range r.Coaches {
+					coachName = extractCoachName(&c)
+					if coachName != "" {
+						break
+					}
+				}
+			}
 			var starters, bench []model.Player
 			for _, item := range r.Roster {
 				p := model.Player{
@@ -1402,6 +1424,7 @@ func (c *Client) FetchMatchDetails(ctx context.Context, leagueKey, eventID strin
 
 			return model.TeamLineup{
 				Formation: r.Formation,
+				Coach:     coachName,
 				Starters:  starters,
 				Bench:     bench,
 			}
@@ -1865,3 +1888,24 @@ func (c *Client) fallbackStatistics(leagueKey string, origErr error) (*model.Lea
 	}
 	return nil, origErr
 }
+
+func extractCoachName(c *rawCoach) string {
+	if c == nil {
+		return ""
+	}
+	if c.DisplayName != "" {
+		return c.DisplayName
+	}
+	if c.FullName != "" {
+		return c.FullName
+	}
+	name := strings.TrimSpace(c.FirstName + " " + c.LastName)
+	if name != "" {
+		return name
+	}
+	if c.Coach != nil {
+		return extractCoachName(c.Coach)
+	}
+	return ""
+}
+

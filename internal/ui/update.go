@@ -109,7 +109,7 @@ func autoSyncTickCmd(d time.Duration) tea.Cmd {
 
 // nextSyncInterval dynamically computes the polling frequency based on match states.
 func (m Model) nextSyncInterval() time.Duration {
-	if m.state != StateBrowsing && m.state != StateChannelSelect && m.state != StatePlaying {
+	if m.state != StateBrowsing && m.state != StateChannelSelect && m.state != StatePlaying && m.state != StateTacticalBoard {
 		return 30 * time.Second
 	}
 	if len(m.matches) == 0 {
@@ -299,11 +299,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case autoSyncTickMsg:
 		cmds := []tea.Cmd{autoSyncTickCmd(m.nextSyncInterval())}
-		if m.state == StateBrowsing || m.state == StateChannelSelect || m.state == StatePlaying {
+		if m.state == StateBrowsing || m.state == StateChannelSelect || m.state == StatePlaying || m.state == StateTacticalBoard {
 			league := m.CurrentLeague()
 			cmds = append(cmds, forceRefreshMatchesCmd(m.client, league.Key, true))
 
-			if m.state == StateChannelSelect {
+			if m.state == StateChannelSelect || m.state == StateTacticalBoard {
 				if selMatch, ok := m.CurrentSelectedMatch(); ok && selMatch.ID != "" && selMatch.Status.State == "in" {
 					cmds = append(cmds, forceFetchMatchStatsCmd(m.client, league.Key, selMatch.ID))
 				}
@@ -323,7 +323,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.statusMsg = ""
 			} else {
 				var prevSelectedID string
-				if (m.state == StateChannelSelect || m.state == StatePlaying) && m.selectedMatchID != "" {
+				if (m.state == StateChannelSelect || m.state == StatePlaying || m.state == StateTacticalBoard) && m.selectedMatchID != "" {
 					prevSelectedID = m.selectedMatchID
 				} else if m.leagueTab == TabResumen {
 					pms := m.ResumenMatches()
@@ -868,6 +868,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						playStreamCmd(m.player, req, m.playbackID),
 					)
 				}
+			case "c", "space", " ":
+				if m.modalTab == 2 {
+					m.state = StateTacticalBoard
+					return m, nil
+				}
 			case "esc", "backspace":
 				m.state = StateBrowsing
 				m.selectedMatchID = ""
@@ -876,6 +881,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.modalTab = 0
 				m.lineupTeam = 0
 				return m, nil
+			}
+
+		case StateTacticalBoard:
+			switch key {
+			case "esc", "c", "backspace":
+				m.state = StateChannelSelect
+				return m, nil
+			case "q", "ctrl+c":
+				if m.player != nil {
+					_ = m.player.Stop()
+				}
+				return m, tea.Quit
 			}
 
 		case StateLoading, StateError:

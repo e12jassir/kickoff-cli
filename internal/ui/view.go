@@ -23,7 +23,24 @@ func (m Model) View() string {
 	if m.state == StateMainMenu {
 		return renderMainMenu(m)
 	}
+	if m.state == StateTacticalBoard {
+		return renderTacticalBoardView(m)
+	}
 	return renderBrowsing(m)
+}
+
+func renderTacticalBoardView(m Model) string {
+	selMatch, _ := m.CurrentSelectedMatch()
+	board := RenderFullTacticalBoard(selMatch, m.width, m.height, m.noEmoji)
+	w := m.width
+	h := m.height
+	if w <= 0 {
+		w = 80
+	}
+	if h <= 0 {
+		h = 24
+	}
+	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, board)
 }
 
 func renderStartup(m Model) string {
@@ -255,7 +272,16 @@ func renderBrowsing(m Model) string {
 			}
 			modalContent := renderChannelModal(selMatch, m.channels, m.channelCursor, m.modalTab, m.livePulse, m.spinner.View(), m.IsDetailsLoaded(selMatch.ID), m.noEmoji, m.lineupTeam, modalWidth)
 			body = modalBox.Render(modalContent)
-			footer = FooterHelpStyle.Render("h/l o ←/→: pestaña/equipo  •  j/k o ↑/↓: canal  •  enter: reproducir  •  esc: volver")
+			if m.modalTab == 2 {
+				footer = FooterHelpStyle.Render("h/l o ←/→: pestaña  •  c/espacio: cancha 2D  •  esc: volver  •  q: salir")
+			} else {
+				footer = FooterHelpStyle.Render("h/l o ←/→: pestaña  •  j/k o ↑/↓: canal  •  enter: reproducir  •  esc: volver")
+			}
+
+		case StateTacticalBoard:
+			selMatch, _ := m.CurrentSelectedMatch()
+			body = RenderFullTacticalBoard(selMatch, m.width, m.height, m.noEmoji)
+			footer = FooterHelpStyle.Render("esc / c: volver  •  q: salir")
 
 		default: // StateBrowsing, StatePlaying
 			switch m.leagueTab {
@@ -730,6 +756,7 @@ func renderChannelModal(match model.Match, channels []model.Channel, selectedIdx
 	if len(optArgs) > 1 {
 		if t, ok := optArgs[1].(int); ok {
 			lineupTeam = t
+			_ = lineupTeam
 		}
 	}
 	if len(optArgs) > 2 {
@@ -928,11 +955,145 @@ func renderChannelModal(match model.Match, channels []model.Channel, selectedIdx
 		}
 
 	case 2:
-		// Tab 2: Alineaciones
-		modal.WriteString(RenderTacticalPitch(match, lineupTeam, modalContentWidth, noEmoji) + "\n")
+		// Tab 2: Alineaciones (Vista compacta con banner de acceso a Cancha Táctica 2D)
+		modal.WriteString(renderCompactLineups(match, modalContentWidth, noEmoji) + "\n")
 	}
 
 	return modal.String()
+}
+
+// renderCompactLineups renders the clean 2-column text list of player starters and substitutes.
+func renderCompactLineups(match model.Match, modalContentWidth int, noEmoji bool) string {
+	if match.Lineups == nil || (len(match.Lineups.Home.Starters) == 0 && len(match.Lineups.Away.Starters) == 0) {
+		notice := "Alineaciones no disponibles aún para este encuentro."
+		return lipgloss.NewStyle().Width(modalContentWidth).Align(lipgloss.Center).Foreground(ColorMuted).Italic(true).Render(notice)
+	}
+
+	var sb strings.Builder
+
+	// Action banner
+	bannerText := "[ c / Espacio: Ver Cancha Táctica Completa 2D ]"
+	banner := lipgloss.NewStyle().Width(modalContentWidth).Align(lipgloss.Center).Foreground(ColorHighlight).Bold(true).Render(bannerText)
+	sb.WriteString(banner + "\n\n")
+
+	homeName := match.HomeTeam.DisplayName
+	if homeName == "" {
+		homeName = match.HomeTeam.Name
+	}
+	if homeName == "" {
+		homeName = "Local"
+	}
+
+	awayName := match.AwayTeam.DisplayName
+	if awayName == "" {
+		awayName = match.AwayTeam.Name
+	}
+	if awayName == "" {
+		awayName = "Visitante"
+	}
+
+	homeLineup := match.Lineups.Home
+	awayLineup := match.Lineups.Away
+
+	colW := (modalContentWidth - 4) / 2
+	if colW < 24 {
+		colW = 24
+	}
+
+	homeFormStr := homeName
+	if homeLineup.Formation != "" {
+		homeFormStr = fmt.Sprintf("%s (%s)", homeName, homeLineup.Formation)
+	}
+	awayFormStr := awayName
+	if awayLineup.Formation != "" {
+		awayFormStr = fmt.Sprintf("%s (%s)", awayName, awayLineup.Formation)
+	}
+
+	headLeft := lipgloss.NewStyle().Width(colW).Align(lipgloss.Left).Foreground(lipgloss.Color("#38BDF8")).Bold(true).Render(truncateModalText(homeFormStr, colW))
+	headRight := lipgloss.NewStyle().Width(colW).Align(lipgloss.Left).Foreground(lipgloss.Color("#F59E0B")).Bold(true).Render(truncateModalText(awayFormStr, colW))
+	sb.WriteString(fmt.Sprintf("%s    %s\n", headLeft, headRight))
+
+	// Coach lines
+	if homeLineup.Coach != "" || awayLineup.Coach != "" {
+		dtLeft := ""
+		if homeLineup.Coach != "" {
+			dtLeft = "DT: " + homeLineup.Coach
+		}
+		dtRight := ""
+		if awayLineup.Coach != "" {
+			dtRight = "DT: " + awayLineup.Coach
+		}
+		dtLeftStyled := lipgloss.NewStyle().Width(colW).Align(lipgloss.Left).Foreground(ColorMuted).Render(truncateModalText(dtLeft, colW))
+		dtRightStyled := lipgloss.NewStyle().Width(colW).Align(lipgloss.Left).Foreground(ColorMuted).Render(truncateModalText(dtRight, colW))
+		sb.WriteString(fmt.Sprintf("%s    %s\n", dtLeftStyled, dtRightStyled))
+	}
+	sb.WriteString("\n")
+
+	// Starters
+	secLeft := lipgloss.NewStyle().Width(colW).Align(lipgloss.Left).Foreground(ColorCategory).Bold(true).Render("TITULARES")
+	secRight := lipgloss.NewStyle().Width(colW).Align(lipgloss.Left).Foreground(ColorCategory).Bold(true).Render("TITULARES")
+	sb.WriteString(fmt.Sprintf("%s    %s\n", secLeft, secRight))
+
+	formatPlayer := func(p model.Player) string {
+		jStr := "   "
+		if p.Jersey != "" {
+			jStr = fmt.Sprintf("%-2s ", p.Jersey)
+		}
+		name := p.DisplayName
+		if name == "" {
+			name = "Jugador"
+		}
+		pos := ""
+		if p.Position != "" {
+			pos = fmt.Sprintf(" (%s)", p.Position)
+		}
+		return jStr + name + pos
+	}
+
+	homeStarters := homeLineup.Starters
+	awayStarters := awayLineup.Starters
+	maxStarters := max(len(homeStarters), len(awayStarters))
+
+	colLeftStyle := lipgloss.NewStyle().Width(colW).Align(lipgloss.Left).Foreground(ColorTextMuted)
+	colRightStyle := lipgloss.NewStyle().Width(colW).Align(lipgloss.Left).Foreground(ColorTextMuted)
+
+	for i := 0; i < maxStarters; i++ {
+		hText := ""
+		if i < len(homeStarters) {
+			hText = formatPlayer(homeStarters[i])
+		}
+		aText := ""
+		if i < len(awayStarters) {
+			aText = formatPlayer(awayStarters[i])
+		}
+		sb.WriteString(fmt.Sprintf("%s    %s\n", colLeftStyle.Render(truncateModalText(hText, colW)), colRightStyle.Render(truncateModalText(aText, colW))))
+	}
+
+	// Substitutes / Bench
+	if len(homeLineup.Bench) > 0 || len(awayLineup.Bench) > 0 {
+		sb.WriteString("\n")
+		subLeft := lipgloss.NewStyle().Width(colW).Align(lipgloss.Left).Foreground(ColorCategory).Bold(true).Render("SUPLENTES")
+		subRight := lipgloss.NewStyle().Width(colW).Align(lipgloss.Left).Foreground(ColorCategory).Bold(true).Render("SUPLENTES")
+		sb.WriteString(fmt.Sprintf("%s    %s\n", subLeft, subRight))
+
+		homeBench := homeLineup.Bench
+		awayBench := awayLineup.Bench
+		maxBench := max(len(homeBench), len(awayBench))
+
+		for i := 0; i < maxBench; i++ {
+			hText := ""
+			if i < len(homeBench) {
+				hText = formatPlayer(homeBench[i])
+			}
+			aText := ""
+			if i < len(awayBench) {
+				aText = formatPlayer(awayBench[i])
+			}
+			sb.WriteString(fmt.Sprintf("%s    %s\n", colLeftStyle.Render(truncateModalText(hText, colW)), colRightStyle.Render(truncateModalText(aText, colW))))
+		}
+	}
+
+	return sb.String()
 }
 
 // renderModalContent renders the tactical pitch modal tab content.

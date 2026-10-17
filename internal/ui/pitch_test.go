@@ -481,3 +481,275 @@ func TestRenderTacticalPitch_NilLineups(t *testing.T) {
 		t.Errorf("expected unavailable notice, got:\n%s", out)
 	}
 }
+
+func TestFormatPitchPlayerNameAndLabel(t *testing.T) {
+	tests := []struct {
+		name        string
+		player      model.Player
+		badge       string
+		maxLen      int
+		expectedSub string
+	}{
+		{
+			name:        "Lewandowski goal badge",
+			player:      model.Player{DisplayName: "R. Lewandowski", Jersey: "9"},
+			badge:       "⚽",
+			maxLen:      20,
+			expectedSub: "Lewandowski (9) ⚽",
+		},
+		{
+			name:        "Pedri goal badge",
+			player:      model.Player{DisplayName: "Pedri", Jersey: "8"},
+			badge:       "⚽",
+			maxLen:      20,
+			expectedSub: "Pedri (8) ⚽",
+		},
+		{
+			name:        "Vini Jr",
+			player:      model.Player{DisplayName: "Vinícius Jr", Jersey: "7"},
+			badge:       "",
+			maxLen:      20,
+			expectedSub: "Vini Jr (7)",
+		},
+		{
+			name:        "Mbappé penalty goal",
+			player:      model.Player{DisplayName: "K. Mbappé", Jersey: "9"},
+			badge:       "⚽",
+			maxLen:      20,
+			expectedSub: "Mbappé (9) ⚽",
+		},
+		{
+			name:        "Empty player name fallback",
+			player:      model.Player{DisplayName: "", Jersey: "10"},
+			badge:       "",
+			maxLen:      20,
+			expectedSub: "Jugador (10)",
+		},
+		{
+			name:        "Truncation on tight slot",
+			player:      model.Player{DisplayName: "A. Christensen", Jersey: "15"},
+			badge:       "🟨",
+			maxLen:      10,
+			expectedSub: "(15) 🟨",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := FormatPitchPlayerLabel(tc.player, tc.badge, tc.maxLen)
+			if !strings.Contains(got, tc.expectedSub) {
+				t.Errorf("FormatPitchPlayerLabel() = %q, want substring %q", got, tc.expectedSub)
+			}
+		})
+	}
+}
+
+func TestRenderFullTacticalBoard_SymmetricalMathAndCoaches(t *testing.T) {
+	match := model.Match{
+		ID:        "demo-tactical-match",
+		Title:     "FC Barcelona vs Real Madrid",
+		Venue:     "Spotify Camp Nou",
+		Referee:   "Szymon Marciniak",
+		HomeTeam:  model.Competitor{ID: "home-1", DisplayName: "FC Barcelona"},
+		AwayTeam:  model.Competitor{ID: "away-1", DisplayName: "Real Madrid"},
+		StartTime: time.Now(),
+		Events: []model.MatchEvent{
+			{Type: "goal", PlayerName: "R. Lewandowski", Clock: "24'", TeamID: "home-1", IsScoring: true},
+			{Type: "card_yellow", PlayerName: "Gavi", Clock: "41'", TeamID: "home-1", IsYellow: true},
+			{Type: "penalty", PlayerName: "K. Mbappé", Clock: "54'", TeamID: "away-1", IsScoring: true, IsPenalty: true},
+			{Type: "card_red", PlayerName: "A. Rüdiger", Clock: "63'", TeamID: "away-1", IsRedCard: true},
+		},
+		Lineups: &model.MatchLineups{
+			Home: model.TeamLineup{
+				Formation: "4-3-3",
+				Coach:     "Hansi Flick",
+				Starters: []model.Player{
+					{Jersey: "1", DisplayName: "M. ter Stegen", Position: "GK"},
+					{Jersey: "23", DisplayName: "J. Koundé", Position: "DF"},
+					{Jersey: "4", DisplayName: "R. Araújo", Position: "DF"},
+					{Jersey: "2", DisplayName: "P. Cubarsí", Position: "DF"},
+					{Jersey: "3", DisplayName: "A. Balde", Position: "DF"},
+					{Jersey: "8", DisplayName: "Pedri", Position: "MF"},
+					{Jersey: "21", DisplayName: "F. de Jong", Position: "MF"},
+					{Jersey: "6", DisplayName: "Gavi", Position: "MF"},
+					{Jersey: "19", DisplayName: "Lamine Yamal", Position: "FW"},
+					{Jersey: "9", DisplayName: "R. Lewandowski", Position: "FW"},
+					{Jersey: "11", DisplayName: "Raphinha", Position: "FW"},
+				},
+				Bench: []model.Player{
+					{Jersey: "13", DisplayName: "Iñaki Peña", Position: "GK"},
+					{Jersey: "7", DisplayName: "Ferran Torres", Position: "FW"},
+				},
+			},
+			Away: model.TeamLineup{
+				Formation: "4-2-3-1",
+				Coach:     "Carlo Ancelotti",
+				Starters: []model.Player{
+					{Jersey: "1", DisplayName: "T. Courtois", Position: "GK"},
+					{Jersey: "2", DisplayName: "D. Carvajal", Position: "DF"},
+					{Jersey: "3", DisplayName: "É. Militão", Position: "DF"},
+					{Jersey: "22", DisplayName: "A. Rüdiger", Position: "DF"},
+					{Jersey: "23", DisplayName: "F. Mendy", Position: "DF"},
+					{Jersey: "14", DisplayName: "A. Tchouaméni", Position: "MF"},
+					{Jersey: "8", DisplayName: "F. Valverde", Position: "MF"},
+					{Jersey: "11", DisplayName: "Rodrygo", Position: "MF"},
+					{Jersey: "5", DisplayName: "J. Bellingham", Position: "MF"},
+					{Jersey: "7", DisplayName: "Vinícius Jr", Position: "FW"},
+					{Jersey: "9", DisplayName: "K. Mbappé", Position: "FW"},
+				},
+				Bench: []model.Player{
+					{Jersey: "13", DisplayName: "A. Lunin", Position: "GK"},
+					{Jersey: "10", DisplayName: "L. Modrić", Position: "MF"},
+				},
+			},
+		},
+	}
+
+	// 1. Side-by-Side Render (totalWidth = 100 >= 96)
+	board := RenderFullTacticalBoard(match, 100, 32, false)
+
+	// Check DT / Coaches in sidebar
+	if !strings.Contains(board, "DT: Hansi Flick") {
+		t.Errorf("expected Home coach 'DT: Hansi Flick' in sidebar, got:\n%s", board)
+	}
+	if !strings.Contains(board, "DT: Carlo Ancelotti") {
+		t.Errorf("expected Away coach 'DT: Carlo Ancelotti' in sidebar, got:\n%s", board)
+	}
+
+	// Check Benches in sidebar
+	if !strings.Contains(board, "Iñaki Peña") || !strings.Contains(board, "Ferran Torres") {
+		t.Errorf("expected Home bench players in sidebar, got:\n%s", board)
+	}
+	if !strings.Contains(board, "A. Lunin") || !strings.Contains(board, "L. Modrić") {
+		t.Errorf("expected Away bench players in sidebar, got:\n%s", board)
+	}
+
+	// Check Venue & Referee in sidebar
+	if !strings.Contains(board, "Spotify Camp Nou") || !strings.Contains(board, "Szymon Marciniak") {
+		t.Errorf("expected venue and referee in sidebar, got:\n%s", board)
+	}
+
+	// Check Highlights
+	if !strings.Contains(board, "DESTACADOS") {
+		t.Errorf("expected highlights header in sidebar, got:\n%s", board)
+	}
+
+	// Check Footer Hint
+	if !strings.Contains(board, "[esc / c: Volver]") {
+		t.Errorf("expected footer hint [esc / c: Volver], got:\n%s", board)
+	}
+
+	// Check Midfield Divider
+	if !strings.Contains(board, "(   ●   )") {
+		t.Errorf("expected midfield circle '(   ●   )', got:\n%s", board)
+	}
+
+	// Check players on pitch
+	if !strings.Contains(board, "Lewandowski") || !strings.Contains(board, "Vini Jr") {
+		t.Errorf("expected key player names on tactical pitch, got:\n%s", board)
+	}
+
+	// Mathematical Symmetry check:
+	// Verify that each player dot line contains '●' and follows a name line
+	lines := strings.Split(board, "\n")
+	dotLineCount := 0
+	for _, l := range lines {
+		if strings.Contains(l, "●") && !strings.Contains(l, "(   ●   )") {
+			dotLineCount++
+		}
+	}
+	// Total rows: Home has GK, DEF, MID, FWD (4 rows). Away has FWD, MID, DEF, GK (4 rows). Total 8 dot lines!
+	if dotLineCount < 8 {
+		t.Errorf("expected at least 8 player dot lines across Home and Away teams, got %d", dotLineCount)
+	}
+}
+
+func TestRenderFullTacticalBoard_StackedAndNoEmoji(t *testing.T) {
+	match := model.Match{
+		ID:        "stacked-noemoji",
+		Venue:     "Santiago Bernabéu",
+		Referee:   "Clément Turpin",
+		HomeTeam:  model.Competitor{DisplayName: "Real Madrid"},
+		AwayTeam:  model.Competitor{DisplayName: "Barcelona"},
+		StartTime: time.Now(),
+		Lineups: &model.MatchLineups{
+			Home: model.TeamLineup{
+				Formation: "4-3-3",
+				Coach:     "Carlo Ancelotti",
+				Starters: []model.Player{
+					{Jersey: "1", DisplayName: "Courtois", Position: "GK"},
+					{Jersey: "2", DisplayName: "Carvajal", Position: "DF"},
+					{Jersey: "3", DisplayName: "Militão", Position: "DF"},
+					{Jersey: "22", DisplayName: "Rüdiger", Position: "DF"},
+					{Jersey: "23", DisplayName: "Mendy", Position: "DF"},
+					{Jersey: "8", DisplayName: "Valverde", Position: "MF"},
+					{Jersey: "14", DisplayName: "Tchouaméni", Position: "MF"},
+					{Jersey: "5", DisplayName: "Bellingham", Position: "MF"},
+					{Jersey: "11", DisplayName: "Rodrygo", Position: "FW"},
+					{Jersey: "9", DisplayName: "Mbappé", Position: "FW"},
+					{Jersey: "7", DisplayName: "Vinícius Jr", Position: "FW"},
+				},
+			},
+			Away: model.TeamLineup{
+				Formation: "4-3-3",
+				Coach:     "Hansi Flick",
+				Starters: []model.Player{
+					{Jersey: "1", DisplayName: "ter Stegen", Position: "GK"},
+					{Jersey: "2", DisplayName: "Cubarsí", Position: "DF"},
+					{Jersey: "3", DisplayName: "Balde", Position: "DF"},
+					{Jersey: "4", DisplayName: "Araújo", Position: "DF"},
+					{Jersey: "23", DisplayName: "Koundé", Position: "DF"},
+					{Jersey: "6", DisplayName: "Gavi", Position: "MF"},
+					{Jersey: "8", DisplayName: "Pedri", Position: "MF"},
+					{Jersey: "21", DisplayName: "de Jong", Position: "MF"},
+					{Jersey: "9", DisplayName: "Lewandowski", Position: "FW"},
+					{Jersey: "11", DisplayName: "Raphinha", Position: "FW"},
+					{Jersey: "19", DisplayName: "Yamal", Position: "FW"},
+				},
+			},
+		},
+	}
+
+	// Render in stacked layout (width = 80 < 96) and noEmoji = true
+	board := RenderFullTacticalBoard(match, 80, 50, true)
+
+	// In noEmoji mode, center circle must be (   o   )
+	if !strings.Contains(board, "(   o   )") {
+		t.Errorf("expected '(   o   )' in noEmoji mode, got:\n%s", board)
+	}
+
+	// In noEmoji mode, stadium and referee should use text labels
+	if !strings.Contains(board, "Estadio: Santiago Bernabéu") {
+		t.Errorf("expected 'Estadio:' label in noEmoji mode, got:\n%s", board)
+	}
+	if !strings.Contains(board, "Árbitro: Clément Turpin") {
+		t.Errorf("expected 'Árbitro:' label in noEmoji mode, got:\n%s", board)
+	}
+	if strings.Contains(board, "🏟️") || strings.Contains(board, "👤") {
+		t.Errorf("board in noEmoji mode must not contain raw emoji icons")
+	}
+
+	// Check coaches
+	if !strings.Contains(board, "DT: Carlo Ancelotti") || !strings.Contains(board, "DT: Hansi Flick") {
+		t.Errorf("expected coach names in stacked board, got:\n%s", board)
+	}
+}
+
+func TestRenderFullTacticalBoard_NilLineups(t *testing.T) {
+	match := model.Match{
+		ID:        "empty-lineups",
+		HomeTeam:  model.Competitor{DisplayName: "Chelsea"},
+		AwayTeam:  model.Competitor{DisplayName: "Arsenal"},
+		Lineups:   nil,
+		StartTime: time.Now(),
+	}
+
+	out := RenderFullTacticalBoard(match, 100, 30, false)
+	if !strings.Contains(out, "Alineaciones no disponibles aún para este encuentro.") {
+		t.Errorf("expected fallback notice for nil lineups, got:\n%s", out)
+	}
+	if !strings.Contains(out, "[ esc / c: Volver ]") {
+		t.Errorf("expected footer hint in nil lineups fallback, got:\n%s", out)
+	}
+}
+
