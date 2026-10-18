@@ -191,12 +191,13 @@ type Match struct {
 
 // Channel represents an HLS stream signal for a match.
 type Channel struct {
-	DisplayName string `json:"displayName"`
-	Name        string `json:"name"`
-	URL         string `json:"url"`
-	Resolution  string `json:"resolution"`  // "720p", "1080p"
-	BitrateMode string `json:"bitrateMode"` // "min", "max"
-	Recommended bool   `json:"recommended"`
+	DisplayName string            `json:"displayName"`
+	Name        string            `json:"name"`
+	URL         string            `json:"url"`
+	Resolution  string            `json:"resolution"`  // "720p", "1080p"
+	BitrateMode string            `json:"bitrateMode"` // "min", "max"
+	Recommended bool              `json:"recommended"`
+	Headers     map[string]string `json:"headers,omitempty"`
 }
 
 // UnmarshalJSON implements custom JSON unmarshaling for Channel to support

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -14,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/e12jassir/kickoff-cli/internal/extractor"
 	"github.com/e12jassir/kickoff-cli/internal/locale"
 	"github.com/e12jassir/kickoff-cli/internal/model"
 	"github.com/e12jassir/kickoff-cli/internal/parrilla"
@@ -58,25 +58,7 @@ type ExternalConfig struct {
 // SanitizeURL validates URL safety, enforcing http/https schemes, non-empty host,
 // and no embedded credentials (userinfo).
 func SanitizeURL(rawURL string) (string, error) {
-	if strings.TrimSpace(rawURL) == "" {
-		return "", model.ErrInvalidURL
-	}
-
-	parsed, err := url.Parse(rawURL)
-	if err != nil || parsed.Host == "" {
-		return "", fmt.Errorf("%w: %v", model.ErrInvalidURL, err)
-	}
-
-	scheme := strings.ToLower(parsed.Scheme)
-	if scheme != "http" && scheme != "https" {
-		return "", fmt.Errorf("%w: unsupported scheme %s", model.ErrInvalidURL, parsed.Scheme)
-	}
-
-	if parsed.User != nil {
-		return "", fmt.Errorf("%w: embedded credentials not allowed", model.ErrInvalidURL)
-	}
-
-	return parsed.String(), nil
+	return model.SanitizeURL(rawURL)
 }
 
 // Option configures Catalog resolver options.
@@ -131,6 +113,15 @@ func WithM3UChannels(channels []M3UChannel) Option {
 	}
 }
 
+// WithExtractor sets a custom dynamic match extractor.
+func WithExtractor(ext extractor.Extractor) Option {
+	return func(c *Catalog) {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		c.extractor = ext
+	}
+}
+
 // Catalog implements model.Resolver with dynamic broadcast matching, TV guide crawling,
 // and user-configured stream mapping.
 type Catalog struct {
@@ -142,6 +133,7 @@ type Catalog struct {
 	m3uChannels     []M3UChannel
 	configPath      string
 	tvGuide         *tvguide.Service
+	extractor       extractor.Extractor
 
 	// parrilla is the Gol Caracol daily schedule fetcher: the authoritative
 	// per-match source of which channel airs each fixture in Colombia (T1).
@@ -173,6 +165,7 @@ func New(opts ...Option) *Catalog {
 		tvGuide:         tvguide.NewService(),
 		parrillaFetcher: parrilla.NewGolCaracol(),
 		parrillaCache:   make(map[string]parrilla.Snapshot),
+		extractor:       extractor.NewService(),
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -197,6 +190,13 @@ func (c *Catalog) SetTVGuide(svc *tvguide.Service) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.tvGuide = svc
+}
+
+// SetExtractor sets a custom or updated extractor service.
+func (c *Catalog) SetExtractor(ext extractor.Extractor) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.extractor = ext
 }
 
 func NewResolver() model.Resolver {
@@ -792,6 +792,7 @@ func (c *Catalog) GetChannels(match model.Match) []model.Channel {
 	customRules := c.customRules
 	leagueOverrides := c.leagueOverrides
 	tvGuide := c.tvGuide
+	ext := c.extractor
 	c.mu.RUnlock()
 
 	// 1. Check user custom rules & overrides from ~/.config/kickoff/channels.json
@@ -835,18 +836,49 @@ func (c *Catalog) GetChannels(match model.Match) []model.Channel {
 	}
 
 	// 4. TV Guide Crawler resolution. A non-US broadcaster that ESPN already
-	// named and that we cannot play is the end of the line: there is no
-	// independent evidence to contradict it. US broadcasters remain the
-	// exception, because the Colombian TV guide is independent evidence that may
-	// still resolve a playable feed.
-	if len(match.Broadcasts) > 0 && !hasUSBroadcast(match.Broadcasts) {
-		return nil
+	// named and that we cannot play rules out the generic TV guide crawl.
+	if len(match.Broadcasts) == 0 || hasUSBroadcast(match.Broadcasts) {
+		if tvGuide != nil {
+			if target, found := tvGuide.ResolveMatch(match); found {
+				candidates := c.buildChannelsForTarget(target)
+				if len(candidates) > 0 {
+					return c.filterAndDeduplicate(candidates)
+				}
+			}
+		}
 	}
-	if tvGuide != nil {
-		if target, found := tvGuide.ResolveMatch(match); found {
-			candidates := c.buildChannelsForTarget(target)
-			if len(candidates) > 0 {
-				return c.filterAndDeduplicate(candidates)
+
+	// 5. NUEVO TIER (Tier 5: Dynamic Web Extractor Fallback)
+	// Si ningún tier previo resolvió canales reproducibles para el partido (o si es exclusivo
+	// de DirecTV/DSports o liga sin señal local), invocar c.extractor.ResolveMatchStreams.
+	if ext != nil {
+		if streams, err := ext.ResolveMatchStreams(context.Background(), match); err == nil && len(streams) > 0 {
+			var webChannels []model.Channel
+			for _, s := range streams {
+				if s.StreamURL == "" {
+					continue
+				}
+				cleanURL, err := SanitizeURL(s.StreamURL)
+				if err != nil {
+					continue
+				}
+				name := formatWebChannelName(s.ChannelName)
+				res := "1080p"
+				if s.Resolution != "" {
+					res = s.Resolution
+				}
+				webChannels = append(webChannels, model.Channel{
+					DisplayName: name,
+					Name:        name,
+					URL:         cleanURL,
+					Resolution:  res,
+					BitrateMode: "max",
+					Headers:     s.Headers,
+					Recommended: len(webChannels) == 0,
+				})
+			}
+			if len(webChannels) > 0 {
+				return webChannels
 			}
 		}
 	}
@@ -855,6 +887,21 @@ func (c *Catalog) GetChannels(match model.Match) []model.Channel {
 	// channel is strictly worse than none, because it sends the user to the wrong
 	// feed. Return an empty result.
 	return nil
+}
+
+func formatWebChannelName(raw string) string {
+	name := strings.TrimSpace(raw)
+	if name == "" {
+		name = "Stream"
+	}
+	if strings.HasPrefix(name, "[Web]") {
+		return name
+	}
+	upper := strings.ToUpper(name)
+	if !strings.Contains(upper, "HD") && !strings.Contains(upper, "4K") && !strings.Contains(upper, "720P") && !strings.Contains(upper, "1080P") {
+		return fmt.Sprintf("[Web] %s HD", name)
+	}
+	return fmt.Sprintf("[Web] %s", name)
 }
 
 // resolveFromParrilla resolves a match through the Gol Caracol daily parrilla.

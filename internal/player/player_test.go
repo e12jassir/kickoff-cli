@@ -110,6 +110,50 @@ func TestBuildArgs_ArgumentInjectionProtection(t *testing.T) {
 	}
 }
 
+func TestBuildArgs_WithHeaders(t *testing.T) {
+	req := model.PlayRequest{
+		Channel: model.Channel{
+			Name: "DSports HD",
+			URL:  "https://edge.invalid/live.m3u8",
+			Headers: map[string]string{
+				"Referer":    "https://portal.example.com/embed",
+				"User-Agent": "CustomUA/2.0",
+			},
+		},
+		Match: model.Match{
+			Title: "Real Madrid vs Barcelona",
+		},
+	}
+
+	args := BuildArgs(req, "/tmp/test.sock")
+	argStr := strings.Join(args, " ")
+
+	expectedReferer := "--http-header-fields=Referer: https://portal.example.com/embed"
+	if !strings.Contains(argStr, expectedReferer) {
+		t.Errorf("expected argument %q not found in args: %s", expectedReferer, argStr)
+	}
+
+	expectedUA := "--user-agent=CustomUA/2.0"
+	if !strings.Contains(argStr, expectedUA) {
+		t.Errorf("expected argument %q not found in args: %s", expectedUA, argStr)
+	}
+
+	if strings.Contains(argStr, "--user-agent=Mozilla/5.0") {
+		t.Errorf("generic user-agent should have been replaced, but found in args: %s", argStr)
+	}
+
+	// Threat matrix verification: '--' must directly precede cleanURL
+	if len(args) < 2 {
+		t.Fatalf("BuildArgs returned too few arguments: %v", args)
+	}
+	if args[len(args)-2] != "--" {
+		t.Errorf("BuildArgs expected '--' delimiter before URL, got %q", args[len(args)-2])
+	}
+	if args[len(args)-1] != "https://edge.invalid/live.m3u8" {
+		t.Errorf("BuildArgs expected URL as final argument, got %q", args[len(args)-1])
+	}
+}
+
 func TestQueryVoConfigured_MockSocket(t *testing.T) {
 	tests := []struct {
 		name       string

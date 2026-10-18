@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/e12jassir/kickoff-cli/internal/extractor"
 	"github.com/e12jassir/kickoff-cli/internal/locale"
 	"github.com/e12jassir/kickoff-cli/internal/model"
 	"github.com/e12jassir/kickoff-cli/internal/parrilla"
@@ -51,6 +52,7 @@ func newTestCatalog(opts ...Option) *Catalog {
 		WithConfigFile(filepath.Join(os.TempDir(), "nonexistent_kickoff_channels.json")),
 		WithStreams(mockTestStreams),
 		WithParrilla(offlineParrilla{}),
+		WithExtractor(nil),
 	}, opts...)
 	return New(allOpts...)
 }
@@ -1155,3 +1157,200 @@ func TestCatalog_ParrillaPrecedence(t *testing.T) {
 		}
 	})
 }
+
+type mockExtractor struct {
+	mu          sync.Mutex
+	calls       int
+	resolveFunc func(ctx context.Context, match model.Match) ([]extractor.ExtractedStream, error)
+}
+
+func (m *mockExtractor) FetchAgenda(ctx context.Context) ([]extractor.ExtractedEvent, error) {
+	return nil, nil
+}
+
+func (m *mockExtractor) ResolveStream(ctx context.Context, stream *extractor.ExtractedStream) error {
+	return nil
+}
+
+func (m *mockExtractor) ProbeStream(ctx context.Context, stream *extractor.ExtractedStream) bool {
+	return true
+}
+
+func (m *mockExtractor) MatchEvent(match model.Match, events []extractor.ExtractedEvent) (*extractor.ExtractedEvent, int) {
+	return nil, 0
+}
+
+func (m *mockExtractor) ResolveMatchStreams(ctx context.Context, match model.Match) ([]extractor.ExtractedStream, error) {
+	m.mu.Lock()
+	m.calls++
+	m.mu.Unlock()
+	if m.resolveFunc != nil {
+		return m.resolveFunc(ctx, match)
+	}
+	return nil, nil
+}
+
+func (m *mockExtractor) callCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.calls
+}
+
+func TestCatalog_Tier5_DynamicExtractor(t *testing.T) {
+	t.Run("activates when no higher tier resolves channels", func(t *testing.T) {
+		mock := &mockExtractor{
+			resolveFunc: func(ctx context.Context, match model.Match) ([]extractor.ExtractedStream, error) {
+				return []extractor.ExtractedStream{
+					{
+						ChannelName: "DSports",
+						StreamURL:   "https://edge.invalid/live/dsports.m3u8",
+						Resolution:  "1080p",
+						Alive:       true,
+						Headers: map[string]string{
+							"Referer":    "https://portal.invalid/live",
+							"User-Agent": "Mozilla/5.0 (CustomUA)",
+						},
+					},
+				}, nil
+			},
+		}
+
+		// Catalog without dsports in userStreams so Tier 2 cannot resolve it
+		cat := New(
+			WithConfigFile(filepath.Join(os.TempDir(), "nonexistent_kickoff_channels.json")),
+			WithStreams(map[string]string{}),
+			WithParrilla(offlineParrilla{}),
+			WithExtractor(mock),
+		)
+
+		// Match with DSports broadcast (unconfigured locally, e.g. DirecTV exclusive)
+		match := model.Match{
+			Title:      "Real Madrid vs Barcelona",
+			LeagueKey:  "laliga",
+			Broadcasts: []string{"DSports"},
+		}
+
+		chs := cat.GetChannels(match)
+		if got := mock.callCount(); got != 1 {
+			t.Fatalf("expected extractor to be called once, got %d", got)
+		}
+
+		if len(chs) != 1 {
+			t.Fatalf("expected 1 channel from Tier 5 extractor, got %d", len(chs))
+		}
+
+		ch := chs[0]
+		if ch.Name != "[Web] DSports HD" {
+			t.Errorf("expected channel name '[Web] DSports HD', got %q", ch.Name)
+		}
+		if ch.DisplayName != "[Web] DSports HD" {
+			t.Errorf("expected display name '[Web] DSports HD', got %q", ch.DisplayName)
+		}
+		if ch.URL != "https://edge.invalid/live/dsports.m3u8" {
+			t.Errorf("expected URL 'https://edge.invalid/live/dsports.m3u8', got %q", ch.URL)
+		}
+		if ch.BitrateMode != "max" {
+			t.Errorf("expected BitrateMode 'max', got %q", ch.BitrateMode)
+		}
+		if ch.Resolution != "1080p" {
+			t.Errorf("expected Resolution '1080p', got %q", ch.Resolution)
+		}
+		if !ch.Recommended {
+			t.Errorf("expected first channel to be recommended")
+		}
+		if ch.Headers == nil || ch.Headers["Referer"] != "https://portal.invalid/live" {
+			t.Errorf("expected Referer header preserved, got %+v", ch.Headers)
+		}
+		if ch.Headers["User-Agent"] != "Mozilla/5.0 (CustomUA)" {
+			t.Errorf("expected User-Agent header preserved, got %+v", ch.Headers)
+		}
+	})
+
+	t.Run("does not activate when higher tiers resolve channels", func(t *testing.T) {
+		mock := &mockExtractor{
+			resolveFunc: func(ctx context.Context, match model.Match) ([]extractor.ExtractedStream, error) {
+				t.Fatal("extractor should not be called when official tier resolves")
+				return nil, nil
+			},
+		}
+
+		cat := newTestCatalog(WithExtractor(mock))
+
+		// Tier 2: ESPN 4 is configured in mockTestStreams
+		match := model.Match{
+			Title:      "Arsenal vs Chelsea",
+			LeagueKey:  "premier",
+			Broadcasts: []string{"ESPN 4"},
+		}
+
+		chs := cat.GetChannels(match)
+		if len(chs) == 0 {
+			t.Fatalf("expected channels from Tier 2")
+		}
+		if got := mock.callCount(); got != 0 {
+			t.Fatalf("expected extractor callCount 0, got %d", got)
+		}
+	})
+
+	t.Run("handles multiple streams with correct ordering and recommendations", func(t *testing.T) {
+		mock := &mockExtractor{
+			resolveFunc: func(ctx context.Context, match model.Match) ([]extractor.ExtractedStream, error) {
+				return []extractor.ExtractedStream{
+					{
+						ChannelName: "DSports",
+						StreamURL:   "https://edge.invalid/live/dsports1.m3u8",
+						Resolution:  "1080p",
+						Alive:       true,
+					},
+					{
+						ChannelName: "DSports 2",
+						StreamURL:   "https://edge.invalid/live/dsports2.m3u8",
+						Resolution:  "1080p",
+						Alive:       true,
+					},
+				}, nil
+			},
+		}
+
+		cat := newTestCatalog(WithExtractor(mock))
+		match := model.Match{
+			Title:     "Boca Juniors vs River Plate",
+			LeagueKey: "argentina",
+		}
+
+		chs := cat.GetChannels(match)
+		if len(chs) != 2 {
+			t.Fatalf("expected 2 channels, got %d", len(chs))
+		}
+
+		if chs[0].Name != "[Web] DSports HD" || !chs[0].Recommended {
+			t.Errorf("expected first channel '[Web] DSports HD' recommended=true, got name=%q rec=%v", chs[0].Name, chs[0].Recommended)
+		}
+		if chs[1].Name != "[Web] DSports 2 HD" || chs[1].Recommended {
+			t.Errorf("expected second channel '[Web] DSports 2 HD' recommended=false, got name=%q rec=%v", chs[1].Name, chs[1].Recommended)
+		}
+	})
+
+	t.Run("returns nil gracefully on extractor error or empty streams", func(t *testing.T) {
+		mock := &mockExtractor{
+			resolveFunc: func(ctx context.Context, match model.Match) ([]extractor.ExtractedStream, error) {
+				return nil, errors.New("upstream timeout")
+			},
+		}
+
+		cat := newTestCatalog(WithExtractor(mock))
+		match := model.Match{
+			Title:     "Unknown Match",
+			LeagueKey: "unknown",
+		}
+
+		chs := cat.GetChannels(match)
+		if len(chs) != 0 {
+			t.Fatalf("expected nil or empty channels on extractor error, got %+v", chs)
+		}
+		if got := mock.callCount(); got != 1 {
+			t.Fatalf("expected extractor callCount 1, got %d", got)
+		}
+	})
+}
+

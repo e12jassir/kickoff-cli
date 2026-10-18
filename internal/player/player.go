@@ -134,6 +134,19 @@ func BuildArgs(req model.PlayRequest, sockPath string) []string {
 
 	title := fmt.Sprintf("kickoff: %s (%s)", req.Match.Title, req.Channel.Name)
 
+	userAgent := "Mozilla/5.0"
+	var referer string
+	if req.Channel.Headers != nil {
+		for k, v := range req.Channel.Headers {
+			if strings.EqualFold(k, "User-Agent") && v != "" {
+				userAgent = v
+			}
+			if strings.EqualFold(k, "Referer") && v != "" {
+				referer = v
+			}
+		}
+	}
+
 	args := []string{
 		"--fs",
 		"--force-window=immediate",
@@ -142,13 +155,16 @@ func BuildArgs(req model.PlayRequest, sockPath string) []string {
 		"--no-input-terminal",
 		"--really-quiet",
 		"--no-ytdl",
-		"--user-agent=Mozilla/5.0",
+		fmt.Sprintf("--user-agent=%s", userAgent),
 		fmt.Sprintf("--title=%s", title),
 		"--cache=yes",
 		"--demuxer-max-bytes=40M",
 		"--demuxer-readahead-secs=5",
 		fmt.Sprintf("--hls-bitrate=%s", bitrate),
 		"--network-timeout=20",
+	}
+	if referer != "" {
+		args = append(args, fmt.Sprintf("--http-header-fields=Referer: %s", referer))
 	}
 	if sockPath != "" {
 		args = append(args, fmt.Sprintf("--input-ipc-server=%s", sockPath))

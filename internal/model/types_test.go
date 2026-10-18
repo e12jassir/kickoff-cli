@@ -3,6 +3,7 @@ package model_test
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"testing"
 
 	"github.com/e12jassir/kickoff-cli/internal/model"
@@ -102,6 +103,26 @@ func TestChannel_UnmarshalJSON(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "headers map preserved",
+			input: `{
+				"name": "Stream with Headers",
+				"url": "https://example.com/test.m3u8",
+				"headers": {
+					"Referer": "https://example.com",
+					"User-Agent": "Custom-UA"
+				}
+			}`,
+			expected: model.Channel{
+				Name: "Stream with Headers",
+				URL:  "https://example.com/test.m3u8",
+				Headers: map[string]string{
+					"Referer":    "https://example.com",
+					"User-Agent": "Custom-UA",
+				},
+			},
+			wantErr: false,
+		},
+		{
 			name:    "invalid JSON payload",
 			input:   `{invalid_json}`,
 			wantErr: true,
@@ -118,7 +139,7 @@ func TestChannel_UnmarshalJSON(t *testing.T) {
 			if tt.wantErr {
 				return
 			}
-			if ch != tt.expected {
+			if !reflect.DeepEqual(ch, tt.expected) {
 				t.Errorf("UnmarshalJSON() = %+v, want %+v", ch, tt.expected)
 			}
 		})
