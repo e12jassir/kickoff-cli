@@ -90,14 +90,30 @@ if [ -n "$SPECIFIED_VERSION" ]; then
     "https://github.com/${REPO}/releases/download/${TAG}/kickoff_${CLEAN_VER}_macos_${ARCH}.tar.gz"
   )
 else
-  PRIMARY_URL="https://github.com/${REPO}/releases/latest/download/kickoff_${OS}_${ARCH}.tar.gz"
-  echo "Installing kickoff-cli (latest) for ${OS}/${ARCH}..."
-  CANDIDATE_URLS=(
-    "$PRIMARY_URL"
-    "https://github.com/${REPO}/releases/latest/download/kickoff_macos_${ARCH}.tar.gz"
-    "https://github.com/${REPO}/releases/latest/download/kickoff_0.1.2_${OS}_${ARCH}.tar.gz"
-    "https://github.com/${REPO}/releases/latest/download/kickoff_0.1.2_macos_${ARCH}.tar.gz"
-  )
+  LATEST_TAG=""
+  if command -v curl >/dev/null 2>&1; then
+    LATEST_TAG="$(curl -fsSL -H "User-Agent: kickoff-cli-installer" "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null | grep -o '"tag_name": *"[^"]*"' | head -n1 | cut -d'"' -f4)"
+  fi
+
+  if [ -n "$LATEST_TAG" ]; then
+    CLEAN_VER="${LATEST_TAG#v}"
+    echo "Installing kickoff-cli latest (${LATEST_TAG}) for ${OS}/${ARCH}..."
+    CANDIDATE_URLS=(
+      "https://github.com/${REPO}/releases/download/${LATEST_TAG}/kickoff_${CLEAN_VER}_${OS}_${ARCH}.tar.gz"
+      "https://github.com/${REPO}/releases/download/${LATEST_TAG}/kickoff_${OS}_${ARCH}.tar.gz"
+      "https://github.com/${REPO}/releases/download/${LATEST_TAG}/kickoff_${CLEAN_VER}_macos_${ARCH}.tar.gz"
+      "https://github.com/${REPO}/releases/download/${LATEST_TAG}/kickoff_macos_${ARCH}.tar.gz"
+      "https://github.com/${REPO}/releases/latest/download/kickoff_${CLEAN_VER}_${OS}_${ARCH}.tar.gz"
+      "https://github.com/${REPO}/releases/latest/download/kickoff_${OS}_${ARCH}.tar.gz"
+    )
+  else
+    PRIMARY_URL="https://github.com/${REPO}/releases/latest/download/kickoff_${OS}_${ARCH}.tar.gz"
+    echo "Installing kickoff-cli (latest) for ${OS}/${ARCH}..."
+    CANDIDATE_URLS=(
+      "$PRIMARY_URL"
+      "https://github.com/${REPO}/releases/latest/download/kickoff_macos_${ARCH}.tar.gz"
+    )
+  fi
 fi
 
 TEMP_DIR="$(mktemp -d)"
