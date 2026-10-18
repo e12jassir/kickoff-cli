@@ -704,13 +704,13 @@ func TestModel_Match_Events_And_Stats_Modal(t *testing.T) {
 	if !strings.Contains(viewTab0, "R. Lewandowski") || !strings.Contains(viewTab0, "38'") {
 		t.Errorf("expected view to contain goal scorer Lewandowski 38'")
 	}
-	if !strings.Contains(viewTab0, "Gavi") || !strings.Contains(viewTab0, "[A]") {
+	if !strings.Contains(viewTab0, "Gavi") || (!strings.Contains(viewTab0, "[A]") && !strings.Contains(viewTab0, "🟨")) {
 		t.Errorf("expected view to contain yellow card for Gavi")
 	}
 	if !strings.Contains(viewTab0, "Vinicius Jr") || !strings.Contains(viewTab0, "(pen.)") {
 		t.Errorf("expected view to contain penalty goal for Vinicius Jr")
 	}
-	if !strings.Contains(viewTab0, "Rüdiger") || !strings.Contains(viewTab0, "[R]") {
+	if !strings.Contains(viewTab0, "Rüdiger") || (!strings.Contains(viewTab0, "[R]") && !strings.Contains(viewTab0, "🟥")) {
 		t.Errorf("expected view to contain red card for Rüdiger")
 	}
 
@@ -2301,7 +2301,7 @@ func newBrowsingModel(cat model.Resolver) Model {
 	return m
 }
 
-func TestModel_PlayabilityGatedVisibility_FiltersUnplayableActiveMatch(t *testing.T) {
+func TestModel_ActiveFixtures_RetainedInMatchList(t *testing.T) {
 	cat := &fakePlayabilityResolver{playable: false, hasConfigured: true}
 	m := newBrowsingModel(cat)
 
@@ -2309,34 +2309,28 @@ func TestModel_PlayabilityGatedVisibility_FiltersUnplayableActiveMatch(t *testin
 		leagueKey: m.CurrentLeague().Key,
 		matches: []model.Match{
 			{
-				ID:        "hidden-1",
-				Title:     "Hidden FC vs Nowhere United",
-				HomeTeam:  model.Competitor{DisplayName: "Hidden FC"},
-				AwayTeam:  model.Competitor{DisplayName: "Nowhere United"},
-				Status:    model.MatchStatus{State: "in", Description: "1T 10'"},
+				ID:        "fixture-1",
+				Title:     "Fixture FC vs Scheduled United",
+				HomeTeam:  model.Competitor{DisplayName: "Fixture FC"},
+				AwayTeam:  model.Competitor{DisplayName: "Scheduled United"},
+				Status:    model.MatchStatus{State: "pre", Description: "Por jugar"},
 				LeagueKey: m.CurrentLeague().Key,
 			},
 		},
 	})
 	m = newM.(Model)
 
-	// (a) The fixture is filtered out of the active list entirely.
-	if len(m.matches) != 0 {
-		t.Fatalf("expected unplayable active match to be filtered out, got %d active matches", len(m.matches))
-	}
-	if cat.playableCalls != 1 {
-		t.Errorf("expected HasPlayableSource to be consulted once, got %d", cat.playableCalls)
+	// Scheduled and in-game fixtures must stay in the active matches list
+	// so users can track fixtures, and dynamic stream resolution happens on demand.
+	if len(m.matches) != 1 || m.matches[0].ID != "fixture-1" {
+		t.Fatalf("expected fixture to be retained in active matches, got %d matches", len(m.matches))
 	}
 
-	// It must be neither listed as a match nor mentioned as a channel-less match.
 	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m = newM.(Model)
 	view := m.View()
-	if strings.Contains(view, "Hidden FC") || strings.Contains(view, "Nowhere United") {
-		t.Errorf("filtered match must not be rendered anywhere, got:\n%s", view)
-	}
-	if !strings.Contains(view, "No hay próximos partidos programados") {
-		t.Errorf("expected empty upcoming list when the only match is unplayable, got:\n%s", view)
+	if !strings.Contains(view, "Fixture FC") || !strings.Contains(view, "Scheduled United") {
+		t.Errorf("fixture must be rendered in matches tab, got:\n%s", view)
 	}
 }
 

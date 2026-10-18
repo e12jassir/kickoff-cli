@@ -816,7 +816,7 @@ func renderChannelModal(match model.Match, channels []model.Channel, selectedIdx
 	case 0:
 		// Tab 0: Resumen
 		if len(match.Events) > 0 {
-			tlStr := renderTimeline(match.Events, match.HomeTeam.ID, modalContentWidth)
+			tlStr := renderTimeline(match.Events, match.HomeTeam.ID, modalContentWidth, noEmoji)
 			modal.WriteString(tlStr)
 			modal.WriteString("\n")
 		}
@@ -827,7 +827,10 @@ func renderChannelModal(match model.Match, channels []model.Channel, selectedIdx
 			finishedBadge := lipgloss.NewStyle().Width(modalContentWidth).Align(lipgloss.Center).Foreground(ColorMuted).Render("[ Transmisión finalizada • No hay señales activas ]")
 			modal.WriteString(finishedBadge + "\n")
 		} else if len(channels) == 0 {
-			emptyNoticeText := "[ Sin señales activas • Configura tus canales en ~/.config/kickoff/channels.json ]"
+			emptyNoticeText := "[ Sin señales activas • La transmisión inicia cerca al partido ]"
+			if strings.ToLower(match.Status.State) == "in" {
+				emptyNoticeText = "[ Sin señales activas • No hay transmisión disponible en este momento ]"
+			}
 			emptyNotice := lipgloss.NewStyle().Width(modalContentWidth).Align(lipgloss.Center).Foreground(ColorMuted).Render(emptyNoticeText)
 			modal.WriteString(emptyNotice + "\n")
 		} else {
@@ -1161,9 +1164,14 @@ func renderStatRow(leftVal, label, rightVal string) string {
 	return fmt.Sprintf("%s%s%s", leftStyle.Render(leftVal), labelStyle.Render(label), rightStyle.Render(rightVal))
 }
 
-func renderTimeline(events []model.MatchEvent, homeTeamID string, modalContentWidth int) string {
+func renderTimeline(events []model.MatchEvent, homeTeamID string, modalContentWidth int, noEmoji ...bool) string {
 	if len(events) == 0 {
 		return ""
+	}
+
+	disableEmoji := false
+	if len(noEmoji) > 0 && noEmoji[0] {
+		disableEmoji = true
 	}
 
 	sortedEvents := make([]model.MatchEvent, len(events))
@@ -1237,11 +1245,21 @@ func renderTimeline(events []model.MatchEvent, homeTeamID string, modalContentWi
 		}
 		clkFmt := formatClock5(clockBadge)
 
-		icon := "[G]"
-		if ev.IsRedCard {
-			icon = "[R]"
-		} else if ev.IsYellow {
-			icon = "[A]"
+		var icon string
+		if disableEmoji {
+			icon = lipgloss.NewStyle().Foreground(ColorSuccess).Render("[G]")
+			if ev.IsRedCard {
+				icon = lipgloss.NewStyle().Foreground(ColorError).Render("[R]")
+			} else if ev.IsYellow {
+				icon = lipgloss.NewStyle().Foreground(ColorAccent).Render("[A]")
+			}
+		} else {
+			icon = "⚽"
+			if ev.IsRedCard {
+				icon = "🟥"
+			} else if ev.IsYellow {
+				icon = "🟨"
+			}
 		}
 
 		pName := strings.TrimSpace(ev.PlayerName)

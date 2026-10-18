@@ -369,9 +369,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 
-				// Visibility rule: a fixture aired only on channels the user cannot
-				// play is not shown at all. *catalog.Catalog implements the narrow
-				// playabilityResolver; other resolvers (and test fakes) opt out.
+				// Fixtures stay visible so users can track fixtures, schedules, and scores.
+				// Dynamic extractors and live channels resolve when playback is requested.
 				resolver, canFilter := m.catalog.(playabilityResolver)
 				m.noStreamsConfigured = canFilter && !resolver.HasConfiguredStreams()
 
@@ -384,9 +383,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						// Completed fixtures are history: they stay in Resumen
 						// regardless, and GetChannels never emits a live source for them.
 						pastMatches = append(pastMatches, match)
-						continue
-					}
-					if canFilter && !resolver.HasPlayableSource(match) {
 						continue
 					}
 					activeMatches = append(activeMatches, match)

@@ -1111,10 +1111,10 @@ func (c *Client) fetchUpcomingScoreboardEvents(ctx context.Context, leagueCode s
 		events    []rawEvent
 	}
 
-	resChan := make(chan probeRes, 14)
+	resChan := make(chan probeRes, 15)
 	var wg sync.WaitGroup
 
-	for d := 1; d <= 14; d++ {
+	for d := 0; d <= 14; d++ {
 		wg.Add(1)
 		go func(offset int) {
 			defer wg.Done()
