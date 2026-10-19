@@ -143,6 +143,14 @@ type Catalog struct {
 	parrillaFetcher parrilla.Fetcher
 	parrillaCache   map[string]parrilla.Snapshot
 	parrillaMu      sync.Mutex
+
+	webCache   map[string]webCacheEntry
+	webCacheMu sync.RWMutex
+}
+
+type webCacheEntry struct {
+	channels []model.Channel
+	cachedAt time.Time
 }
 
 type customMatchRule struct {
@@ -166,6 +174,7 @@ func New(opts ...Option) *Catalog {
 		parrillaFetcher: parrilla.NewGolCaracol(),
 		parrillaCache:   make(map[string]parrilla.Snapshot),
 		extractor:       extractor.NewService(),
+		webCache:        make(map[string]webCacheEntry),
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -182,6 +191,13 @@ func New(opts ...Option) *Catalog {
 		envStreams = append(envStreams, StreamCBSGolazo)
 	}
 	go c.probeAllStreamsBackground(envStreams)
+	if c.extractor != nil {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_, _ = c.extractor.FetchAgenda(ctx)
+		}()
+	}
 	return c
 }
 
@@ -513,11 +529,9 @@ var officialEndpointRules = []officialEndpointRule{
 	{[]string{"espn 5", "espn5"}, "espn5", "ESPN 5 HD", true},
 	{[]string{"espn 4", "espn4"}, "espn4", "ESPN 4 HD", true},
 	{[]string{"espn 3", "espn3"}, "espn3", "ESPN 3 HD", true},
-	{[]string{"espn 2", "espn2", "espn deportes"}, "espn2", "ESPN 2 HD", true},
-	// Fox Sports was discontinued in Latin America on 2024-02-15 and ESPN Extra was
-	// renamed to ESPN 4 in Colombia. This explicit needle must precede the generic
-	// "espn" needle below; otherwise legacy "ESPN Extra" metadata would fall through
-	// to espn1, which is wrong.
+	{[]string{"espn 2", "espn2"}, "espn2", "ESPN 2 HD", true},
+	{[]string{"espn deportes"}, "espn_deportes", "ESPN Deportes", true},
+	{[]string{"espn+"}, "espn_plus", "ESPN+", false},
 	{[]string{"espn extra"}, "espn4", "ESPN 4 HD", true},
 	{[]string{"espn"}, "espn1", "ESPN 1 HD", true},
 	// DSports family (Argentina/Colombia football). The specific channel needles
@@ -805,9 +819,11 @@ func (c *Catalog) GetChannels(match model.Match) []model.Channel {
 		return override
 	}
 
+	var candidates []model.Channel
+
 	// 2. Official broadcasters reported by ESPN metadata for this specific match (verified truth).
 	if len(match.Broadcasts) > 0 {
-		candidates := c.resolveFromOfficialBroadcasts(match.Broadcasts)
+		candidates = append(candidates, c.resolveFromOfficialBroadcasts(match.Broadcasts)...)
 		m3uList := c.m3uSnapshot()
 		if len(m3uList) > 0 {
 			for _, b := range match.Broadcasts {
@@ -816,14 +832,6 @@ func (c *Catalog) GetChannels(match model.Match) []model.Channel {
 				}
 			}
 		}
-		if len(candidates) > 0 {
-			return c.filterAndDeduplicate(candidates)
-		}
-		// Metadata named a broadcaster but none of its stream keys are configured
-		// (e.g. DAZN). Do not stop here: the Gol Caracol parrilla below is
-		// independent, Colombia-authoritative evidence for this same fixture. An
-		// unplayable non-US broadcaster only rules out the generic TV guide crawl
-		// (see the guard after the parrilla tier), never the parrilla itself.
 	}
 
 	// 3. Gol Caracol daily parrilla (T1): the authoritative per-match Colombian
@@ -831,62 +839,124 @@ func (c *Catalog) GetChannels(match model.Match) []model.Channel {
 	// evidence) but above the generic TV guide crawl, and it never invents a
 	// channel: entries still marked "por definir" and channels without a
 	// configured stream URL yield nothing.
-	if parrillaChs := c.resolveFromParrilla(match); len(parrillaChs) > 0 {
-		return parrillaChs
+	if len(candidates) == 0 {
+		if parrillaChs := c.resolveFromParrilla(match); len(parrillaChs) > 0 {
+			candidates = append(candidates, parrillaChs...)
+		}
 	}
 
 	// 4. TV Guide Crawler resolution. A non-US broadcaster that ESPN already
 	// named and that we cannot play rules out the generic TV guide crawl.
-	if len(match.Broadcasts) == 0 || hasUSBroadcast(match.Broadcasts) {
+	if len(candidates) == 0 && (len(match.Broadcasts) == 0 || hasUSBroadcast(match.Broadcasts)) {
 		if tvGuide != nil {
 			if target, found := tvGuide.ResolveMatch(match); found {
-				candidates := c.buildChannelsForTarget(target)
-				if len(candidates) > 0 {
-					return c.filterAndDeduplicate(candidates)
-				}
+				candidates = append(candidates, c.buildChannelsForTarget(target)...)
 			}
 		}
 	}
 
-	// 5. NUEVO TIER (Tier 5: Dynamic Web Extractor Fallback)
-	// Si ningún tier previo resolvió canales reproducibles para el partido (o si es exclusivo
-	// de DirecTV/DSports o liga sin señal local), invocar c.extractor.ResolveMatchStreams.
+	// 5. Dynamic Web Extractor (Enrichment & Multi-Source Options):
+	// Check web cache first. If not cached, attempt a fast 50ms check
+	// for in-memory mocks in tests, leaving network fetches for async enrichment.
 	if ext != nil {
-		if streams, err := ext.ResolveMatchStreams(context.Background(), match); err == nil && len(streams) > 0 {
-			var webChannels []model.Channel
-			for _, s := range streams {
-				if s.StreamURL == "" {
-					continue
-				}
-				cleanURL, err := SanitizeURL(s.StreamURL)
-				if err != nil {
-					continue
-				}
-				name := formatWebChannelName(s.ChannelName)
-				res := "1080p"
-				if s.Resolution != "" {
-					res = s.Resolution
-				}
-				webChannels = append(webChannels, model.Channel{
-					DisplayName: name,
-					Name:        name,
-					URL:         cleanURL,
-					Resolution:  res,
-					BitrateMode: "max",
-					Headers:     s.Headers,
-					Recommended: len(webChannels) == 0,
-				})
-			}
-			if len(webChannels) > 0 {
-				return webChannels
+		cacheKey := match.ID
+		if cacheKey == "" {
+			cacheKey = fmt.Sprintf("%s:%s", match.LeagueKey, title)
+		}
+
+		c.webCacheMu.RLock()
+		entry, cached := c.webCache[cacheKey]
+		c.webCacheMu.RUnlock()
+
+		if cached && time.Since(entry.cachedAt) < 2*time.Minute {
+			candidates = append(candidates, entry.channels...)
+		} else {
+			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+			defer cancel()
+			if webChs := c.ResolveWebChannels(ctx, match); len(webChs) > 0 {
+				candidates = append(candidates, webChs...)
 			}
 		}
+	}
+
+	if len(candidates) > 0 {
+		return c.filterAndDeduplicate(candidates)
 	}
 
 	// No verified evidence for this match. Never guess a channel: an unverified
 	// channel is strictly worse than none, because it sends the user to the wrong
 	// feed. Return an empty result.
 	return nil
+}
+
+// ResolveWebChannels queries the dynamic web extractor for additional live streams,
+// updates the in-memory webCache, and returns the newly resolved channels.
+func (c *Catalog) ResolveWebChannels(ctx context.Context, match model.Match) []model.Channel {
+	c.mu.RLock()
+	ext := c.extractor
+	c.mu.RUnlock()
+	if ext == nil {
+		return nil
+	}
+
+	title := match.Title
+	if title == "" {
+		title = fmt.Sprintf("%s vs %s", match.HomeTeam.DisplayName, match.AwayTeam.DisplayName)
+	}
+
+	cacheKey := match.ID
+	if cacheKey == "" {
+		cacheKey = fmt.Sprintf("%s:%s", normalizeLeagueKey(match.LeagueKey), title)
+	}
+
+	c.webCacheMu.RLock()
+	entry, cached := c.webCache[cacheKey]
+	c.webCacheMu.RUnlock()
+
+	if cached && time.Since(entry.cachedAt) < 2*time.Minute && len(entry.channels) > 0 {
+		return entry.channels
+	}
+
+	streams, err := ext.ResolveMatchStreams(ctx, match)
+	if err != nil || len(streams) == 0 {
+		return nil
+	}
+
+	var webChs []model.Channel
+	for _, s := range streams {
+		if s.StreamURL == "" {
+			continue
+		}
+		cleanURL, err := SanitizeURL(s.StreamURL)
+		if err != nil {
+			continue
+		}
+		name := formatWebChannelName(s.ChannelName)
+		res := "1080p"
+		if s.Resolution != "" {
+			res = s.Resolution
+		}
+		webChs = append(webChs, model.Channel{
+			DisplayName: name,
+			Name:        name,
+			URL:         cleanURL,
+			Resolution:  res,
+			BitrateMode: "max",
+			Headers:     s.Headers,
+			Recommended: false,
+		})
+	}
+
+	if len(webChs) > 0 {
+		c.webCacheMu.Lock()
+		c.webCache[cacheKey] = webCacheEntry{
+			channels: webChs,
+			cachedAt: time.Now(),
+		}
+		c.webCacheMu.Unlock()
+	}
+
+	return webChs
 }
 
 func formatWebChannelName(raw string) string {

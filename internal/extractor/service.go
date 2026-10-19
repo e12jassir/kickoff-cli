@@ -2,10 +2,13 @@ package extractor
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"html"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"sync"
@@ -18,7 +21,7 @@ import (
 
 const (
 	defaultHTTPTimeout = 8 * time.Second
-	defaultUserAgent   = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+	defaultUserAgent   = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 )
 
 var (
@@ -33,8 +36,10 @@ var (
 
 // DefaultKnownDomains contains active mirror domains known to publish live match agendas.
 var DefaultKnownDomains = []string{
+	"https://agenda18.com/agenda.json",
+	"https://pelotalibretv.net",
+	"https://futbol-librehd.com",
 	"https://librefutboltv.com",
-	"https://pelotalibre.org",
 	"https://futbollibre.lol",
 }
 
@@ -166,6 +171,12 @@ func (s *Service) fetchAgendaFromDomain(ctx context.Context, baseDomain string) 
 	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20)) // 8MB limit
 	if err != nil {
 		return nil, fmt.Errorf("read body: %w", err)
+	}
+
+	contentType := strings.ToLower(resp.Header.Get("Content-Type"))
+	cleanBase := strings.Split(baseDomain, "?")[0]
+	if strings.Contains(contentType, "application/json") || strings.HasSuffix(cleanBase, ".json") {
+		return ParseAgendaJSON(bodyBytes, baseDomain)
 	}
 
 	return ParseAgendaHTML(string(bodyBytes), baseDomain)
@@ -329,6 +340,9 @@ func splitTeams(raw string) (string, string) {
 }
 
 func cleanTeamName(name string) string {
+	if idx := strings.Index(name, ":"); idx != -1 {
+		name = strings.TrimSpace(name[idx+1:])
+	}
 	idx := strings.Index(name, "(")
 	if idx != -1 {
 		name = name[:idx]
@@ -338,6 +352,124 @@ func cleanTeamName(name string) string {
 		name = name[:idx]
 	}
 	return strings.TrimSpace(name)
+}
+
+type agenda18Response struct {
+	Data []struct {
+		Attributes struct {
+			DateDiary        string `json:"date_diary"`
+			DiaryHour        string `json:"diary_hour"`
+			DiaryDescription string `json:"diary_description"`
+			Embeds           struct {
+				Data []struct {
+					Attributes struct {
+						EmbedName   string `json:"embed_name"`
+						EmbedIframe string `json:"embed_iframe"`
+						Idioma      string `json:"idioma"`
+					} `json:"attributes"`
+				} `json:"data"`
+			} `json:"embeds"`
+		} `json:"attributes"`
+	} `json:"data"`
+}
+
+// ParseAgendaJSON parses structured JSON agenda feeds (e.g. agenda18.com / pelotalibre).
+func ParseAgendaJSON(data []byte, baseDomain string) ([]ExtractedEvent, error) {
+	var resp agenda18Response
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("extractor: parse json agenda: %w", err)
+	}
+
+	var events []ExtractedEvent
+	loc := locale.Location()
+	now := time.Now().In(loc)
+
+	for _, item := range resp.Data {
+		desc := strings.TrimSpace(item.Attributes.DiaryDescription)
+		if desc == "" {
+			continue
+		}
+
+		home, away := splitTeams(desc)
+		if home == "" || away == "" {
+			continue
+		}
+
+		timeStr := strings.TrimSpace(item.Attributes.DiaryHour)
+		startTime := now
+		if len(timeStr) >= 5 {
+			if t, err := time.ParseInLocation("15:04", timeStr[:5], loc); err == nil {
+				startTime = time.Date(now.Year(), now.Month(), now.Day(), t.Hour(), t.Minute(), 0, 0, loc)
+			}
+		}
+
+		var streams []ExtractedStream
+		for _, emb := range item.Attributes.Embeds.Data {
+			name := strings.TrimSpace(emb.Attributes.EmbedName)
+			if name == "" {
+				name = "Direct"
+			}
+			iframe := strings.TrimSpace(emb.Attributes.EmbedIframe)
+			if iframe == "" {
+				continue
+			}
+
+			playerURL := ""
+			// If iframe is an embed URL containing base64 param r:
+			// e.g. /embed/eventos.html?r=aHR0cHM6Ly9sYTE4aGQuc3U...
+			if idx := strings.Index(iframe, "r="); idx != -1 {
+				rVal := iframe[idx+2:]
+				if endIdx := strings.Index(rVal, "&"); endIdx != -1 {
+					rVal = rVal[:endIdx]
+				}
+				if decoded := decodeBase64URL(rVal); decoded != "" {
+					playerURL = decoded
+				}
+			}
+			if playerURL == "" {
+				playerURL = resolveURL(iframe, baseDomain)
+			}
+
+			streams = append(streams, ExtractedStream{
+				ChannelName: name,
+				PlayerURL:   playerURL,
+				Resolution:  "1080p",
+			})
+		}
+
+		events = append(events, ExtractedEvent{
+			HomeTeam:     home,
+			AwayTeam:     away,
+			RawTitle:     desc,
+			StartTime:    startTime,
+			TimeStr:      timeStr,
+			Streams:      streams,
+			SourceDomain: baseDomain,
+		})
+	}
+
+	return events, nil
+}
+
+func decodeBase64URL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if unescaped, err := url.QueryUnescape(raw); err == nil && unescaped != "" {
+		raw = unescaped
+	}
+	for _, enc := range []*base64.Encoding{
+		base64.StdEncoding,
+		base64.RawStdEncoding,
+		base64.URLEncoding,
+		base64.RawURLEncoding,
+	} {
+		if b, err := enc.DecodeString(raw); err == nil {
+			s := string(b)
+			if strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://") {
+				return s
+			}
+		}
+	}
+	return ""
 }
 
 // MatchEvent pairs an official ESPN match with the most accurate extracted event using tvguide's MatchScore algorithm.
@@ -378,7 +510,14 @@ func (s *Service) ResolveMatchStreams(ctx context.Context, match model.Match) ([
 		ctx = context.Background()
 	}
 
-	events, err := s.FetchAgenda(ctx)
+	resolveCtx := ctx
+	var cancel context.CancelFunc
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		resolveCtx, cancel = context.WithTimeout(ctx, 6*time.Second)
+		defer cancel()
+	}
+
+	events, err := s.FetchAgenda(resolveCtx)
 	if err != nil {
 		return nil, fmt.Errorf("extractor: fetch agenda: %w", err)
 	}
@@ -388,31 +527,51 @@ func (s *Service) ResolveMatchStreams(ctx context.Context, match model.Match) ([
 		return nil, nil
 	}
 
+	type indexedStream struct {
+		idx    int
+		stream ExtractedStream
+		ok     bool
+	}
+
+	results := make([]indexedStream, len(event.Streams))
+	var wg sync.WaitGroup
+
+	for i, st := range event.Streams {
+		wg.Add(1)
+		go func(idx int, target ExtractedStream) {
+			defer wg.Done()
+			select {
+			case <-resolveCtx.Done():
+				return
+			default:
+			}
+
+			if target.StreamURL == "" {
+				if target.PlayerURL == "" {
+					return
+				}
+				if err := s.ResolveStream(resolveCtx, &target); err != nil {
+					return
+				}
+			}
+
+			if !target.Alive {
+				if !s.ProbeStream(resolveCtx, &target) || !target.Alive {
+					return
+				}
+			}
+
+			results[idx] = indexedStream{idx: idx, stream: target, ok: true}
+		}(i, st)
+	}
+
+	wg.Wait()
+
 	var liveStreams []ExtractedStream
-	for _, st := range event.Streams {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
+	for _, res := range results {
+		if res.ok {
+			liveStreams = append(liveStreams, res.stream)
 		}
-
-		streamCopy := st
-		if streamCopy.StreamURL == "" {
-			if streamCopy.PlayerURL == "" {
-				continue
-			}
-			if err := s.ResolveStream(ctx, &streamCopy); err != nil {
-				continue
-			}
-		}
-
-		if !streamCopy.Alive {
-			if !s.ProbeStream(ctx, &streamCopy) || !streamCopy.Alive {
-				continue
-			}
-		}
-
-		liveStreams = append(liveStreams, streamCopy)
 	}
 
 	return liveStreams, nil

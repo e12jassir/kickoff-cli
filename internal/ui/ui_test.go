@@ -2157,8 +2157,9 @@ func TestModalDateFormatting(t *testing.T) {
 	m.width = 100
 	m.height = 35
 
-	// Future match on Oct 20
-	futureTime := time.Date(2026, time.October, 20, 14, 0, 0, 0, time.Local)
+	// Future match (+3 days)
+	now := time.Now()
+	futureTime := time.Date(now.Year(), now.Month(), now.Day()+3, 14, 0, 0, 0, time.Local)
 	matchFuture := model.Match{
 		ID:        "match-future",
 		Title:     "FC Porto vs PSV Eindhoven",
@@ -2181,14 +2182,14 @@ func TestModalDateFormatting(t *testing.T) {
 
 	// Must NOT contain "(Hoy)" for a future match!
 	if strings.Contains(view, "(Hoy)") {
-		t.Errorf("future match scheduled for Oct 20 must NOT contain '(Hoy)':\n%s", view)
+		t.Errorf("future match scheduled for future date must NOT contain '(Hoy)':\n%s", view)
 	}
-	if !strings.Contains(view, "20/10 • 14:00") {
-		t.Errorf("expected '20/10 • 14:00' in modal header for future match, got:\n%s", view)
+	expectedFutureHeader := fmt.Sprintf("%s • 14:00", futureTime.Format("02/01"))
+	if !strings.Contains(view, expectedFutureHeader) {
+		t.Errorf("expected '%s' in modal header for future match, got:\n%s", expectedFutureHeader, view)
 	}
 
 	// Today's match
-	now := time.Now()
 	todayTime := time.Date(now.Year(), now.Month(), now.Day(), 14, 0, 0, 0, time.Local)
 	matchToday := model.Match{
 		ID:        "match-today",
@@ -2470,5 +2471,77 @@ func TestModel_PlayabilityGatedVisibility_NonNarrowResolverNotFiltered(t *testin
 	}
 	if m.noStreamsConfigured {
 		t.Errorf("noStreamsConfigured must stay false when the resolver does not implement playabilityResolver")
+	}
+}
+
+type mockAsyncCatalog struct {
+	mockCatalog
+	webChannels []model.Channel
+}
+
+func (m *mockAsyncCatalog) ResolveWebChannels(ctx context.Context, match model.Match) []model.Channel {
+	return m.webChannels
+}
+
+func TestModel_AsyncWebChannelsEnrichment(t *testing.T) {
+	initialChs := []model.Channel{
+		{Name: "ESPN (1080p)", DisplayName: "ESPN", URL: "http://example.com/espn.m3u8", Recommended: true},
+	}
+	webChs := []model.Channel{
+		{Name: "[Web] ESPN Deportes HD", DisplayName: "[Web] ESPN Deportes HD", URL: "https://edge.invalid/espndeportes.m3u8"},
+		{Name: "[Web] Disney 07 HD", DisplayName: "[Web] Disney 07 HD", URL: "https://edge.invalid/disney7.m3u8"},
+	}
+
+	cat := &mockAsyncCatalog{
+		mockCatalog: mockCatalog{channels: initialChs},
+		webChannels: webChs,
+	}
+
+	m := newBrowsingModel(cat)
+	testMatch := model.Match{
+		ID:        "match-real-madrid",
+		Title:     "Real Madrid vs Sevilla",
+		HomeTeam:  model.Competitor{DisplayName: "Real Madrid"},
+		AwayTeam:  model.Competitor{DisplayName: "Sevilla"},
+		Status:    model.MatchStatus{State: "in", Description: "1T 25'"},
+		LeagueKey: m.CurrentLeague().Key,
+		Stats:     &model.MatchStats{},
+		Lineups:   &model.MatchLineups{},
+	}
+
+	newM, _ := m.Update(matchesLoadedMsg{
+		leagueKey: m.CurrentLeague().Key,
+		matches:   []model.Match{testMatch},
+	})
+	m = newM.(Model)
+	m.leagueTab = TabPartidos
+
+	// User presses Enter on match
+	newM, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newM.(Model)
+
+	if m.state != StateChannelSelect {
+		t.Fatalf("expected StateChannelSelect, got %d", m.state)
+	}
+	if len(m.channels) != 1 {
+		t.Fatalf("expected 1 initial channel before async load, got %d", len(m.channels))
+	}
+	if cmd == nil {
+		t.Fatalf("expected async fetch command, got nil")
+	}
+
+	// Deliver async message
+	msg := cmd()
+	newM, _ = m.Update(msg)
+	m = newM.(Model)
+
+	if len(m.channels) != 3 {
+		t.Fatalf("expected 3 channels after web enrichment, got %d", len(m.channels))
+	}
+	if m.channels[0].Name != "ESPN (1080p)" || !m.channels[0].Recommended {
+		t.Errorf("expected first channel to remain recommended, got %+v", m.channels[0])
+	}
+	if m.channels[1].Name != "[Web] ESPN Deportes HD" || m.channels[1].Recommended {
+		t.Errorf("expected second channel [Web] ESPN Deportes HD not recommended, got %+v", m.channels[1])
 	}
 }

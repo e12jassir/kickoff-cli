@@ -29,6 +29,7 @@ var mockTestStreams = map[string]string{
 	"espn5":          "http://example.invalid/espn5.m3u8",
 	"espn6":          "http://example.invalid/espn6.m3u8",
 	"espn7":          "http://example.invalid/espn7.m3u8",
+	"espn_deportes":  "http://example.invalid/espndeportes.m3u8",
 	"dsports":        "http://example.invalid/dsports.m3u8",
 	"dsports2":       "http://example.invalid/dsports2.m3u8",
 	"dsports4":       "http://example.invalid/dsports4.m3u8",
@@ -421,7 +422,7 @@ func TestCatalog_ESPNExtraRule(t *testing.T) {
 		{"ESPN Extra needle is case-insensitive", "espn extra", "ESPN 4 HD", "espn4.m3u8"},
 		{"bare ESPN still maps to ESPN 1", "ESPN", "ESPN 1 HD", "espn1.m3u8"},
 		{"ESPN 2 behaviour unchanged", "ESPN 2", "ESPN 2 HD", "espn2.m3u8"},
-		{"ESPN Deportes behaviour unchanged", "ESPN Deportes", "ESPN 2 HD", "espn2.m3u8"},
+		{"ESPN Deportes maps to distinct ESPN Deportes", "ESPN Deportes", "ESPN Deportes", "espndeportes.m3u8"},
 	}
 
 	for _, tt := range tests {
@@ -1266,11 +1267,17 @@ func TestCatalog_Tier5_DynamicExtractor(t *testing.T) {
 		}
 	})
 
-	t.Run("does not activate when higher tiers resolve channels", func(t *testing.T) {
+	t.Run("aggregates official channels and dynamic web streams together", func(t *testing.T) {
 		mock := &mockExtractor{
 			resolveFunc: func(ctx context.Context, match model.Match) ([]extractor.ExtractedStream, error) {
-				t.Fatal("extractor should not be called when official tier resolves")
-				return nil, nil
+				return []extractor.ExtractedStream{
+					{
+						ChannelName: "Direct",
+						StreamURL:   "https://edge.invalid/live/direct.m3u8",
+						Resolution:  "1080p",
+						Alive:       true,
+					},
+				}, nil
 			},
 		}
 
@@ -1284,11 +1291,11 @@ func TestCatalog_Tier5_DynamicExtractor(t *testing.T) {
 		}
 
 		chs := cat.GetChannels(match)
-		if len(chs) == 0 {
-			t.Fatalf("expected channels from Tier 2")
+		if len(chs) < 2 {
+			t.Fatalf("expected both official and web channels, got %d", len(chs))
 		}
-		if got := mock.callCount(); got != 0 {
-			t.Fatalf("expected extractor callCount 0, got %d", got)
+		if got := mock.callCount(); got != 1 {
+			t.Fatalf("expected extractor callCount 1, got %d", got)
 		}
 	})
 

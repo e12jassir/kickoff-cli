@@ -55,6 +55,53 @@ func TestParseAgendaHTML(t *testing.T) {
 	}
 }
 
+func TestParseAgendaJSON(t *testing.T) {
+	sampleJSON := []byte(`{
+		"data": [
+			{
+				"attributes": {
+					"diary_description": "LaLiga: Real Madrid vs Sevilla",
+					"diary_hour": "14:00:00",
+					"embeds": {
+						"data": [
+							{
+								"attributes": {
+									"embed_name": "ESPN Deportes",
+									"embed_iframe": "/embed/eventos.html?r=aHR0cHM6Ly9sYTE4aGQuc3Uvdml2by9jYW5hbC5waHA/c3RyZWFtPWVzcG5kZXBvcnRlcw=="
+								}
+							}
+						]
+					}
+				}
+			}
+		]
+	}`)
+
+	events, err := ParseAgendaJSON(sampleJSON, "https://agenda18.com")
+	if err != nil {
+		t.Fatalf("ParseAgendaJSON failed: %v", err)
+	}
+
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+
+	ev := events[0]
+	if ev.HomeTeam != "Real Madrid" || ev.AwayTeam != "Sevilla" {
+		t.Errorf("expected Real Madrid vs Sevilla, got %s vs %s", ev.HomeTeam, ev.AwayTeam)
+	}
+	if len(ev.Streams) != 1 {
+		t.Fatalf("expected 1 stream, got %d", len(ev.Streams))
+	}
+	if ev.Streams[0].ChannelName != "ESPN Deportes" {
+		t.Errorf("expected ESPN Deportes, got %s", ev.Streams[0].ChannelName)
+	}
+	expectedPlayer := "https://la18hd.su/vivo/canal.php?stream=espndeportes"
+	if ev.Streams[0].PlayerURL != expectedPlayer {
+		t.Errorf("expected decoded player %s, got %s", expectedPlayer, ev.Streams[0].PlayerURL)
+	}
+}
+
 func TestMatchEventPairing(t *testing.T) {
 	s := NewService()
 

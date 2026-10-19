@@ -83,6 +83,30 @@ type statisticsLoadedMsg struct {
 	err        error
 }
 
+type webChannelsLoadedMsg struct {
+	matchID  string
+	channels []model.Channel
+}
+
+type webStreamsResolver interface {
+	ResolveWebChannels(ctx context.Context, match model.Match) []model.Channel
+}
+
+func fetchWebChannelsCmd(catalog model.Resolver, match model.Match) tea.Cmd {
+	return func() tea.Msg {
+		if res, ok := catalog.(webStreamsResolver); ok {
+			ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+			defer cancel()
+			chs := res.ResolveWebChannels(ctx, match)
+			return webChannelsLoadedMsg{
+				matchID:  match.ID,
+				channels: chs,
+			}
+		}
+		return webChannelsLoadedMsg{matchID: match.ID}
+	}
+}
+
 func pulseTickCmd() tea.Cmd {
 	return tea.Tick(800*time.Millisecond, func(t time.Time) tea.Msg {
 		return pulseTickMsg(t)
@@ -462,6 +486,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case webChannelsLoadedMsg:
+		if (m.state == StateChannelSelect || m.state == StatePlaying) && msg.matchID != "" && msg.matchID == m.selectedMatchID && len(msg.channels) > 0 {
+			seen := make(map[string]bool)
+			for _, ch := range m.channels {
+				seen[ch.URL] = true
+			}
+			for _, ch := range msg.channels {
+				if !seen[ch.URL] {
+					seen[ch.URL] = true
+					m.channels = append(m.channels, ch)
+				}
+			}
+			for i := range m.channels {
+				m.channels[i].Recommended = (i == 0)
+			}
+		}
+		return m, nil
+
 	case playbackStartedMsg:
 		if msg.playbackID == m.playbackID {
 			m.connecting = false
@@ -772,10 +814,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.channelCursor = 0
 						m.modalTab = 0
 						m.state = StateChannelSelect
+						var cmds []tea.Cmd
 						if (selectedMatch.Stats == nil || selectedMatch.Lineups == nil) && selectedMatch.ID != "" && !m.detailsLoaded[selectedMatch.ID] {
-							return m, fetchMatchStatsCmd(m.client, m.CurrentLeague().Key, selectedMatch.ID)
+							cmds = append(cmds, fetchMatchStatsCmd(m.client, m.CurrentLeague().Key, selectedMatch.ID))
 						}
-						return m, nil
+						if _, ok := m.catalog.(webStreamsResolver); ok {
+							cmds = append(cmds, fetchWebChannelsCmd(m.catalog, selectedMatch))
+						}
+						if len(cmds) == 0 {
+							return m, nil
+						}
+						if len(cmds) == 1 {
+							return m, cmds[0]
+						}
+						return m, tea.Batch(cmds...)
 					}
 				} else if m.leagueTab == TabPartidos {
 					if len(m.matches) > 0 && m.matchCursor < len(m.matches) {
@@ -785,10 +837,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.channelCursor = 0
 						m.modalTab = 0
 						m.state = StateChannelSelect
+						var cmds []tea.Cmd
 						if (selectedMatch.Stats == nil || selectedMatch.Lineups == nil) && selectedMatch.ID != "" && !m.detailsLoaded[selectedMatch.ID] {
-							return m, fetchMatchStatsCmd(m.client, m.CurrentLeague().Key, selectedMatch.ID)
+							cmds = append(cmds, fetchMatchStatsCmd(m.client, m.CurrentLeague().Key, selectedMatch.ID))
 						}
-						return m, nil
+						if _, ok := m.catalog.(webStreamsResolver); ok {
+							cmds = append(cmds, fetchWebChannelsCmd(m.catalog, selectedMatch))
+						}
+						if len(cmds) == 0 {
+							return m, nil
+						}
+						if len(cmds) == 1 {
+							return m, cmds[0]
+						}
+						return m, tea.Batch(cmds...)
 					}
 				}
 			case "esc", "backspace":

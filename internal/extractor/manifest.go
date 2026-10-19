@@ -28,7 +28,7 @@ var (
 )
 
 // DefaultProbeTimeout bounds the HLS header check.
-const DefaultProbeTimeout = 2000 * time.Millisecond
+const DefaultProbeTimeout = 1200 * time.Millisecond
 
 // ResolveManifest fetches the player page and extracts the underlying HLS manifest URL and needed headers.
 func (s *Service) ResolveManifest(ctx context.Context, stream *ExtractedStream) error {
