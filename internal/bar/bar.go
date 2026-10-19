@@ -138,6 +138,7 @@ var knownTeamCodes = map[string]string{
 	"monaco":              "ASM",
 	"juventus":            "JUV",
 	"inter milan":         "INT",
+	"inter de milan":      "INT",
 	"inter":               "INT",
 	"internazionale":      "INT",
 	"ac milan":            "MIL",

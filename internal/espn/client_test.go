@@ -1455,6 +1455,54 @@ func TestClient_ProbeFunctions_UseDoWithRetry(t *testing.T) {
 	}
 }
 
+func TestClient_FetchRecentPastScoreboardEvents_14DaysWindow(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		q := r.URL.RawQuery
+		// Today: 2026-10-19
+		// offset 5 = 2026-10-14 (Wed Champions match)
+		// offset 6 = 2026-10-13 (Tue Champions match)
+		// offset 12 = 2026-10-07 (Old matchday - should be excluded because 12 > 5 + 3)
+		if strings.Contains(q, "dates=20261014") {
+			fmt.Fprint(w, `{"events": [{"id": "ev-wed", "date": "2026-10-14T19:00Z", "competitions": []}]}`)
+			return
+		}
+		if strings.Contains(q, "dates=20261013") {
+			fmt.Fprint(w, `{"events": [{"id": "ev-tue", "date": "2026-10-13T19:00Z", "competitions": []}]}`)
+			return
+		}
+		if strings.Contains(q, "dates=20261007") {
+			fmt.Fprint(w, `{"events": [{"id": "ev-old", "date": "2026-10-07T19:00Z", "competitions": []}]}`)
+			return
+		}
+		fmt.Fprint(w, `{"events": []}`)
+	}))
+	defer server.Close()
+
+	client := NewClient(
+		WithBaseURL(server.URL),
+		WithCacheDir(t.TempDir()),
+		WithRetryBackoff(func() time.Duration { return 0 }),
+	)
+
+	now := time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)
+	events := client.fetchRecentPastScoreboardEvents(context.Background(), "uefa.champions", now)
+	if len(events) != 2 {
+		t.Fatalf("expected 2 past events (from 5 and 6 days ago), got %d", len(events))
+	}
+
+	ids := make(map[string]bool)
+	for _, ev := range events {
+		ids[ev.ID] = true
+	}
+	if !ids["ev-wed"] || !ids["ev-tue"] {
+		t.Errorf("expected ev-wed and ev-tue, got %+v", ids)
+	}
+	if ids["ev-old"] {
+		t.Errorf("expected old event (12 days ago) to be excluded from recent matchday, but it was included")
+	}
+}
+
 // roundTripFunc adapts a function into an http.RoundTripper so tests can
 // intercept requests without touching the network.
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -1594,3 +1642,29 @@ func TestClient_ScoreboardQueryParams_PreserveBroadcasts(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalizeTeamDisplayName(t *testing.T) {
+	cases := []struct {
+		input    string
+		expected string
+	}{
+		{"Internazionale", "Inter de Milán"},
+		{"internazionale", "Inter de Milán"},
+		{"FC Internazionale Milano", "Inter de Milán"},
+		{"Inter Milan", "Inter de Milán"},
+		{"AC Milan", "AC Milan"},
+		{"Real Madrid", "Real Madrid"},
+		{"", ""},
+	}
+	for _, tc := range cases {
+		got := normalizeTeamDisplayName(tc.input)
+		if got != tc.expected {
+			t.Errorf("normalizeTeamDisplayName(%q) = %q, expected %q", tc.input, got, tc.expected)
+		}
+	}
+}
+
+
+
+
+

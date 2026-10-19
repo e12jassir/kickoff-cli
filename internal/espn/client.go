@@ -593,6 +593,12 @@ func (c *Client) getCachedPastEvents(leagueKey string) ([]rawEvent, bool) {
 		ttl = defaultPastCacheTTL
 	}
 
+	// If empty events were cached (e.g. from a network timeout or transient error),
+	// allow retrying after 30 seconds rather than locking out for 6 hours.
+	if len(cached.Events) == 0 && c.now().Sub(cached.CachedAt) > 30*time.Second {
+		return nil, false
+	}
+
 	if c.now().Sub(cached.CachedAt) > ttl {
 		return nil, false
 	}
@@ -764,6 +770,7 @@ func (c *Client) FetchMatches(ctx context.Context, leagueKey string) ([]model.Ma
 			if dispName == "" {
 				dispName = "Unknown"
 			}
+			dispName = normalizeTeamDisplayName(dispName)
 
 			cModel := model.Competitor{
 				ID:          competitor.ID,
@@ -1009,6 +1016,19 @@ func (c *Client) FetchMatches(ctx context.Context, leagueKey string) ([]model.Ma
 
 	if len(matches) == 0 && len(allParsedMatches) > 0 {
 		matches = allParsedMatches
+	} else if len(matches) > 0 {
+		// Include completed past matches so Tab 1 (Resumen) displays previous matchday results
+		// even when today has scheduled or live matches in Tab 2 (Partidos).
+		seenMatchIDs := make(map[string]bool, len(matches))
+		for _, m := range matches {
+			seenMatchIDs[m.ID] = true
+		}
+		for _, m := range allParsedMatches {
+			if (m.Status.Completed || strings.ToLower(m.Status.State) == "post") && !seenMatchIDs[m.ID] {
+				seenMatchIDs[m.ID] = true
+				matches = append(matches, m)
+			}
+		}
 	}
 
 	sort.Slice(matches, func(i, j int) bool {
@@ -1034,9 +1054,9 @@ func (c *Client) FetchMatches(ctx context.Context, leagueKey string) ([]model.Ma
 	return matches, nil
 }
 
-// fetchRecentPastScoreboardEvents probes dates 1-4 days into the past to capture the full recent matchday round.
+// fetchRecentPastScoreboardEvents probes dates 1-14 days into the past to capture the full recent matchday round.
 func (c *Client) fetchRecentPastScoreboardEvents(ctx context.Context, leagueCode string, now time.Time) []rawEvent {
-	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	probeCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 
 	type probeRes struct {
@@ -1044,10 +1064,10 @@ func (c *Client) fetchRecentPastScoreboardEvents(ctx context.Context, leagueCode
 		events    []rawEvent
 	}
 
-	resChan := make(chan probeRes, 4)
+	resChan := make(chan probeRes, 14)
 	var wg sync.WaitGroup
 
-	for d := 1; d <= 4; d++ {
+	for d := 1; d <= 14; d++ {
 		wg.Add(1)
 		go func(offset int) {
 			defer wg.Done()
@@ -1094,16 +1114,32 @@ func (c *Client) fetchRecentPastScoreboardEvents(ctx context.Context, leagueCode
 	wg.Wait()
 	close(resChan)
 
-	var pastEvents []rawEvent
+	var allRes []probeRes
 	for r := range resChan {
-		pastEvents = append(pastEvents, r.events...)
+		allRes = append(allRes, r)
+	}
+
+	sort.Slice(allRes, func(i, j int) bool {
+		return allRes[i].dayOffset < allRes[j].dayOffset
+	})
+
+	if len(allRes) == 0 {
+		return nil
+	}
+
+	mostRecentOffset := allRes[0].dayOffset
+	var pastEvents []rawEvent
+	for _, r := range allRes {
+		if r.dayOffset <= mostRecentOffset+3 {
+			pastEvents = append(pastEvents, r.events...)
+		}
 	}
 	return pastEvents
 }
 
 // fetchUpcomingScoreboardEvents probes dates 1-14 days into the future to find the next active matchday.
 func (c *Client) fetchUpcomingScoreboardEvents(ctx context.Context, leagueCode string, now time.Time) []rawEvent {
-	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	probeCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 
 	type probeRes struct {
@@ -1591,6 +1627,7 @@ func (c *Client) FetchStandings(ctx context.Context, leagueKey string) (*model.L
 					teamName = re.Team.Name
 				}
 			}
+			teamName = normalizeTeamDisplayName(teamName)
 
 			getStat := func(names ...string) string {
 				for _, name := range names {
@@ -1813,6 +1850,7 @@ func (c *Client) FetchStatistics(ctx context.Context, leagueKey string) (*model.
 			if tName == "" && l.Team != nil && l.Team.DisplayName != "" {
 				tName = l.Team.DisplayName
 			}
+			tName = normalizeTeamDisplayName(tName)
 			if len(statsList) == 0 {
 				statsList = l.Statistics
 			}
@@ -1926,3 +1964,17 @@ func extractCoachName(c *rawCoach) string {
 	}
 	return ""
 }
+
+// normalizeTeamDisplayName standardizes upstream club names into popular Spanish naming conventions.
+func normalizeTeamDisplayName(name string) string {
+	trimmed := strings.TrimSpace(name)
+	switch {
+	case strings.EqualFold(trimmed, "Internazionale"),
+		strings.EqualFold(trimmed, "FC Internazionale Milano"),
+		strings.EqualFold(trimmed, "Inter Milan"):
+		return "Inter de Milán"
+	default:
+		return name
+	}
+}
+
