@@ -2747,6 +2747,40 @@ func TestLateChannelsMsg_Discarded(t *testing.T) {
 	}
 }
 
+func TestChannelsLoading_WaitsForWebResolver(t *testing.T) {
+	asyncCat := &mockAsyncCatalog{}
+	m := NewModel(&mockClient{}, asyncCat, &mockPlayer{})
+	m.state = StateChannelSelect
+	m.selectedMatchID = "m-uefa"
+	m.loadGen = 1
+	m.channelsLoading = true
+
+	// Empty catalog result arrives while web resolver is still in flight:
+	// channelsLoading must stay true to avoid flashing "Sin señales activas".
+	newM, _ := m.Update(channelsResolvedMsg{
+		matchID:  "m-uefa",
+		gen:      1,
+		channels: nil,
+	})
+	m = newM.(Model)
+	if !m.channelsLoading {
+		t.Fatalf("expected channelsLoading to stay true waiting for web resolver")
+	}
+
+	// Web channels arrive: channelsLoading clears and channels populate.
+	newM, _ = m.Update(webChannelsLoadedMsg{
+		matchID:  "m-uefa",
+		channels: []model.Channel{{Name: "ESPN HD", URL: "http://example.com/espn.m3u8"}},
+	})
+	m = newM.(Model)
+	if m.channelsLoading {
+		t.Fatalf("expected channelsLoading to clear once web channels arrive")
+	}
+	if len(m.channels) != 1 || m.channels[0].Name != "ESPN HD" {
+		t.Fatalf("expected web channel to be populated, got %+v", m.channels)
+	}
+}
+
 // --- Load generation against stale messages -----------------------------------
 
 func TestEscWhileLoading_LateMatchesMsgIgnored(t *testing.T) {

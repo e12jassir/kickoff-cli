@@ -43,6 +43,17 @@ var accentTransformerPool = sync.Pool{
 
 // RemoveAccents removes diacritical marks from UTF-8 strings.
 func RemoveAccents(s string) string {
+	if strings.ContainsAny(s, "øØæÆßđĐłŁ") {
+		r := strings.NewReplacer(
+			"ø", "o", "Ø", "O",
+			"æ", "ae", "Æ", "AE",
+			"ß", "ss",
+			"đ", "d", "Đ", "D",
+			"ł", "l", "Ł", "L",
+		)
+		s = r.Replace(s)
+	}
+
 	t := accentTransformerPool.Get().(transform.Transformer)
 	defer func() {
 		t.Reset()
@@ -775,7 +786,12 @@ var clubAliases = map[string]string{
 	"young boys":        "young-boys",
 	"copenhagen":        "fc-copenhagen",
 	"slavia prague":     "slavia-prague",
+	"slavia praga":      "slavia-prague",
 	"sparta prague":     "sparta-prague",
+	"sparta praga":      "sparta-prague",
+	"aek athens":        "aek-athens",
+	"aek atenas":        "aek-athens",
+	"aek":               "aek-athens",
 	"viktoria plzen":    "viktoria-plzen",
 	"salzburg":          "salzburg",
 	"shakhtar donetsk":  "shakhtar",

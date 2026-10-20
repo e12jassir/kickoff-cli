@@ -34,13 +34,15 @@ var (
 	reTimeStr = regexp.MustCompile(`\b([01]?\d|2[0-3]):([0-5]\d)\b`)
 )
 
-// DefaultKnownDomains contains active mirror domains known to publish live match agendas.
+// Verified alive 2026-10-20: agenda18 (structured JSON, richest UCL
+// coverage incl. Disney/ESPN per-signal embeds), pelotalibretv and
+// futbol-librehd. librefutboltv.com now 302s to a survey-scam redirect and
+// futbollibre.lol hangs, so both were removed: they only burned up to 8s
+// of connect timeout each before the working fallback answered.
 var DefaultKnownDomains = []string{
 	"https://agenda18.com/agenda.json",
 	"https://pelotalibretv.net",
 	"https://futbol-librehd.com",
-	"https://librefutboltv.com",
-	"https://futbollibre.lol",
 }
 
 // Service coordinates scraping of agenda portals and manifest resolution.

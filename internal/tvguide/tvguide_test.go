@@ -983,6 +983,18 @@ func TestMatchScore_SpanishExonymsAndNameBridges(t *testing.T) {
 			shouldMatch: true,
 		},
 		{
+			name:        "Nápoles vs Bodø/Glimt bridges correctly with special characters",
+			guideTitle:  "Napoli vs Bodo/Glimt",
+			match:       model.Match{HomeTeam: model.Competitor{DisplayName: "Nápoles"}, AwayTeam: model.Competitor{DisplayName: "Bodø/Glimt"}},
+			shouldMatch: true,
+		},
+		{
+			name:        "Slavia Praga bridges to Slavia Prague",
+			guideTitle:  "Fenerbahce vs Slavia Prague",
+			match:       model.Match{HomeTeam: model.Competitor{DisplayName: "Fenerbahçe"}, AwayTeam: model.Competitor{DisplayName: "Slavia Praga"}},
+			shouldMatch: true,
+		},
+		{
 			name:        "Marsella bridges to Marseille",
 			guideTitle:  "Marseille vs Lyon",
 			match:       model.Match{HomeTeam: model.Competitor{DisplayName: "Marsella"}, AwayTeam: model.Competitor{DisplayName: "Lyon"}},

@@ -544,7 +544,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if (m.state != StateChannelSelect && m.state != StatePlaying) || msg.matchID == "" || msg.matchID != m.selectedMatchID || msg.gen != m.loadGen {
 			return m, nil
 		}
-		m.channelsLoading = false
+		// If we already resolved channels from catalog, turn off the loading indicator.
+		// If catalog resolved 0 channels and a web resolver is running in parallel, keep
+		// channelsLoading true so the user sees the spinner instead of a false "No signals" banner.
+		_, hasWeb := m.catalog.(webStreamsResolver)
+		if len(msg.channels) > 0 || !hasWeb {
+			m.channelsLoading = false
+		}
 		seen := make(map[string]bool, len(msg.channels)+len(m.channels))
 		merged := make([]model.Channel, 0, len(msg.channels)+len(m.channels))
 		addChannels := func(chans []model.Channel) {
@@ -571,19 +577,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case webChannelsLoadedMsg:
-		if (m.state == StateChannelSelect || m.state == StatePlaying) && msg.matchID != "" && msg.matchID == m.selectedMatchID && len(msg.channels) > 0 {
-			seen := make(map[string]bool)
-			for _, ch := range m.channels {
-				seen[ch.URL] = true
-			}
-			for _, ch := range msg.channels {
-				if !seen[ch.URL] {
+		if (m.state == StateChannelSelect || m.state == StatePlaying) && msg.matchID != "" && msg.matchID == m.selectedMatchID {
+			m.channelsLoading = false
+			if len(msg.channels) > 0 {
+				seen := make(map[string]bool)
+				for _, ch := range m.channels {
 					seen[ch.URL] = true
-					m.channels = append(m.channels, ch)
 				}
-			}
-			for i := range m.channels {
-				m.channels[i].Recommended = (i == 0)
+				for _, ch := range msg.channels {
+					if !seen[ch.URL] {
+						seen[ch.URL] = true
+						m.channels = append(m.channels, ch)
+					}
+				}
+				for i := range m.channels {
+					m.channels[i].Recommended = (i == 0)
+				}
 			}
 		}
 		return m, nil
