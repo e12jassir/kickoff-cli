@@ -2204,6 +2204,33 @@ func TestRenderTabPartidos_TodayUsesUserZone(t *testing.T) {
 	}
 }
 
+// TestCalendarDayDiff proves day differences are computed on the calendar, not on
+// elapsed hours. A DST spring-forward day lasts 23 hours, so Hours()/24 truncates
+// to zero and would label tomorrow's fixture as today.
+func TestCalendarDayDiff(t *testing.T) {
+	ny, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Skipf("tzdata unavailable: %v", err)
+	}
+
+	springForward := time.Date(2026, 3, 8, 0, 30, 0, 0, ny)
+	nextDay := time.Date(2026, 3, 9, 0, 30, 0, 0, ny)
+	if got := calendarDayDiff(springForward, nextDay); got != 1 {
+		t.Errorf("expected 1 calendar day across DST, got %d", got)
+	}
+
+	// A sub-day difference on the same calendar date is never a full day.
+	later := time.Date(2026, 3, 8, 23, 30, 0, 0, ny)
+	if got := calendarDayDiff(springForward, later); got != 0 {
+		t.Errorf("expected 0 calendar days within the same date, got %d", got)
+	}
+
+	// Negative direction must stay symmetric.
+	if got := calendarDayDiff(nextDay, springForward); got != -1 {
+		t.Errorf("expected -1 going backwards, got %d", got)
+	}
+}
+
 func TestModalDateFormatting(t *testing.T) {
 	cli := &mockClient{}
 	cat := &mockCatalog{}

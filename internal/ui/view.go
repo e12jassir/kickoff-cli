@@ -716,6 +716,18 @@ func renderMatchItem(match model.Match, now time.Time, isSelected bool, livePuls
 	return []string{line1, line2}
 }
 
+// calendarDayDiff returns the signed number of calendar days from one instant to
+// another, comparing year/month/day only. Callers must pass both instants in the
+// same location. Unlike Hours()/24 this never truncates: a DST day can last 23 or
+// 25 hours, which would otherwise report tomorrow as today.
+func calendarDayDiff(from, to time.Time) int {
+	fy, fm, fd := from.Date()
+	ty, tm, td := to.Date()
+	fromDay := time.Date(fy, fm, fd, 0, 0, 0, 0, time.UTC)
+	toDay := time.Date(ty, tm, td, 0, 0, 0, 0, time.UTC)
+	return int(toDay.Sub(fromDay).Hours() / 24)
+}
+
 func renderChannelModal(match model.Match, now time.Time, channels []model.Channel, selectedIdx int, modalTab int, livePulse bool, spinnerStr string, detailsLoaded bool, channelsLoading bool, optArgs ...any) string {
 	noEmoji := false
 	modalContentWidth := 60
@@ -759,11 +771,7 @@ func renderChannelModal(match model.Match, now time.Time, channels []model.Chann
 	default:
 		preText := match.TimeStr
 		if !match.StartTime.IsZero() {
-			loc := now.Location()
-			today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
-			matchLocal := match.StartTime.In(loc)
-			matchDay := time.Date(matchLocal.Year(), matchLocal.Month(), matchLocal.Day(), 0, 0, 0, 0, loc)
-			daysDiff := int(matchDay.Sub(today).Hours() / 24)
+			daysDiff := calendarDayDiff(now, match.StartTime.In(now.Location()))
 
 			switch daysDiff {
 			case 0:
