@@ -371,6 +371,9 @@ func (c *Catalog) loadExternalConfig() {
 
 	var ext ExternalConfig
 	if err := json.Unmarshal(data, &ext); err != nil {
+		// A malformed config silently degrades every channel lookup, which looks
+		// like "nothing configured". Warn once, before the TUI takes the terminal.
+		fmt.Fprintf(os.Stderr, "kickoff: invalid %s: %v\n", cfgPath, err)
 		return
 	}
 

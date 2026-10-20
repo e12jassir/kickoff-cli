@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1229,6 +1230,66 @@ func TestCatalog_ParrillaSnapshotSuccessCachedForDay(t *testing.T) {
 	if got := fake.callCount(); got != 1 {
 		t.Fatalf("expected the successful snapshot to stay cached, got %d fetches", got)
 	}
+}
+
+// TestCatalog_InvalidChannelsConfigWarns proves an unparsable channels.json emits
+// exactly one actionable warning on stderr instead of failing silently, so a user
+// can tell a typo apart from "no channels configured".
+func TestCatalog_InvalidChannelsConfigWarns(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "channels.json")
+	if err := os.WriteFile(cfgPath, []byte(`{"streams": `), 0o600); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	err := captureStderr(t, func() {
+		_ = New(WithConfigFile(cfgPath), WithStreams(mockTestStreams), WithParrilla(offlineParrilla{}))
+	})
+	if !strings.Contains(err, "channels.json") {
+		t.Errorf("expected a warning naming channels.json, got %q", err)
+	}
+	if got := strings.Count(err, "kickoff:"); got != 1 {
+		t.Errorf("expected exactly one warning line, got %d in %q", got, err)
+	}
+}
+
+// TestCatalog_MissingChannelsConfigIsSilent keeps the warning specific to invalid
+// content: an absent optional file is a normal configuration.
+func TestCatalog_MissingChannelsConfigIsSilent(t *testing.T) {
+	err := captureStderr(t, func() {
+		_ = New(
+			WithConfigFile(filepath.Join(t.TempDir(), "absent.json")),
+			WithStreams(mockTestStreams),
+			WithParrilla(offlineParrilla{}),
+		)
+	})
+	if err != "" {
+		t.Errorf("expected no warning for a missing config, got %q", err)
+	}
+}
+
+// captureStderr redirects os.Stderr for the duration of fn and returns what was
+// written. The catalog writes its warning during construction, before any TUI
+// renderer owns the terminal.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	orig := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create pipe: %v", err)
+	}
+	os.Stderr = w
+	defer func() { os.Stderr = orig }()
+
+	fn()
+	if err := w.Close(); err != nil {
+		t.Fatalf("failed to close pipe: %v", err)
+	}
+	data, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("failed to read pipe: %v", err)
+	}
+	_ = r.Close()
+	return string(data)
 }
 
 // TestCatalog_ParrillaPrecedence pins the tier order: user custom_rules and league
