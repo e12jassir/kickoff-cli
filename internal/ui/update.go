@@ -49,6 +49,7 @@ type matchStatsLoadedMsg struct {
 	lineups    *model.MatchLineups
 	referee    string
 	attendance int
+	err        error
 }
 
 type playbackStartedMsg struct {
@@ -214,7 +215,10 @@ func forceRefreshMatchesCmd(client model.Client, leagueKey string, isSilent bool
 
 func fetchMatchStatsCmd(client model.Client, leagueKey, eventID string) tea.Cmd {
 	return func() tea.Msg {
-		details, _ := client.FetchMatchDetails(context.Background(), leagueKey, eventID)
+		details, err := client.FetchMatchDetails(context.Background(), leagueKey, eventID)
+		if err != nil {
+			return matchStatsLoadedMsg{matchID: eventID, err: err}
+		}
 		if details != nil {
 			return matchStatsLoadedMsg{
 				matchID:    eventID,
@@ -231,7 +235,10 @@ func fetchMatchStatsCmd(client model.Client, leagueKey, eventID string) tea.Cmd 
 func forceFetchMatchStatsCmd(client model.Client, leagueKey, eventID string) tea.Cmd {
 	return func() tea.Msg {
 		ctx := model.WithForceRefresh(context.Background())
-		details, _ := client.FetchMatchDetails(ctx, leagueKey, eventID)
+		details, err := client.FetchMatchDetails(ctx, leagueKey, eventID)
+		if err != nil {
+			return matchStatsLoadedMsg{matchID: eventID, err: err}
+		}
 		if details != nil {
 			return matchStatsLoadedMsg{
 				matchID:    eventID,
@@ -486,6 +493,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case matchStatsLoadedMsg:
+		if msg.err != nil {
+			// Keep whatever is already on screen and leave the details pending so
+			// the user (or the live auto-sync) can retry.
+			return m, nil
+		}
 		if m.detailsLoaded == nil {
 			m.detailsLoaded = make(map[string]bool)
 		}
@@ -494,8 +506,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		for i := range m.matches {
 			if m.matches[i].ID == msg.matchID {
-				m.matches[i].Stats = msg.stats
-				m.matches[i].Lineups = msg.lineups
+				if msg.stats != nil {
+					m.matches[i].Stats = msg.stats
+				}
+				if msg.lineups != nil {
+					m.matches[i].Lineups = msg.lineups
+				}
 				if msg.referee != "" {
 					m.matches[i].Referee = msg.referee
 				}
@@ -507,8 +523,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		for i := range m.pastMatches {
 			if m.pastMatches[i].ID == msg.matchID {
-				m.pastMatches[i].Stats = msg.stats
-				m.pastMatches[i].Lineups = msg.lineups
+				if msg.stats != nil {
+					m.pastMatches[i].Stats = msg.stats
+				}
+				if msg.lineups != nil {
+					m.pastMatches[i].Lineups = msg.lineups
+				}
 				if msg.referee != "" {
 					m.pastMatches[i].Referee = msg.referee
 				}
@@ -1018,6 +1038,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						playStreamCmd(m.player, req, m.playbackID),
 					)
 				}
+			case "r":
+				selectedMatch, ok := m.CurrentSelectedMatch()
+				if !ok || selectedMatch.ID == "" {
+					return m, nil
+				}
+				return m, tea.Batch(
+					m.spinner.Tick,
+					forceFetchMatchStatsCmd(m.client, m.CurrentLeague().Key, selectedMatch.ID),
+				)
 			case "esc", "backspace":
 				m.state = StateBrowsing
 				m.selectedMatchID = ""

@@ -2806,3 +2806,121 @@ func TestEscWhileLoading_LateMatchesMsgIgnored(t *testing.T) {
 		t.Errorf("late standings/statistics repopulated the model")
 	}
 }
+
+// --- Match details error propagation -----------------------------------------
+
+func newMatchStatsModel(cli model.Client) Model {
+	m := NewModel(cli, &mockCatalog{}, &mockPlayer{})
+	m.state = StateChannelSelect
+	m.leagueTab = TabPartidos
+	m.selectedMatchID = "m-stats"
+	m.matches = []model.Match{{
+		ID:      "m-stats",
+		Status:  model.MatchStatus{State: "in", Description: "2T 70'"},
+		Stats:   &model.MatchStats{HomePossession: "61%", AwayPossession: "39%"},
+		Lineups: &model.MatchLineups{Home: model.TeamLineup{Formation: "4-3-3"}},
+	}}
+	return m
+}
+
+func TestMatchStats_ErrorDoesNotWipeExisting(t *testing.T) {
+	cli := &mockClient{err: errors.New("network down")}
+	m := newMatchStatsModel(cli)
+
+	// The fetch command must carry the client error instead of dropping it.
+	raw, ok := fetchMatchStatsCmd(cli, m.CurrentLeague().Key, "m-stats")().(matchStatsLoadedMsg)
+	if !ok {
+		t.Fatalf("expected a matchStatsLoadedMsg from fetchMatchStatsCmd")
+	}
+	if raw.err == nil {
+		t.Fatalf("expected fetchMatchStatsCmd to propagate the client error")
+	}
+
+	newM, _ := m.Update(raw)
+	m = newM.(Model)
+
+	if m.IsDetailsLoaded("m-stats") {
+		t.Errorf("a failed fetch must not mark details as loaded")
+	}
+	if len(m.matches) != 1 {
+		t.Fatalf("expected the match to stay in the list, got %d", len(m.matches))
+	}
+	if m.matches[0].Stats == nil || m.matches[0].Stats.HomePossession != "61%" {
+		t.Errorf("a failed fetch wiped existing stats: %+v", m.matches[0].Stats)
+	}
+	if m.matches[0].Lineups == nil || m.matches[0].Lineups.Home.Formation != "4-3-3" {
+		t.Errorf("a failed fetch wiped existing lineups: %+v", m.matches[0].Lineups)
+	}
+}
+
+func TestMatchStats_FailureAllowsRetry(t *testing.T) {
+	cli := &mockClient{stats: &model.MatchStats{HomePossession: "55%", AwayPossession: "45%"}}
+	m := newMatchStatsModel(cli)
+
+	newM, _ := m.Update(matchStatsLoadedMsg{matchID: "m-stats", err: errors.New("timeout")})
+	m = newM.(Model)
+	if m.IsDetailsLoaded("m-stats") {
+		t.Fatalf("a failed attempt must leave the details pending")
+	}
+
+	// Force a retry even when the details were considered loaded already.
+	m = m.WithDetailsLoaded("m-stats")
+	newM, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m = newM.(Model)
+	if cmd == nil {
+		t.Fatalf("expected 'r' in the channel modal to force a details refetch")
+	}
+
+	var retry *matchStatsLoadedMsg
+	for _, msg := range runCmdMessages(cmd) {
+		if statsMsg, ok := msg.(matchStatsLoadedMsg); ok {
+			retry = &statsMsg
+		}
+	}
+	if retry == nil {
+		t.Fatalf("expected the retry command to produce a matchStatsLoadedMsg")
+	}
+	if retry.matchID != "m-stats" {
+		t.Fatalf("expected the retry to target 'm-stats', got %q", retry.matchID)
+	}
+	if retry.err != nil {
+		t.Fatalf("expected the retry to succeed, got %v", retry.err)
+	}
+
+	newM, _ = m.Update(*retry)
+	m = newM.(Model)
+	if !m.IsDetailsLoaded("m-stats") {
+		t.Errorf("expected the successful retry to mark the details as loaded")
+	}
+	if m.matches[0].Stats == nil || m.matches[0].Stats.HomePossession != "55%" {
+		t.Errorf("expected the retry to refresh the stats, got %+v", m.matches[0].Stats)
+	}
+}
+
+func TestMatchStats_PartialMergeOnlyNonNull(t *testing.T) {
+	m := newMatchStatsModel(&mockClient{})
+	originalLineups := m.matches[0].Lineups
+
+	newStats := &model.MatchStats{HomePossession: "70%", AwayPossession: "30%"}
+	newM, _ := m.Update(matchStatsLoadedMsg{matchID: "m-stats", stats: newStats, lineups: nil})
+	m = newM.(Model)
+	if m.matches[0].Stats != newStats {
+		t.Errorf("expected non-nil stats to replace the previous ones, got %+v", m.matches[0].Stats)
+	}
+	if m.matches[0].Lineups != originalLineups {
+		t.Errorf("nil lineups must not wipe the existing lineups")
+	}
+
+	newLineups := &model.MatchLineups{Away: model.TeamLineup{Formation: "4-2-3-1"}}
+	newM, _ = m.Update(matchStatsLoadedMsg{matchID: "m-stats", stats: nil, lineups: newLineups})
+	m = newM.(Model)
+	if m.matches[0].Stats != newStats {
+		t.Errorf("nil stats must not wipe the existing stats, got %+v", m.matches[0].Stats)
+	}
+	if m.matches[0].Lineups != newLineups {
+		t.Errorf("expected non-nil lineups to replace the previous ones")
+	}
+	if !m.IsDetailsLoaded("m-stats") {
+		t.Errorf("expected successful partial merges to mark the details as loaded")
+	}
+}
