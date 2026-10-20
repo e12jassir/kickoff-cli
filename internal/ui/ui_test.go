@@ -96,6 +96,38 @@ func (m *mockPlayer) Wait() error {
 	return nil
 }
 
+// TestModel_LeagueChangeResetsPerLeagueState proves switching leagues clears the
+// previous league's group selection and load errors; otherwise the new league
+// would inherit a stale group index or a stale error banner.
+func TestModel_LeagueChangeResetsPerLeagueState(t *testing.T) {
+	m := NewModel(&mockClient{}, &mockCatalog{}, &mockPlayer{})
+
+	cat := m.categories[0]
+	m.expandedCats[cat] = true
+	m.categoryMode = false
+	m.leagueCursor = m.categoryIndices[cat][0]
+
+	m.selectedGroup = 3
+	m.standingsErr = errors.New("standings failed")
+	m.statisticsErr = errors.New("statistics failed")
+
+	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newM.(Model)
+
+	if m.state != StateLoading {
+		t.Fatalf("expected StateLoading after selecting a league, got %d", m.state)
+	}
+	if m.selectedGroup != 0 {
+		t.Errorf("expected selectedGroup reset to 0, got %d", m.selectedGroup)
+	}
+	if m.standingsErr != nil {
+		t.Errorf("expected standingsErr cleared, got %v", m.standingsErr)
+	}
+	if m.statisticsErr != nil {
+		t.Errorf("expected statisticsErr cleared, got %v", m.statisticsErr)
+	}
+}
+
 func TestModel_MainMenu_Navigation(t *testing.T) {
 	cli := &mockClient{}
 	cat := &mockCatalog{}
