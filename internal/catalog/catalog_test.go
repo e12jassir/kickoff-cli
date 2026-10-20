@@ -1173,6 +1173,64 @@ func TestCatalog_ParrillaSnapshotFetchedOncePerDay(t *testing.T) {
 	}
 }
 
+// TestCatalog_ParrillaSnapshotFailureTTL proves a failed parrilla fetch is retried
+// after a short failure TTL instead of being cached for the whole day, which would
+// leave the user without a grid until midnight.
+func TestCatalog_ParrillaSnapshotFailureTTL(t *testing.T) {
+	now := time.Date(2026, 10, 20, 12, 0, 0, 0, locale.BogotaLocation())
+	fake := &parrillaFake{err: errors.New("source down")}
+	cat := newTestCatalog(
+		WithParrilla(fake),
+		WithNow(func() time.Time { return now }),
+	)
+
+	match := newParrillaMatch(nil)
+	if chs := cat.GetChannels(match); len(chs) != 0 {
+		t.Fatalf("expected no channels from a failed parrilla, got %+v", chs)
+	}
+	if got := fake.callCount(); got != 1 {
+		t.Fatalf("expected 1 fetch, got %d", got)
+	}
+
+	// Within the failure TTL the negative result is reused instead of hammering
+	// the source on every resolution.
+	now = now.Add(parrillaFailureTTL - time.Minute)
+	_ = cat.GetChannels(match)
+	if got := fake.callCount(); got != 1 {
+		t.Fatalf("expected failure cached for %v, got %d fetches", parrillaFailureTTL, got)
+	}
+
+	// Past the TTL the source is retried, so a transient outage heals during the
+	// same day.
+	now = now.Add(2 * time.Minute)
+	_ = cat.GetChannels(match)
+	if got := fake.callCount(); got != 2 {
+		t.Fatalf("expected a retry after the failure TTL, got %d fetches", got)
+	}
+}
+
+// TestCatalog_ParrillaSnapshotSuccessCachedForDay proves a successful snapshot is
+// still reused for the whole source day: the failure TTL must not shorten it.
+func TestCatalog_ParrillaSnapshotSuccessCachedForDay(t *testing.T) {
+	now := time.Date(2026, 10, 20, 12, 0, 0, 0, locale.BogotaLocation())
+	fake := &parrillaFake{snap: parrillaSnap([]string{"ESPN 2"})}
+	cat := newTestCatalog(
+		WithParrilla(fake),
+		WithNow(func() time.Time { return now }),
+	)
+
+	match := newParrillaMatch(nil)
+	for i := 0; i < 3; i++ {
+		if chs := cat.GetChannels(match); len(chs) != 2 {
+			t.Fatalf("call %d: expected the dual parrilla profile, got %+v", i, chs)
+		}
+		now = now.Add(3 * time.Hour)
+	}
+	if got := fake.callCount(); got != 1 {
+		t.Fatalf("expected the successful snapshot to stay cached, got %d fetches", got)
+	}
+}
+
 // TestCatalog_ParrillaPrecedence pins the tier order: user custom_rules and league
 // overrides still win (without even fetching the parrilla), ESPN metadata outranks
 // the parrilla, and an unplayable non-US ESPN broadcaster falls through to it.
