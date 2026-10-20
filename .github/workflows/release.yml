@@ -46,7 +46,7 @@ jobs:
 
           # 3. Windows x86_64 (.zip bundle with kickoff.exe, Instalar-Kickoff.bat, kickoff.ico, and JetBrainsMono font)
           GOOS=windows GOARCH=amd64 go build -ldflags="$LDFLAGS" -o kickoff.exe ./cmd/kickoff
-          zip -j "dist/kickoff_${CLEAN_VER}_windows_amd64.zip" kickoff.exe assets/Instalar-Kickoff.bat assets/install-mpv.bat assets/kickoff.ico assets/fonts/JetBrainsMonoNerdFont-Regular.ttf LICENSE README.md
+          zip -j "dist/kickoff_${CLEAN_VER}_windows_amd64.zip" kickoff.exe assets/Instalar-Kickoff.bat assets/install-mpv.bat assets/kickoff.ico assets/fonts/JetBrainsMonoNerdFont-Regular.ttf assets/fonts/OFL.txt assets/fonts/NOTICE.md LICENSE README.md
           rm kickoff.exe
 
           # 4. macOS Apple Silicon (ARM64)
