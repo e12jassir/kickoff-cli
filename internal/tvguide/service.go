@@ -3,7 +3,6 @@ package tvguide
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"net/http"
 	"os"
@@ -45,6 +44,10 @@ type Service struct {
 	targets    []ChannelTarget
 	httpClient *http.Client
 	baseURL    string
+
+	// autoRefresh opts in to the startup disk load and background crawl. It is
+	// explicit so tests never depend on how the binary was invoked.
+	autoRefresh bool
 
 	mu         sync.RWMutex
 	guides     []ChannelGuide
@@ -105,6 +108,15 @@ func WithTimezone(loc *time.Location) Option {
 	}
 }
 
+// WithAutoRefresh enables the startup disk cache load and the background crawl
+// when the cache is cold. Long-lived callers opt in; tests and short-lived tools
+// stay offline and deterministic.
+func WithAutoRefresh(enabled bool) Option {
+	return func(s *Service) {
+		s.autoRefresh = enabled
+	}
+}
+
 // WithTargets sets custom channel targets.
 func WithTargets(targets []ChannelTarget) Option {
 	return func(s *Service) {
@@ -148,14 +160,16 @@ func NewService(opts ...Option) *Service {
 		s.crawler = NewCrawler(s.httpClient, s.baseURL)
 	}
 
-	// 1. Attempt zero-delay load from disk cache (in production or when custom cacheDir is configured)
+	// 1. Attempt a zero-delay load from disk: always for an explicitly
+	// configured cache directory, otherwise only when auto refresh is enabled.
 	var loaded bool
-	if flag.Lookup("test.v") == nil || s.cacheDir != defaultCache {
+	if s.cacheDir != defaultCache || s.autoRefresh {
 		loaded = s.loadCache()
 	}
 
-	// 2. If cache is not fresh and not executing unit tests, kick off background crawl
-	if !loaded && flag.Lookup("test.v") == nil {
+	// 2. If the cache is not fresh, refresh in the background. Never block the
+	// constructor on the network.
+	if !loaded && s.autoRefresh {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()

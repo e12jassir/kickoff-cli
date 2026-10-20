@@ -208,7 +208,7 @@ func New(opts ...Option) *Catalog {
 		streamAlive:     make(map[string]bool),
 		leagueOverrides: make(map[string][]model.Channel),
 		userStreams:     make(map[string]string),
-		tvGuide:         tvguide.NewService(),
+		tvGuide:         tvguide.NewService(tvguide.WithAutoRefresh(true)),
 		parrillaFetcher: parrilla.NewGolCaracol(),
 		parrillaCache:   make(map[string]parrillaCacheEntry),
 		extractor:       extractor.NewService(),

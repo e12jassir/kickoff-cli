@@ -276,6 +276,60 @@ func TestMatchScore(t *testing.T) {
 	}
 }
 
+// countingCrawler records crawl attempts so background-refresh behavior can be
+// asserted without touching the network.
+type countingCrawler struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (c *countingCrawler) Crawl(ctx context.Context, targets []ChannelTarget) ([]ChannelGuide, error) {
+	c.mu.Lock()
+	c.calls++
+	c.mu.Unlock()
+	return nil, nil
+}
+
+func (c *countingCrawler) FetchChannel(ctx context.Context, slug string) ([]string, error) {
+	return nil, nil
+}
+
+func (c *countingCrawler) callCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.calls
+}
+
+// TestService_AutoRefreshIsExplicit proves the background crawl is an explicit
+// option instead of being inferred from the test binary's flags. A service built
+// without it must never touch the network, and one that opts in must.
+func TestService_AutoRefreshIsExplicit(t *testing.T) {
+	quiet := &countingCrawler{}
+	svc := NewService(WithCacheDir(t.TempDir()), WithCrawler(quiet), WithTargets(nil))
+	time.Sleep(50 * time.Millisecond)
+	if got := quiet.callCount(); got != 0 {
+		t.Fatalf("expected no background crawl without WithAutoRefresh(true), got %d", got)
+	}
+	if len(svc.Guides()) != 0 {
+		t.Fatalf("expected no guides, got %+v", svc.Guides())
+	}
+
+	eager := &countingCrawler{}
+	NewService(
+		WithCacheDir(t.TempDir()),
+		WithCrawler(eager),
+		WithTargets(nil),
+		WithAutoRefresh(true),
+	)
+	deadline := time.Now().Add(2 * time.Second)
+	for eager.callCount() == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := eager.callCount(); got == 0 {
+		t.Fatalf("expected a background crawl when auto refresh is enabled")
+	}
+}
+
 func TestService_ResolveMatch(t *testing.T) {
 	svc := NewService()
 	svc.SetGuides([]ChannelGuide{

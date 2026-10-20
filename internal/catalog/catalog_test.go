@@ -55,6 +55,17 @@ func newTestCatalog(opts ...Option) *Catalog {
 		WithStreams(mockTestStreams),
 		WithParrilla(offlineParrilla{}),
 		WithExtractor(nil),
+		WithTVGuide(tvguide.NewService(tvguide.WithAutoRefresh(false))),
+	}, opts...)
+	return New(allOpts...)
+}
+
+// newOfflineTestCatalog builds a catalog whose TV guide never loads the user's
+// real cache nor starts a background crawl. Tests that need a specific config
+// file or fake dependency use this instead of calling New directly.
+func newOfflineTestCatalog(opts ...Option) *Catalog {
+	allOpts := append([]Option{
+		WithTVGuide(tvguide.NewService(tvguide.WithAutoRefresh(false))),
 	}, opts...)
 	return New(allOpts...)
 }
@@ -481,7 +492,7 @@ func TestCatalog_PlayabilityGate(t *testing.T) {
 	}
 
 	// Only espn1 is configured; ESPN 4 is not playable.
-	unplayable := New(
+	unplayable := newOfflineTestCatalog(
 		WithConfigFile(filepath.Join(t.TempDir(), "none.json")),
 		WithStreams(map[string]string{"espn1": "http://example.invalid/espn1.m3u8"}),
 		WithParrilla(offlineParrilla{}),
@@ -494,7 +505,7 @@ func TestCatalog_PlayabilityGate(t *testing.T) {
 	}
 
 	// The same match is playable once ESPN 4 has a configured URL.
-	playable := New(
+	playable := newOfflineTestCatalog(
 		WithConfigFile(filepath.Join(t.TempDir(), "none.json")),
 		WithStreams(map[string]string{"espn4": "http://example.invalid/espn4.m3u8"}),
 		WithParrilla(offlineParrilla{}),
@@ -532,7 +543,7 @@ func TestCatalog_OverridesTakePrecedence(t *testing.T) {
 		t.Fatalf("failed to write test config: %v", err)
 	}
 
-	cat := New(WithConfigFile(cfgPath), WithStreams(mockTestStreams), WithParrilla(offlineParrilla{}))
+	cat := newOfflineTestCatalog(WithConfigFile(cfgPath), WithStreams(mockTestStreams), WithParrilla(offlineParrilla{}))
 
 	// A custom rule wins even when ESPN metadata lists a different broadcaster.
 	ruleMatch := model.Match{
@@ -777,7 +788,7 @@ func TestCatalog_ExternalConfig_LeagueAliases(t *testing.T) {
 		t.Fatalf("failed to write test config: %v", err)
 	}
 
-	cat := New(WithConfigFile(cfgPath), WithParrilla(offlineParrilla{}))
+	cat := newOfflineTestCatalog(WithConfigFile(cfgPath), WithParrilla(offlineParrilla{}))
 
 	testCases := []struct {
 		leagueKey    string
@@ -824,7 +835,7 @@ func TestNew_AppliesOptionsExactlyOnce(t *testing.T) {
 		{Name: "Injected B", URL: "http://example.invalid/injected-b.m3u8"},
 	}
 
-	cat := New(
+	cat := newOfflineTestCatalog(
 		WithConfigFile(cfgPath),
 		WithStreams(map[string]string{"espn1": "http://programmatic.invalid/espn1.m3u8"}),
 		WithM3UChannels(injected),
@@ -863,7 +874,7 @@ http://example.com/remote/win.m3u8
 		t.Fatalf("failed to write test config: %v", err)
 	}
 
-	cat := New(WithConfigFile(cfgPath))
+	cat := newOfflineTestCatalog(WithConfigFile(cfgPath))
 
 	cat.mu.RLock()
 	defer cat.mu.RUnlock()
@@ -901,7 +912,7 @@ http://example.com/local.m3u8
 		t.Fatalf("failed to write config: %v", err)
 	}
 
-	cat := New(WithConfigFile(cfgPath))
+	cat := newOfflineTestCatalog(WithConfigFile(cfgPath))
 
 	cat.mu.RLock()
 	defer cat.mu.RUnlock()
@@ -980,7 +991,7 @@ func TestCatalog_AdjacentChannelsAndM3UFallback(t *testing.T) {
 		t.Fatalf("could not write channels.json: %v", err)
 	}
 
-	cat := New()
+	cat := newOfflineTestCatalog()
 	endpoint, ok := cat.StreamEndpoint("adjacent_test")
 	if !ok || endpoint != "http://stream.example/live.m3u8" {
 		t.Errorf("expected adjacent channels.json to be loaded, got ok=%v, endpoint=%s", ok, endpoint)
@@ -996,7 +1007,7 @@ func TestCatalog_AdjacentChannelsAndM3UFallback(t *testing.T) {
 		t.Fatalf("could not write signals.m3u: %v", err)
 	}
 
-	cat2 := New()
+	cat2 := newOfflineTestCatalog()
 	cat2.mu.RLock()
 	defer cat2.mu.RUnlock()
 	if len(cat2.m3uChannels) == 0 {
@@ -1074,7 +1085,7 @@ func TestCatalog_ParrillaTier(t *testing.T) {
 	t.Run("unknown and unconfigured streaming channels emit nothing", func(t *testing.T) {
 		// "Disney+ Premium" is not a known channel, and "DSports+" is known but
 		// its stream key is not configured in this catalog. Neither may resolve.
-		cat := New(
+		cat := newOfflineTestCatalog(
 			WithConfigFile(filepath.Join(t.TempDir(), "none.json")),
 			WithStreams(map[string]string{"espn2": "http://example.invalid/espn2.m3u8"}),
 			WithParrilla(&parrillaFake{snap: parrillaSnap([]string{"Disney+ Premium", "DSports+"})}),
@@ -1123,7 +1134,7 @@ func TestParrillaDay_IsTimezoneIndependent(t *testing.T) {
 func TestParrillaTier_UsesM3UFallback(t *testing.T) {
 	const streamURL = "http://example.invalid/espn2.m3u8"
 
-	cat := New(
+	cat := newOfflineTestCatalog(
 		WithConfigFile(filepath.Join(t.TempDir(), "none.json")),
 		WithParrilla(&parrillaFake{snap: parrillaSnap([]string{"ESPN 2"})}),
 		WithM3UChannels([]M3UChannel{{Name: "ESPN 2 HD", URL: streamURL}}),
@@ -1154,7 +1165,7 @@ func TestParrillaTier_UsesM3UFallback(t *testing.T) {
 // tier 2 for compound national broadcasters: a primary dual profile plus the
 // secondary feed resolved independently.
 func TestParrillaTier_EmitsSecondaryChannels(t *testing.T) {
-	cat := New(
+	cat := newOfflineTestCatalog(
 		WithConfigFile(filepath.Join(t.TempDir(), "none.json")),
 		WithStreams(map[string]string{"caracol": "http://example.invalid/caracol.m3u8"}),
 		WithM3UChannels([]M3UChannel{{Name: "Caracol HD2", URL: "http://example.invalid/caracolhd2.m3u8"}}),
@@ -1280,7 +1291,7 @@ func TestCatalog_InvalidChannelsConfigWarns(t *testing.T) {
 	}
 
 	err := captureStderr(t, func() {
-		_ = New(WithConfigFile(cfgPath), WithStreams(mockTestStreams), WithParrilla(offlineParrilla{}))
+		_ = newOfflineTestCatalog(WithConfigFile(cfgPath), WithStreams(mockTestStreams), WithParrilla(offlineParrilla{}))
 	})
 	if !strings.Contains(err, "channels.json") {
 		t.Errorf("expected a warning naming channels.json, got %q", err)
@@ -1294,7 +1305,7 @@ func TestCatalog_InvalidChannelsConfigWarns(t *testing.T) {
 // content: an absent optional file is a normal configuration.
 func TestCatalog_MissingChannelsConfigIsSilent(t *testing.T) {
 	err := captureStderr(t, func() {
-		_ = New(
+		_ = newOfflineTestCatalog(
 			WithConfigFile(filepath.Join(t.TempDir(), "absent.json")),
 			WithStreams(mockTestStreams),
 			WithParrilla(offlineParrilla{}),
@@ -1352,7 +1363,7 @@ func TestCatalog_ParrillaPrecedence(t *testing.T) {
 		}
 
 		fake := &parrillaFake{snap: parrillaSnap([]string{"ESPN 2"})}
-		cat := New(WithConfigFile(cfgPath), WithStreams(mockTestStreams), WithParrilla(fake))
+		cat := newOfflineTestCatalog(WithConfigFile(cfgPath), WithStreams(mockTestStreams), WithParrilla(fake))
 
 		chs := cat.GetChannels(newParrillaMatch(nil))
 		if len(chs) != 1 || chs[0].Name != "Rule Wins" {
@@ -1377,7 +1388,7 @@ func TestCatalog_ParrillaPrecedence(t *testing.T) {
 		}
 
 		fake := &parrillaFake{snap: parrillaSnap([]string{"ESPN 2"})}
-		cat := New(WithConfigFile(cfgPath), WithStreams(mockTestStreams), WithParrilla(fake))
+		cat := newOfflineTestCatalog(WithConfigFile(cfgPath), WithStreams(mockTestStreams), WithParrilla(fake))
 
 		chs := cat.GetChannels(newParrillaMatch(nil))
 		if len(chs) != 1 || chs[0].Name != "League Override" {
@@ -1475,7 +1486,7 @@ func TestCatalog_Tier5_DynamicExtractor(t *testing.T) {
 		}
 
 		// Catalog without dsports in userStreams so Tier 2 cannot resolve it
-		cat := New(
+		cat := newOfflineTestCatalog(
 			WithConfigFile(filepath.Join(os.TempDir(), "nonexistent_kickoff_channels.json")),
 			WithStreams(map[string]string{}),
 			WithParrilla(offlineParrilla{}),
