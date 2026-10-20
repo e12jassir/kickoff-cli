@@ -1155,6 +1155,141 @@ func TestResolveMatch_RejectsPartialEvidenceAndAmbiguity(t *testing.T) {
 	})
 }
 
+// TestResolveMatch_DuplicateCaracolSlugs pins that two GatoTV slugs publishing
+// the same signal are one channel, not an ambiguous tie. GatoTV exposes Caracol
+// TV under caracol_television and caracol_colombia; both carry the same feed, so
+// a fixture listed on both must resolve to a single channel instead of being
+// declined. The first guide in the input order is kept.
+func TestResolveMatch_DuplicateCaracolSlugs(t *testing.T) {
+	svc := NewService()
+	svc.SetGuides([]ChannelGuide{
+		{
+			Name:      "Caracol TV HD",
+			Slug:      "caracol_television",
+			StreamURL: "http://example.com/caracol-television.m3u8",
+			Programs:  []string{"Feyenoord vs. Como"},
+		},
+		{
+			Name:      "Caracol TV HD",
+			Slug:      "caracol_colombia",
+			StreamURL: "http://example.com/caracol-colombia.m3u8",
+			Programs:  []string{"Feyenoord vs. Como"},
+		},
+	})
+
+	match := model.Match{
+		HomeTeam: model.Competitor{DisplayName: "Feyenoord Rotterdam"},
+		AwayTeam: model.Competitor{DisplayName: "Como"},
+	}
+
+	target, found := svc.ResolveMatch(match)
+	if !found {
+		t.Fatalf("duplicate slugs for one signal must resolve, got not found")
+	}
+	if target.Name != "Caracol TV HD" {
+		t.Fatalf("expected Caracol TV HD, got %q", target.Name)
+	}
+	if target.Slug != "caracol_television" {
+		t.Errorf("expected the first slug %q to be kept, got %q", "caracol_television", target.Slug)
+	}
+}
+
+// TestResolveMatch_TrueAmbiguityStillRejected proves the duplicate-slug fix did
+// not relax the conservative policy: two DIFFERENT signals tied on the top score
+// remain unresolved. Resolving one of them would be a guess.
+func TestResolveMatch_TrueAmbiguityStillRejected(t *testing.T) {
+	svc := NewService()
+	svc.SetGuides([]ChannelGuide{
+		{
+			Name:     "ESPN 1 HD",
+			Slug:     "espn_colombia",
+			Programs: []string{"Feyenoord vs. Como"},
+		},
+		{
+			Name:     "Win Sports HD",
+			Slug:     "win_sports",
+			Programs: []string{"Feyenoord vs. Como"},
+		},
+	})
+
+	match := model.Match{
+		HomeTeam: model.Competitor{DisplayName: "Feyenoord Rotterdam"},
+		AwayTeam: model.Competitor{DisplayName: "Como"},
+	}
+
+	if target, found := svc.ResolveMatch(match); found {
+		t.Fatalf("two distinct signals tied must decline, got %q (%s)", target.Name, target.Slug)
+	}
+}
+
+// TestDefaultTargets_NoDuplicateIdentities enforces that the crawl target list
+// carries one entry per signal. Two slugs for the same channel made every
+// fixture on that channel look ambiguous, because the resolver compared raw
+// slugs instead of the channel identity.
+func TestDefaultTargets_NoDuplicateIdentities(t *testing.T) {
+	seen := make(map[string]string, len(DefaultTargets))
+	for _, target := range DefaultTargets {
+		id := channelIdentity(target.Name)
+		if id == "" {
+			t.Fatalf("target %+v has no canonical identity", target)
+		}
+		if previous, duplicate := seen[id]; duplicate {
+			t.Errorf("identity %q appears twice: %q and %q", id, previous, target.Name)
+			continue
+		}
+		seen[id] = target.Name
+	}
+
+	// The first declared slug is the preferred crawl target; the alias must be
+	// dropped, not the canonical entry.
+	wantSlugs := map[string]string{
+		"Caracol TV HD": "caracol_television",
+		"Canal RCN HD":  "rcn_television",
+	}
+	for name, wantSlug := range wantSlugs {
+		found := false
+		for _, target := range DefaultTargets {
+			if target.Name != name {
+				continue
+			}
+			found = true
+			if target.Slug != wantSlug {
+				t.Errorf("%s: expected preferred slug %q, got %q", name, wantSlug, target.Slug)
+			}
+		}
+		if !found {
+			t.Errorf("%s: missing from DefaultTargets", name)
+		}
+	}
+}
+
+// TestChannelIdentity_DistinguishesSeparateSignals pins the boundaries of the
+// canonical identity: format labels (HD, FHD, 4K) never split one signal, while
+// a different feed published with a numbered suffix (Caracol HD2) stays apart.
+// Collapsing HD2 into Caracol TV would silently pick the wrong broadcast.
+func TestChannelIdentity_DistinguishesSeparateSignals(t *testing.T) {
+	tests := []struct {
+		name string
+		b    string
+		same bool
+	}{
+		{name: "Caracol TV HD", b: "Caracol TV", same: true},
+		{name: "Caracol TV HD", b: "Caracol TV FHD", same: true},
+		{name: "Caracol TV HD", b: "Caracol TV 4K", same: true},
+		{name: "Win Sports HD", b: "Win", same: true},
+		{name: "Caracol TV HD", b: "Caracol HD2", same: false},
+		{name: "ESPN 1 HD", b: "ESPN 2 HD", same: false},
+	}
+
+	for _, tt := range tests {
+		gotSame := channelIdentity(tt.name) == channelIdentity(tt.b)
+		if gotSame != tt.same {
+			t.Errorf("channelIdentity(%q) == channelIdentity(%q) = %v, want %v (%q vs %q)",
+				tt.name, tt.b, gotSame, tt.same, channelIdentity(tt.name), channelIdentity(tt.b))
+		}
+	}
+}
+
 // TestNormalize_ConcurrentSafe guards against sharing stateful transformers
 // across goroutines. RemoveAccents is reachable from the TUI update loop and
 // from concurrent fetch goroutines, so it must be safe to call in parallel.
