@@ -116,7 +116,9 @@ func renderMainMenu(m Model) string {
 	menuBox := MenuBoxStyle.Render(strings.Join(lines, "\n"))
 
 	footerText := "↑/k ↓/j: navegar  •  enter/space: desplegar/entrar  •  ←/→: plegar/desplegar  •  q: salir"
-	if m.updateAvailable != "" {
+	if strings.Contains(m.statusMsg, "Reproduciendo") {
+		footerText = "↑/k ↓/j: navegar  •  enter: entrar  •  x: parar señal  •  q: salir"
+	} else if m.updateAvailable != "" {
 		footerText = fmt.Sprintf("↑/k ↓/j: navegar  •  enter: entrar  •  u: actualizar (%s)  •  q: salir", m.updateAvailable)
 	}
 	footer := FooterHelpStyle.Render(footerText)
@@ -194,7 +196,11 @@ func renderBrowsing(m Model) string {
 	tabsRow := lipgloss.JoinHorizontal(lipgloss.Center, renderedTabs[0], "   ", renderedTabs[1], "   ", renderedTabs[2], "   ", renderedTabs[3])
 
 	var body string
-	footer := FooterHelpStyle.Render("h/l o ←/→: pestaña  •  j/k o ↑/↓: navegar  •  enter: detalles  •  esc: ligas  •  r: recargar  •  q: salir")
+	footerHelp := "h/l o ←/→: pestaña  •  j/k o ↑/↓: navegar  •  enter: detalles  •  esc: ligas  •  r: recargar  •  q: salir"
+	if strings.Contains(m.statusMsg, "Reproduciendo") {
+		footerHelp = "h/l: pestaña  •  j/k: navegar  •  enter: detalles  •  x: parar señal  •  esc: ligas  •  q: salir"
+	}
+	footer := FooterHelpStyle.Render(footerHelp)
 
 	// Connecting stream pulse overlay check
 	if m.state == StatePlaying && m.connecting {

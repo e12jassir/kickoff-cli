@@ -631,7 +631,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case playbackStartedMsg:
 		if msg.playbackID == m.playbackID {
 			m.connecting = false
-			m.statusMsg = "✓ Reproduciendo: " + msg.channel.Name
+			m.statusMsg = "✓ Reproduciendo: " + msg.channel.Name + " • x: parar señal"
 			m.errorMsg = ""
 			return m, waitForPlaybackCmd(m.player, msg.playbackID)
 		}
@@ -666,10 +666,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		key := msg.String()
 		switch key {
-		case "ctrl+c", "q":
+		case "ctrl+c":
 			if m.player != nil {
 				_ = m.player.Stop()
 			}
+			return m, tea.Quit
+		case "q":
 			return m, tea.Quit
 		}
 
@@ -681,6 +683,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case StateMainMenu:
 			switch key {
+			case "x":
+				if m.player != nil {
+					_ = m.player.Stop()
+				}
+				m.playbackID++
+				m.connecting = false
+				m.statusMsg = "⏹ Señal detenida"
+				return m, nil
 			case "u":
 				if m.updateAvailable != "" {
 					exe, err := os.Executable()
@@ -1003,12 +1013,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						return m, tea.Batch(cmds...)
 					}
 				}
-			case "esc", "backspace":
+			case "x":
 				if m.player != nil {
 					_ = m.player.Stop()
 				}
 				m.playbackID++
 				m.connecting = false
+				m.statusMsg = "⏹ Señal detenida"
+				return m, nil
+			case "esc", "backspace":
+				if m.connecting {
+					if m.player != nil {
+						_ = m.player.Stop()
+					}
+					m.playbackID++
+					m.connecting = false
+				}
 				m.selectedMatchID = ""
 				m.state = StateMainMenu
 				m.loadGen++
@@ -1022,7 +1042,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.channelsLoading = false
 				m.channelCursor = 0
 				m.modalTab = 0
-				m.statusMsg = ""
+				if !strings.Contains(m.statusMsg, "Reproduciendo") {
+					m.statusMsg = ""
+				}
 				m.errorMsg = ""
 				return m, nil
 			case "r":
@@ -1108,6 +1130,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.spinner.Tick,
 					forceFetchMatchStatsCmd(m.client, m.CurrentLeague().Key, selectedMatch.ID),
 				)
+			case "x":
+				if m.player != nil {
+					_ = m.player.Stop()
+				}
+				m.playbackID++
+				m.connecting = false
+				m.statusMsg = "⏹ Señal detenida"
+				return m, nil
 			case "esc", "backspace":
 				m.state = StateBrowsing
 				m.selectedMatchID = ""
@@ -1120,12 +1150,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case StateLoading, StateError:
 			switch key {
-			case "esc", "backspace", "h":
+			case "x":
 				if m.player != nil {
 					_ = m.player.Stop()
 				}
 				m.playbackID++
 				m.connecting = false
+				m.statusMsg = "⏹ Señal detenida"
+				return m, nil
+			case "esc", "backspace", "h":
+				if m.connecting && m.player != nil {
+					_ = m.player.Stop()
+					m.playbackID++
+					m.connecting = false
+				}
 				m.selectedMatchID = ""
 				m.state = StateMainMenu
 				m.loadGen++
@@ -1139,7 +1177,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.channelsLoading = false
 				m.channelCursor = 0
 				m.modalTab = 0
-				m.statusMsg = ""
+				if !strings.Contains(m.statusMsg, "Reproduciendo") {
+					m.statusMsg = ""
+				}
 				m.errorMsg = ""
 				return m, nil
 			case "r":

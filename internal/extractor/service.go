@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/e12jassir/kickoff-cli/internal/fsutil"
 	"github.com/e12jassir/kickoff-cli/internal/locale"
 	"github.com/e12jassir/kickoff-cli/internal/model"
 	"github.com/e12jassir/kickoff-cli/internal/tvguide"
@@ -137,12 +138,11 @@ func (s *Service) saveDiskCache(events []ExtractedEvent) {
 	if len(events) == 0 || s.cacheDir == "" {
 		return
 	}
-	_ = os.MkdirAll(s.cacheDir, 0o755)
 	data, err := json.Marshal(events)
 	if err != nil {
 		return
 	}
-	_ = os.WriteFile(s.diskCachePath(), data, 0o644)
+	_ = fsutil.AtomicWriteFile(s.diskCachePath(), data, 0o644)
 }
 
 func (s *Service) loadDiskCache() ([]ExtractedEvent, error) {

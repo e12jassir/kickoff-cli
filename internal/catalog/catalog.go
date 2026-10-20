@@ -1021,7 +1021,7 @@ func (c *Catalog) PeekCachedChannels(match model.Match) []model.Channel {
 	entry, cached := c.webCache[cacheKey]
 	c.webCacheMu.RUnlock()
 
-	if cached && len(entry.channels) > 0 {
+	if cached && time.Since(entry.cachedAt) < 30*time.Minute && len(entry.channels) > 0 {
 		return entry.channels
 	}
 	return nil

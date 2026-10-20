@@ -583,12 +583,24 @@ func TestModel_Quit(t *testing.T) {
 	pla := &mockPlayer{}
 
 	m := NewModel(cli, cat, pla)
+
+	// 'q' quits launcher in detached mode without killing player
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
 	if cmd == nil {
 		t.Fatalf("expected tea.Quit cmd on 'q'")
 	}
+	if pla.stopped {
+		t.Errorf("expected player to NOT be stopped on 'q' (detached background playback)")
+	}
+
+	// 'ctrl+c' force quits and terminates player
+	pla.stopped = false
+	_, cmd = m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if cmd == nil {
+		t.Fatalf("expected tea.Quit cmd on 'ctrl+c'")
+	}
 	if !pla.stopped {
-		t.Errorf("expected player.Stop() to be called on quit")
+		t.Errorf("expected player.Stop() to be called on 'ctrl+c'")
 	}
 }
 
@@ -2016,14 +2028,14 @@ func TestModel_Modal_AnchoredBySelectedMatchID_OnAutoSync(t *testing.T) {
 	}
 }
 
-func TestModel_Esc_WhenPlaying_StopsPlayer(t *testing.T) {
+func TestModel_Esc_WhenPlaying_BackgroundDecoupled(t *testing.T) {
 	cli := &mockClient{}
 	cat := &mockCatalog{}
 	pla := &mockPlayer{}
 
 	m := NewModel(cli, cat, pla)
 
-	// Case 1: Esc while connecting in StatePlaying
+	// Case 1: Esc while connecting in StatePlaying cancels the connection and stops player
 	m.state = StatePlaying
 	m.connecting = true
 	m.streamFeed = "Test Stream"
@@ -2041,10 +2053,11 @@ func TestModel_Esc_WhenPlaying_StopsPlayer(t *testing.T) {
 		t.Errorf("expected player.Stop() to be called on Esc while connecting")
 	}
 
-	// Case 2: Esc while actively playing in StatePlaying
+	// Case 2: Esc while actively playing in StatePlaying keeps playback alive and returns to MainMenu
 	pla.stopped = false
 	m.state = StatePlaying
 	m.connecting = false
+	m.statusMsg = "✓ Reproduciendo: ESPN"
 
 	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = newM.(Model)
@@ -2052,11 +2065,14 @@ func TestModel_Esc_WhenPlaying_StopsPlayer(t *testing.T) {
 	if m.state != StateMainMenu {
 		t.Errorf("expected state StateMainMenu after Esc while playing, got %d", m.state)
 	}
-	if !pla.stopped {
-		t.Errorf("expected player.Stop() to be called on Esc while playing")
+	if pla.stopped {
+		t.Errorf("expected player to NOT be stopped on Esc while playing (decoupled background playback)")
+	}
+	if !strings.Contains(m.statusMsg, "Reproduciendo") {
+		t.Errorf("expected playback statusMsg to be preserved in MainMenu, got %q", m.statusMsg)
 	}
 
-	// Case 3: Backspace also stops playback and returns to MainMenu
+	// Case 3: Backspace also preserves playback and returns to MainMenu
 	pla.stopped = false
 	m.state = StatePlaying
 
@@ -2066,18 +2082,30 @@ func TestModel_Esc_WhenPlaying_StopsPlayer(t *testing.T) {
 	if m.state != StateMainMenu {
 		t.Errorf("expected state StateMainMenu after Backspace while playing, got %d", m.state)
 	}
+	if pla.stopped {
+		t.Errorf("expected player to NOT be stopped on Backspace while playing")
+	}
+
+	// Case 4: Explicit stop key 'x' stops playback in MainMenu or Browsing
+	pla.stopped = false
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m = newM.(Model)
 	if !pla.stopped {
-		t.Errorf("expected player.Stop() to be called on Backspace while playing")
+		t.Errorf("expected player.Stop() to be called on 'x'")
+	}
+	if m.statusMsg != "⏹ Señal detenida" {
+		t.Errorf("expected statusMsg to be '⏹ Señal detenida', got %q", m.statusMsg)
 	}
 }
 
-func TestModel_Esc_WhenLoading_StopsPlayer(t *testing.T) {
+func TestModel_Esc_WhenLoading_PreservesBackgroundPlayback(t *testing.T) {
 	cli := &mockClient{}
 	cat := &mockCatalog{}
 	pla := &mockPlayer{}
 
 	m := NewModel(cli, cat, pla)
 	m.state = StateLoading
+	m.statusMsg = "✓ Reproduciendo: ESPN"
 
 	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = newM.(Model)
@@ -2085,8 +2113,8 @@ func TestModel_Esc_WhenLoading_StopsPlayer(t *testing.T) {
 	if m.state != StateMainMenu {
 		t.Errorf("expected state StateMainMenu after Esc while loading, got %d", m.state)
 	}
-	if !pla.stopped {
-		t.Errorf("expected player.Stop() to be called on Esc while loading")
+	if pla.stopped {
+		t.Errorf("expected player to NOT be stopped on Esc while loading when not connecting")
 	}
 }
 
