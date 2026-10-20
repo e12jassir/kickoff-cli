@@ -15,8 +15,7 @@ openspec/config.yaml
 
 # Repomix dumps (generated locally, never commit the codebase as a blob)
 repomix-output.xml
-repomix-output.txt
-repomix-output.*
+repomix-*.txt
 
 # built binary
 /kickoff
