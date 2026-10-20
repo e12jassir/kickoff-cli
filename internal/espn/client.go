@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/e12jassir/kickoff-cli/internal/fsutil"
 	"github.com/e12jassir/kickoff-cli/internal/locale"
 	"github.com/e12jassir/kickoff-cli/internal/model"
 )
@@ -25,6 +26,11 @@ const (
 	defaultPastCacheTTL = 6 * time.Hour
 	defaultTimeout      = 10 * time.Second
 	userAgent           = "kickoff-cli/1.0 (+https://github.com/e12jassir/kickoff-cli)"
+
+	// maxRetryAfter caps how long a Retry-After hint may delay the next attempt.
+	// Servers occasionally advertise minutes or hours, which would freeze the
+	// interactive UI far past the point where a retry is still useful.
+	maxRetryAfter = 10 * time.Second
 
 	// probeConcurrency caps the scoreboard probes a cold cache may keep in
 	// flight. The historical sweep fans out over 14 days, and without a cap a
@@ -353,6 +359,11 @@ func (c *Client) calculateBackoff(attempt int, resp *http.Response) time.Duratio
 	if resp != nil {
 		if ra := resp.Header.Get("Retry-After"); ra != "" {
 			if d, ok := parseRetryAfter(ra, c.now()); ok {
+				// A server can ask for minutes or hours. Honor the hint but never
+				// let it stall the caller for longer than maxRetryAfter.
+				if d > maxRetryAfter {
+					return maxRetryAfter
+				}
 				return d
 			}
 		}
@@ -523,42 +534,6 @@ func (c *Client) fallbackMatches(leagueKey string, origErr error) ([]model.Match
 	return nil, origErr
 }
 
-// atomicWriteFile writes data to a temporary file in the same directory as targetPath,
-// and then atomically renames it to targetPath.
-func atomicWriteFile(targetPath string, data []byte, perm os.FileMode) error {
-	dir := filepath.Dir(targetPath)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-
-	tmpFile, err := os.CreateTemp(dir, ".tmp-*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmpFile.Name()
-	cleanup := true
-	defer func() {
-		if cleanup {
-			_ = os.Remove(tmpName)
-		}
-	}()
-
-	if _, err := tmpFile.Write(data); err != nil {
-		_ = tmpFile.Close()
-		return err
-	}
-	if err := tmpFile.Close(); err != nil {
-		return err
-	}
-	_ = os.Chmod(tmpName, perm)
-
-	if err := os.Rename(tmpName, targetPath); err != nil {
-		return err
-	}
-	cleanup = false
-	return nil
-}
-
 func (c *Client) setCache(leagueKey string, matches []model.Match) {
 	if err := os.MkdirAll(c.cacheDir, 0o755); err != nil {
 		return
@@ -572,7 +547,7 @@ func (c *Client) setCache(leagueKey string, matches []model.Match) {
 	if err != nil {
 		return
 	}
-	_ = atomicWriteFile(cachePath, data, 0o644)
+	_ = fsutil.AtomicWriteFile(cachePath, data, 0o644)
 }
 
 func (c *Client) invalidateCache(leagueKey string) {
@@ -639,7 +614,7 @@ func (c *Client) setCachedPastEvents(leagueKey string, events []rawEvent) {
 	if err != nil {
 		return
 	}
-	_ = atomicWriteFile(cachePath, data, 0o644)
+	_ = fsutil.AtomicWriteFile(cachePath, data, 0o644)
 }
 
 func (c *Client) summaryCachePath(eventID string) string {
@@ -711,7 +686,7 @@ func (c *Client) setCachedSummary(eventID string, stats *model.MatchStats, lineu
 	if err != nil {
 		return
 	}
-	_ = atomicWriteFile(cachePath, data, 0o644)
+	_ = fsutil.AtomicWriteFile(cachePath, data, 0o644)
 }
 
 // FetchMatches queries ESPN scoreboard API, extracts official TV broadcasts, and caches results.
@@ -1596,7 +1571,7 @@ func (c *Client) setCachedStandings(leagueKey string, standings *model.LeagueSta
 	}
 	data, err := json.Marshal(cached)
 	if err == nil {
-		_ = atomicWriteFile(c.standingsCachePath(leagueKey), data, 0o644)
+		_ = fsutil.AtomicWriteFile(c.standingsCachePath(leagueKey), data, 0o644)
 	}
 }
 
@@ -1813,7 +1788,7 @@ func (c *Client) setCachedStatistics(leagueKey string, statistics *model.LeagueS
 	}
 	data, err := json.Marshal(cached)
 	if err == nil {
-		_ = atomicWriteFile(c.statisticsCachePath(leagueKey), data, 0o644)
+		_ = fsutil.AtomicWriteFile(c.statisticsCachePath(leagueKey), data, 0o644)
 	}
 }
 

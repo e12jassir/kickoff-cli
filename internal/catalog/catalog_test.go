@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -54,6 +55,17 @@ func newTestCatalog(opts ...Option) *Catalog {
 		WithStreams(mockTestStreams),
 		WithParrilla(offlineParrilla{}),
 		WithExtractor(nil),
+		WithTVGuide(tvguide.NewService(tvguide.WithAutoRefresh(false))),
+	}, opts...)
+	return New(allOpts...)
+}
+
+// newOfflineTestCatalog builds a catalog whose TV guide never loads the user's
+// real cache nor starts a background crawl. Tests that need a specific config
+// file or fake dependency use this instead of calling New directly.
+func newOfflineTestCatalog(opts ...Option) *Catalog {
+	allOpts := append([]Option{
+		WithTVGuide(tvguide.NewService(tvguide.WithAutoRefresh(false))),
 	}, opts...)
 	return New(allOpts...)
 }
@@ -480,7 +492,7 @@ func TestCatalog_PlayabilityGate(t *testing.T) {
 	}
 
 	// Only espn1 is configured; ESPN 4 is not playable.
-	unplayable := New(
+	unplayable := newOfflineTestCatalog(
 		WithConfigFile(filepath.Join(t.TempDir(), "none.json")),
 		WithStreams(map[string]string{"espn1": "http://example.invalid/espn1.m3u8"}),
 		WithParrilla(offlineParrilla{}),
@@ -493,7 +505,7 @@ func TestCatalog_PlayabilityGate(t *testing.T) {
 	}
 
 	// The same match is playable once ESPN 4 has a configured URL.
-	playable := New(
+	playable := newOfflineTestCatalog(
 		WithConfigFile(filepath.Join(t.TempDir(), "none.json")),
 		WithStreams(map[string]string{"espn4": "http://example.invalid/espn4.m3u8"}),
 		WithParrilla(offlineParrilla{}),
@@ -531,7 +543,7 @@ func TestCatalog_OverridesTakePrecedence(t *testing.T) {
 		t.Fatalf("failed to write test config: %v", err)
 	}
 
-	cat := New(WithConfigFile(cfgPath), WithStreams(mockTestStreams), WithParrilla(offlineParrilla{}))
+	cat := newOfflineTestCatalog(WithConfigFile(cfgPath), WithStreams(mockTestStreams), WithParrilla(offlineParrilla{}))
 
 	// A custom rule wins even when ESPN metadata lists a different broadcaster.
 	ruleMatch := model.Match{
@@ -562,18 +574,56 @@ func TestCatalog_OverridesTakePrecedence(t *testing.T) {
 	}
 }
 
-func TestCatalog_CBSOfficialBroadcasts(t *testing.T) {
-	oldCBSSN := StreamCBSSportsNetwork
-	oldGolazo := StreamCBSGolazo
-	defer func() {
-		StreamCBSSportsNetwork = oldCBSSN
-		StreamCBSGolazo = oldGolazo
-	}()
-
-	StreamCBSSportsNetwork = "http://example.invalid/cbssn.m3u8"
-	StreamCBSGolazo = "http://example.invalid/golazo.m3u8"
+// TestCatalog_USStreamsFromEnv proves the optional KICKOFF_STREAM_* endpoints are
+// read when the catalog is constructed, not once at package initialization. A
+// process that sets the variable before creating the catalog must see it.
+func TestCatalog_USStreamsFromEnv(t *testing.T) {
+	t.Setenv("KICKOFF_STREAM_CBSSN", "http://example.invalid/env-cbssn.m3u8")
+	t.Setenv("KICKOFF_STREAM_GOLAZO", "http://example.invalid/env-golazo.m3u8")
 
 	cat := newTestCatalog()
+	channels := cat.GetChannels(model.Match{
+		ID:         "env-us-streams",
+		LeagueKey:  "champions",
+		Title:      "Inter Miami vs New York City",
+		Broadcasts: []string{"CBSSN", "Paramount+"},
+	})
+	if len(channels) != 2 {
+		t.Fatalf("expected the two env-configured US streams, got %+v", channels)
+	}
+	if channels[0].URL != "http://example.invalid/env-cbssn.m3u8" {
+		t.Errorf("expected the env CBSSN URL, got %s", channels[0].URL)
+	}
+	if channels[1].URL != "http://example.invalid/env-golazo.m3u8" {
+		t.Errorf("expected the env Golazo URL, got %s", channels[1].URL)
+	}
+}
+
+// TestCatalog_USStreamsOptionOverridesEnv pins precedence: an explicit option wins
+// over the environment, matching every other programmatic stream source.
+func TestCatalog_USStreamsOptionOverridesEnv(t *testing.T) {
+	t.Setenv("KICKOFF_STREAM_CBSSN", "http://example.invalid/env-cbssn.m3u8")
+
+	cat := newTestCatalog(WithUSStreams("http://example.invalid/option-cbssn.m3u8", ""))
+	channels := cat.GetChannels(model.Match{
+		ID:         "option-us-streams",
+		LeagueKey:  "champions",
+		Title:      "Inter Miami vs New York City",
+		Broadcasts: []string{"CBSSN"},
+	})
+	if len(channels) != 1 {
+		t.Fatalf("expected one option-configured stream, got %+v", channels)
+	}
+	if channels[0].URL != "http://example.invalid/option-cbssn.m3u8" {
+		t.Errorf("expected the option URL to win, got %s", channels[0].URL)
+	}
+}
+
+func TestCatalog_CBSOfficialBroadcasts(t *testing.T) {
+	cat := newTestCatalog(WithUSStreams(
+		"http://example.invalid/cbssn.m3u8",
+		"http://example.invalid/golazo.m3u8",
+	))
 	match := model.Match{
 		ID:         "live-cbs-configured",
 		LeagueKey:  "champions",
@@ -738,7 +788,7 @@ func TestCatalog_ExternalConfig_LeagueAliases(t *testing.T) {
 		t.Fatalf("failed to write test config: %v", err)
 	}
 
-	cat := New(WithConfigFile(cfgPath), WithParrilla(offlineParrilla{}))
+	cat := newOfflineTestCatalog(WithConfigFile(cfgPath), WithParrilla(offlineParrilla{}))
 
 	testCases := []struct {
 		leagueKey    string
@@ -785,7 +835,7 @@ func TestNew_AppliesOptionsExactlyOnce(t *testing.T) {
 		{Name: "Injected B", URL: "http://example.invalid/injected-b.m3u8"},
 	}
 
-	cat := New(
+	cat := newOfflineTestCatalog(
 		WithConfigFile(cfgPath),
 		WithStreams(map[string]string{"espn1": "http://programmatic.invalid/espn1.m3u8"}),
 		WithM3UChannels(injected),
@@ -824,7 +874,7 @@ http://example.com/remote/win.m3u8
 		t.Fatalf("failed to write test config: %v", err)
 	}
 
-	cat := New(WithConfigFile(cfgPath))
+	cat := newOfflineTestCatalog(WithConfigFile(cfgPath))
 
 	cat.mu.RLock()
 	defer cat.mu.RUnlock()
@@ -862,7 +912,7 @@ http://example.com/local.m3u8
 		t.Fatalf("failed to write config: %v", err)
 	}
 
-	cat := New(WithConfigFile(cfgPath))
+	cat := newOfflineTestCatalog(WithConfigFile(cfgPath))
 
 	cat.mu.RLock()
 	defer cat.mu.RUnlock()
@@ -941,7 +991,7 @@ func TestCatalog_AdjacentChannelsAndM3UFallback(t *testing.T) {
 		t.Fatalf("could not write channels.json: %v", err)
 	}
 
-	cat := New()
+	cat := newOfflineTestCatalog()
 	endpoint, ok := cat.StreamEndpoint("adjacent_test")
 	if !ok || endpoint != "http://stream.example/live.m3u8" {
 		t.Errorf("expected adjacent channels.json to be loaded, got ok=%v, endpoint=%s", ok, endpoint)
@@ -957,7 +1007,7 @@ func TestCatalog_AdjacentChannelsAndM3UFallback(t *testing.T) {
 		t.Fatalf("could not write signals.m3u: %v", err)
 	}
 
-	cat2 := New()
+	cat2 := newOfflineTestCatalog()
 	cat2.mu.RLock()
 	defer cat2.mu.RUnlock()
 	if len(cat2.m3uChannels) == 0 {
@@ -1035,7 +1085,7 @@ func TestCatalog_ParrillaTier(t *testing.T) {
 	t.Run("unknown and unconfigured streaming channels emit nothing", func(t *testing.T) {
 		// "Disney+ Premium" is not a known channel, and "DSports+" is known but
 		// its stream key is not configured in this catalog. Neither may resolve.
-		cat := New(
+		cat := newOfflineTestCatalog(
 			WithConfigFile(filepath.Join(t.TempDir(), "none.json")),
 			WithStreams(map[string]string{"espn2": "http://example.invalid/espn2.m3u8"}),
 			WithParrilla(&parrillaFake{snap: parrillaSnap([]string{"Disney+ Premium", "DSports+"})}),
@@ -1084,7 +1134,7 @@ func TestParrillaDay_IsTimezoneIndependent(t *testing.T) {
 func TestParrillaTier_UsesM3UFallback(t *testing.T) {
 	const streamURL = "http://example.invalid/espn2.m3u8"
 
-	cat := New(
+	cat := newOfflineTestCatalog(
 		WithConfigFile(filepath.Join(t.TempDir(), "none.json")),
 		WithParrilla(&parrillaFake{snap: parrillaSnap([]string{"ESPN 2"})}),
 		WithM3UChannels([]M3UChannel{{Name: "ESPN 2 HD", URL: streamURL}}),
@@ -1115,7 +1165,7 @@ func TestParrillaTier_UsesM3UFallback(t *testing.T) {
 // tier 2 for compound national broadcasters: a primary dual profile plus the
 // secondary feed resolved independently.
 func TestParrillaTier_EmitsSecondaryChannels(t *testing.T) {
-	cat := New(
+	cat := newOfflineTestCatalog(
 		WithConfigFile(filepath.Join(t.TempDir(), "none.json")),
 		WithStreams(map[string]string{"caracol": "http://example.invalid/caracol.m3u8"}),
 		WithM3UChannels([]M3UChannel{{Name: "Caracol HD2", URL: "http://example.invalid/caracolhd2.m3u8"}}),
@@ -1173,6 +1223,124 @@ func TestCatalog_ParrillaSnapshotFetchedOncePerDay(t *testing.T) {
 	}
 }
 
+// TestCatalog_ParrillaSnapshotFailureTTL proves a failed parrilla fetch is retried
+// after a short failure TTL instead of being cached for the whole day, which would
+// leave the user without a grid until midnight.
+func TestCatalog_ParrillaSnapshotFailureTTL(t *testing.T) {
+	now := time.Date(2026, 10, 20, 12, 0, 0, 0, locale.BogotaLocation())
+	fake := &parrillaFake{err: errors.New("source down")}
+	cat := newTestCatalog(
+		WithParrilla(fake),
+		WithNow(func() time.Time { return now }),
+	)
+
+	match := newParrillaMatch(nil)
+	if chs := cat.GetChannels(match); len(chs) != 0 {
+		t.Fatalf("expected no channels from a failed parrilla, got %+v", chs)
+	}
+	if got := fake.callCount(); got != 1 {
+		t.Fatalf("expected 1 fetch, got %d", got)
+	}
+
+	// Within the failure TTL the negative result is reused instead of hammering
+	// the source on every resolution.
+	now = now.Add(parrillaFailureTTL - time.Minute)
+	_ = cat.GetChannels(match)
+	if got := fake.callCount(); got != 1 {
+		t.Fatalf("expected failure cached for %v, got %d fetches", parrillaFailureTTL, got)
+	}
+
+	// Past the TTL the source is retried, so a transient outage heals during the
+	// same day.
+	now = now.Add(2 * time.Minute)
+	_ = cat.GetChannels(match)
+	if got := fake.callCount(); got != 2 {
+		t.Fatalf("expected a retry after the failure TTL, got %d fetches", got)
+	}
+}
+
+// TestCatalog_ParrillaSnapshotSuccessCachedForDay proves a successful snapshot is
+// still reused for the whole source day: the failure TTL must not shorten it.
+func TestCatalog_ParrillaSnapshotSuccessCachedForDay(t *testing.T) {
+	now := time.Date(2026, 10, 20, 12, 0, 0, 0, locale.BogotaLocation())
+	fake := &parrillaFake{snap: parrillaSnap([]string{"ESPN 2"})}
+	cat := newTestCatalog(
+		WithParrilla(fake),
+		WithNow(func() time.Time { return now }),
+	)
+
+	match := newParrillaMatch(nil)
+	for i := 0; i < 3; i++ {
+		if chs := cat.GetChannels(match); len(chs) != 2 {
+			t.Fatalf("call %d: expected the dual parrilla profile, got %+v", i, chs)
+		}
+		now = now.Add(3 * time.Hour)
+	}
+	if got := fake.callCount(); got != 1 {
+		t.Fatalf("expected the successful snapshot to stay cached, got %d fetches", got)
+	}
+}
+
+// TestCatalog_InvalidChannelsConfigWarns proves an unparsable channels.json emits
+// exactly one actionable warning on stderr instead of failing silently, so a user
+// can tell a typo apart from "no channels configured".
+func TestCatalog_InvalidChannelsConfigWarns(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "channels.json")
+	if err := os.WriteFile(cfgPath, []byte(`{"streams": `), 0o600); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	err := captureStderr(t, func() {
+		_ = newOfflineTestCatalog(WithConfigFile(cfgPath), WithStreams(mockTestStreams), WithParrilla(offlineParrilla{}))
+	})
+	if !strings.Contains(err, "channels.json") {
+		t.Errorf("expected a warning naming channels.json, got %q", err)
+	}
+	if got := strings.Count(err, "kickoff:"); got != 1 {
+		t.Errorf("expected exactly one warning line, got %d in %q", got, err)
+	}
+}
+
+// TestCatalog_MissingChannelsConfigIsSilent keeps the warning specific to invalid
+// content: an absent optional file is a normal configuration.
+func TestCatalog_MissingChannelsConfigIsSilent(t *testing.T) {
+	err := captureStderr(t, func() {
+		_ = newOfflineTestCatalog(
+			WithConfigFile(filepath.Join(t.TempDir(), "absent.json")),
+			WithStreams(mockTestStreams),
+			WithParrilla(offlineParrilla{}),
+		)
+	})
+	if err != "" {
+		t.Errorf("expected no warning for a missing config, got %q", err)
+	}
+}
+
+// captureStderr redirects os.Stderr for the duration of fn and returns what was
+// written. The catalog writes its warning during construction, before any TUI
+// renderer owns the terminal.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	orig := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create pipe: %v", err)
+	}
+	os.Stderr = w
+	defer func() { os.Stderr = orig }()
+
+	fn()
+	if err := w.Close(); err != nil {
+		t.Fatalf("failed to close pipe: %v", err)
+	}
+	data, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("failed to read pipe: %v", err)
+	}
+	_ = r.Close()
+	return string(data)
+}
+
 // TestCatalog_ParrillaPrecedence pins the tier order: user custom_rules and league
 // overrides still win (without even fetching the parrilla), ESPN metadata outranks
 // the parrilla, and an unplayable non-US ESPN broadcaster falls through to it.
@@ -1195,7 +1363,7 @@ func TestCatalog_ParrillaPrecedence(t *testing.T) {
 		}
 
 		fake := &parrillaFake{snap: parrillaSnap([]string{"ESPN 2"})}
-		cat := New(WithConfigFile(cfgPath), WithStreams(mockTestStreams), WithParrilla(fake))
+		cat := newOfflineTestCatalog(WithConfigFile(cfgPath), WithStreams(mockTestStreams), WithParrilla(fake))
 
 		chs := cat.GetChannels(newParrillaMatch(nil))
 		if len(chs) != 1 || chs[0].Name != "Rule Wins" {
@@ -1220,7 +1388,7 @@ func TestCatalog_ParrillaPrecedence(t *testing.T) {
 		}
 
 		fake := &parrillaFake{snap: parrillaSnap([]string{"ESPN 2"})}
-		cat := New(WithConfigFile(cfgPath), WithStreams(mockTestStreams), WithParrilla(fake))
+		cat := newOfflineTestCatalog(WithConfigFile(cfgPath), WithStreams(mockTestStreams), WithParrilla(fake))
 
 		chs := cat.GetChannels(newParrillaMatch(nil))
 		if len(chs) != 1 || chs[0].Name != "League Override" {
@@ -1318,7 +1486,7 @@ func TestCatalog_Tier5_DynamicExtractor(t *testing.T) {
 		}
 
 		// Catalog without dsports in userStreams so Tier 2 cannot resolve it
-		cat := New(
+		cat := newOfflineTestCatalog(
 			WithConfigFile(filepath.Join(os.TempDir(), "nonexistent_kickoff_channels.json")),
 			WithStreams(map[string]string{}),
 			WithParrilla(offlineParrilla{}),

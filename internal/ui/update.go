@@ -806,7 +806,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.selectedMatchID = ""
 					m.detailsLoaded = make(map[string]bool)
 					m.standings = nil
+					m.standingsErr = nil
+					m.selectedGroup = 0
 					m.statistics = nil
+					m.statisticsErr = nil
 					m.channels = nil
 					m.channelsLoading = false
 					m.channelCursor = 0

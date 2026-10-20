@@ -96,6 +96,38 @@ func (m *mockPlayer) Wait() error {
 	return nil
 }
 
+// TestModel_LeagueChangeResetsPerLeagueState proves switching leagues clears the
+// previous league's group selection and load errors; otherwise the new league
+// would inherit a stale group index or a stale error banner.
+func TestModel_LeagueChangeResetsPerLeagueState(t *testing.T) {
+	m := NewModel(&mockClient{}, &mockCatalog{}, &mockPlayer{})
+
+	cat := m.categories[0]
+	m.expandedCats[cat] = true
+	m.categoryMode = false
+	m.leagueCursor = m.categoryIndices[cat][0]
+
+	m.selectedGroup = 3
+	m.standingsErr = errors.New("standings failed")
+	m.statisticsErr = errors.New("statistics failed")
+
+	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newM.(Model)
+
+	if m.state != StateLoading {
+		t.Fatalf("expected StateLoading after selecting a league, got %d", m.state)
+	}
+	if m.selectedGroup != 0 {
+		t.Errorf("expected selectedGroup reset to 0, got %d", m.selectedGroup)
+	}
+	if m.standingsErr != nil {
+		t.Errorf("expected standingsErr cleared, got %v", m.standingsErr)
+	}
+	if m.statisticsErr != nil {
+		t.Errorf("expected statisticsErr cleared, got %v", m.statisticsErr)
+	}
+}
+
 func TestModel_MainMenu_Navigation(t *testing.T) {
 	cli := &mockClient{}
 	cat := &mockCatalog{}
@@ -1018,7 +1050,7 @@ func TestModel_ChannelModal_SanitizedAndAligned(t *testing.T) {
 		Status:    model.MatchStatus{State: "in", Description: "1T 25'"},
 	}
 
-	out := renderChannelModal(match, channels, 0, 0, false, "", false, false)
+	out := renderChannelModal(match, time.Now(), channels, 0, 0, false, "", false, false)
 
 	// 1. Must NOT contain bullet indentations "·" preceding channel names
 	if strings.Contains(out, "· Win+ Fútbol") || strings.Contains(out, "· Win Sports") {
@@ -2163,6 +2195,71 @@ func TestModalTabTransitionsAndLineups(t *testing.T) {
 	m = newM.(Model)
 	if m.modalTab != 2 {
 		t.Fatalf("expected modalTab 2 after Shift+Tab, got %d", m.modalTab)
+	}
+}
+
+// TestRenderTabPartidos_TodayUsesUserZone proves the "today" boundary follows the
+// user's display timezone, not the machine's local zone. At 16:00 UTC it is
+// already 01:00 the next day in Tokyo, so a fixture dated Oct 21 is today there.
+func TestRenderTabPartidos_TodayUsesUserZone(t *testing.T) {
+	tokyo, err := time.LoadLocation("Asia/Tokyo")
+	if err != nil {
+		t.Skipf("tzdata unavailable: %v", err)
+	}
+
+	m := NewModel(&mockClient{}, &mockCatalog{}, &mockPlayer{})
+	m.width = 100
+	m.height = 35
+	m.state = StateBrowsing
+	m.leagueTab = TabPartidos
+	m.clock = func() time.Time { return time.Date(2026, 10, 20, 16, 0, 0, 0, time.UTC) }
+	m.loc = tokyo
+
+	match := model.Match{
+		ID:        "tokyo-today",
+		Title:     "Urawa Reds vs Kashiwa Reysol",
+		HomeTeam:  model.Competitor{DisplayName: "Urawa Reds"},
+		AwayTeam:  model.Competitor{DisplayName: "Kashiwa Reysol"},
+		Status:    model.MatchStatus{State: "pre"},
+		StartTime: time.Date(2026, 10, 21, 19, 0, 0, 0, tokyo),
+		TimeStr:   "19:00",
+		Venue:     "Saitama Stadium",
+	}
+	m.matches = []model.Match{match}
+
+	view := renderTabPartidos(m, m.CurrentLeague())
+	if !strings.Contains(view, "PARTIDOS DE HOY") {
+		t.Errorf("expected the user-zone today header, got:\n%s", view)
+	}
+	if strings.Contains(view, "[21/10]") {
+		t.Errorf("expected no date prefix for a fixture that is today in Tokyo, got:\n%s", view)
+	}
+}
+
+// TestCalendarDayDiff proves day differences are computed on the calendar, not on
+// elapsed hours. A DST spring-forward day lasts 23 hours, so Hours()/24 truncates
+// to zero and would label tomorrow's fixture as today.
+func TestCalendarDayDiff(t *testing.T) {
+	ny, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Skipf("tzdata unavailable: %v", err)
+	}
+
+	springForward := time.Date(2026, 3, 8, 0, 30, 0, 0, ny)
+	nextDay := time.Date(2026, 3, 9, 0, 30, 0, 0, ny)
+	if got := calendarDayDiff(springForward, nextDay); got != 1 {
+		t.Errorf("expected 1 calendar day across DST, got %d", got)
+	}
+
+	// A sub-day difference on the same calendar date is never a full day.
+	later := time.Date(2026, 3, 8, 23, 30, 0, 0, ny)
+	if got := calendarDayDiff(springForward, later); got != 0 {
+		t.Errorf("expected 0 calendar days within the same date, got %d", got)
+	}
+
+	// Negative direction must stay symmetric.
+	if got := calendarDayDiff(nextDay, springForward); got != -1 {
+		t.Errorf("expected -1 going backwards, got %d", got)
 	}
 }
 

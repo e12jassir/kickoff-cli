@@ -1028,49 +1028,6 @@ func TestClient_FetchStatistics_MissingAthleteName(t *testing.T) {
 	}
 }
 
-func TestAtomicWriteFile(t *testing.T) {
-	tempDir := t.TempDir()
-	targetPath := filepath.Join(tempDir, "sub", "test.txt")
-
-	data1 := []byte("first content")
-	if err := atomicWriteFile(targetPath, data1, 0o644); err != nil {
-		t.Fatalf("atomicWriteFile failed: %v", err)
-	}
-
-	read1, err := os.ReadFile(targetPath)
-	if err != nil {
-		t.Fatalf("failed to read target file: %v", err)
-	}
-	if string(read1) != string(data1) {
-		t.Errorf("expected %q, got %q", string(data1), string(read1))
-	}
-
-	// Atomic overwrite
-	data2 := []byte("overwritten content")
-	if err := atomicWriteFile(targetPath, data2, 0o644); err != nil {
-		t.Fatalf("atomicWriteFile overwrite failed: %v", err)
-	}
-
-	read2, err := os.ReadFile(targetPath)
-	if err != nil {
-		t.Fatalf("failed to read overwritten file: %v", err)
-	}
-	if string(read2) != string(data2) {
-		t.Errorf("expected %q, got %q", string(data2), string(read2))
-	}
-
-	// Verify no temporary files remain in sub directory
-	entries, err := os.ReadDir(filepath.Join(tempDir, "sub"))
-	if err != nil {
-		t.Fatalf("failed to read dir: %v", err)
-	}
-	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), ".tmp-") {
-			t.Errorf("unexpected temporary file found: %s", entry.Name())
-		}
-	}
-}
-
 func TestClient_AtomicCacheWrites(t *testing.T) {
 	tempDir := t.TempDir()
 	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
@@ -1209,6 +1166,34 @@ func TestClient_CalculateBackoff(t *testing.T) {
 	)
 	if zeroClient.calculateBackoff(1, nil) != 0 {
 		t.Errorf("expected 0 backoff when retryBackoff returns 0")
+	}
+}
+
+func TestClient_CalculateBackoff_CapsRetryAfter(t *testing.T) {
+	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	client := NewClient(
+		WithNow(func() time.Time { return now }),
+		WithRetryBackoff(func() time.Duration { return 100 * time.Millisecond }),
+	)
+
+	// A hostile or misconfigured server can ask for hours. Waiting that long
+	// blocks the TUI, so the honored delay is capped.
+	seconds := &http.Response{Header: http.Header{"Retry-After": []string{"120"}}}
+	if d := client.calculateBackoff(0, seconds); d != 10*time.Second {
+		t.Errorf("expected Retry-After seconds capped at 10s, got %v", d)
+	}
+
+	date := &http.Response{Header: http.Header{
+		"Retry-After": []string{now.Add(time.Hour).Format(http.TimeFormat)},
+	}}
+	if d := client.calculateBackoff(0, date); d != 10*time.Second {
+		t.Errorf("expected Retry-After date capped at 10s, got %v", d)
+	}
+
+	// Values below the cap keep their exact value.
+	short := &http.Response{Header: http.Header{"Retry-After": []string{"3"}}}
+	if d := client.calculateBackoff(0, short); d != 3*time.Second {
+		t.Errorf("expected 3s preserved below the cap, got %v", d)
 	}
 }
 

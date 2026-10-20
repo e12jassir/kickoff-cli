@@ -276,6 +276,60 @@ func TestMatchScore(t *testing.T) {
 	}
 }
 
+// countingCrawler records crawl attempts so background-refresh behavior can be
+// asserted without touching the network.
+type countingCrawler struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (c *countingCrawler) Crawl(ctx context.Context, targets []ChannelTarget) ([]ChannelGuide, error) {
+	c.mu.Lock()
+	c.calls++
+	c.mu.Unlock()
+	return nil, nil
+}
+
+func (c *countingCrawler) FetchChannel(ctx context.Context, slug string) ([]string, error) {
+	return nil, nil
+}
+
+func (c *countingCrawler) callCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.calls
+}
+
+// TestService_AutoRefreshIsExplicit proves the background crawl is an explicit
+// option instead of being inferred from the test binary's flags. A service built
+// without it must never touch the network, and one that opts in must.
+func TestService_AutoRefreshIsExplicit(t *testing.T) {
+	quiet := &countingCrawler{}
+	svc := NewService(WithCacheDir(t.TempDir()), WithCrawler(quiet), WithTargets(nil))
+	time.Sleep(50 * time.Millisecond)
+	if got := quiet.callCount(); got != 0 {
+		t.Fatalf("expected no background crawl without WithAutoRefresh(true), got %d", got)
+	}
+	if len(svc.Guides()) != 0 {
+		t.Fatalf("expected no guides, got %+v", svc.Guides())
+	}
+
+	eager := &countingCrawler{}
+	NewService(
+		WithCacheDir(t.TempDir()),
+		WithCrawler(eager),
+		WithTargets(nil),
+		WithAutoRefresh(true),
+	)
+	deadline := time.Now().Add(2 * time.Second)
+	for eager.callCount() == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := eager.callCount(); got == 0 {
+		t.Fatalf("expected a background crawl when auto refresh is enabled")
+	}
+}
+
 func TestService_ResolveMatch(t *testing.T) {
 	svc := NewService()
 	svc.SetGuides([]ChannelGuide{
@@ -465,6 +519,62 @@ func TestCacheSerialization_FreshAndExpired(t *testing.T) {
 	)
 	if len(svc3.Guides()) != 0 {
 		t.Errorf("expected empty guides due to TTL expiration, got %v", svc3.Guides())
+	}
+}
+
+// TestService_SaveCacheAtomicReplace proves the guide cache is replaced by an
+// atomic rename instead of an in-place write: a truncated or partially written
+// cache would make the next startup load garbage. A rename changes the file
+// identity, while os.WriteFile would keep the same inode.
+func TestService_SaveCacheAtomicReplace(t *testing.T) {
+	tempDir := t.TempDir()
+	fixedTime := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
+	svc := NewService(
+		WithCacheDir(tempDir),
+		WithNow(func() time.Time { return fixedTime }),
+		WithCacheTTL(4*time.Hour),
+	)
+
+	first := []ChannelGuide{{Name: "ESPN 1 HD", Slug: "espn_colombia", Programs: []string{"A vs. B"}}}
+	if err := svc.saveCache(first); err != nil {
+		t.Fatalf("failed to save cache: %v", err)
+	}
+
+	cachePath := filepath.Join(tempDir, "tvguide_2026-10-14.json")
+	before, err := os.Stat(cachePath)
+	if err != nil {
+		t.Fatalf("cache file not created: %v", err)
+	}
+
+	second := []ChannelGuide{{Name: "ESPN 2 HD", Slug: "espn2_colombia", Programs: []string{"C vs. D"}}}
+	if err := svc.saveCache(second); err != nil {
+		t.Fatalf("failed to rewrite cache: %v", err)
+	}
+
+	after, err := os.Stat(cachePath)
+	if err != nil {
+		t.Fatalf("cache file missing after rewrite: %v", err)
+	}
+	if os.SameFile(before, after) {
+		t.Errorf("expected saveCache to replace the file atomically, but the inode was reused")
+	}
+
+	data, err := os.ReadFile(cachePath)
+	if err != nil {
+		t.Fatalf("failed to read cache: %v", err)
+	}
+	if !strings.Contains(string(data), "ESPN 2 HD") {
+		t.Errorf("expected the rewritten guide in the cache, got %s", data)
+	}
+
+	entries, err := os.ReadDir(tempDir)
+	if err != nil {
+		t.Fatalf("failed to read cache dir: %v", err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".tmp-") {
+			t.Errorf("unexpected temporary file left behind: %s", entry.Name())
+		}
 	}
 }
 

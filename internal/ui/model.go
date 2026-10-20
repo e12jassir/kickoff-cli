@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/e12jassir/kickoff-cli/internal/locale"
 	"github.com/e12jassir/kickoff-cli/internal/model"
 )
 
@@ -120,6 +121,12 @@ type Model struct {
 	version         string
 	updateAvailable string
 	noEmoji         bool
+
+	// clock and loc define the wall clock the view renders against. Both are
+	// injectable so day boundaries can be tested without depending on the
+	// machine's timezone or the real clock.
+	clock func() time.Time
+	loc   *time.Location
 }
 
 // NewModel constructs a new UI model with defaults and dependencies.
@@ -183,7 +190,35 @@ func NewModel(client model.Client, catalog model.Resolver, player model.Controll
 		width:           80,
 		height:          24,
 		noEmoji:         false,
+		clock:           time.Now,
+		loc:             locale.Location(),
 	}
+}
+
+// WithClock overrides the wall clock and display timezone used by the view.
+// Tests use it to pin day boundaries; production keeps time.Now and the locale
+// resolver.
+func (m Model) WithClock(now func() time.Time, loc *time.Location) Model {
+	if now != nil {
+		m.clock = now
+	}
+	if loc != nil {
+		m.loc = loc
+	}
+	return m
+}
+
+// displayNow returns the current instant in the user's display timezone.
+func (m Model) displayNow() time.Time {
+	now := time.Now
+	if m.clock != nil {
+		now = m.clock
+	}
+	loc := m.loc
+	if loc == nil {
+		loc = locale.Location()
+	}
+	return now().In(loc)
 }
 
 // WithVersion sets the app version on the model.

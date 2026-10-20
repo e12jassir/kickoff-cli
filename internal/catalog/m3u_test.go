@@ -209,7 +209,7 @@ func TestCatalog_M3UIntegration(t *testing.T) {
 	}
 
 	// 1. WithM3UChannels Option
-	cat := New(WithM3UChannels(m3uChannels))
+	cat := newOfflineTestCatalog(WithM3UChannels(m3uChannels))
 
 	match := model.Match{
 		Title:      "Liverpool vs Arsenal",
@@ -245,7 +245,7 @@ func TestCatalog_M3UIntegration(t *testing.T) {
 		t.Fatalf("error writing config file: %v", err)
 	}
 
-	fileCat := New(WithConfigFile(cfgFile))
+	fileCat := newOfflineTestCatalog(WithConfigFile(cfgFile))
 	colMatch := model.Match{
 		Title:      "Millonarios vs Santa Fe",
 		LeagueKey:  "colombia",

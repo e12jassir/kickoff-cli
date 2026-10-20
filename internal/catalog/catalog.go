@@ -35,12 +35,18 @@ const (
 	// stays on air for two hours from kickoff. It is used only to prefer the
 	// correct parrilla entry for a fixture, never to promote a candidate.
 	parrillaMatchWindowMinutes = 120
+
+	// parrillaFailureTTL bounds how long a failed daily parrilla fetch is cached.
+	// A success stays valid for its source day (the cache key), but a failure
+	// must expire quickly so an outage does not leave the grid empty until
+	// midnight.
+	parrillaFailureTTL = 10 * time.Minute
 )
 
-// Optional US stream endpoints (configurable via environment variables).
-var (
-	StreamCBSSportsNetwork = os.Getenv("KICKOFF_STREAM_CBSSN")
-	StreamCBSGolazo        = os.Getenv("KICKOFF_STREAM_GOLAZO")
+// Environment variables carrying the optional US stream endpoints.
+const (
+	envStreamCBSSN  = "KICKOFF_STREAM_CBSSN"
+	envStreamGolazo = "KICKOFF_STREAM_GOLAZO"
 )
 
 type ExternalConfig struct {
@@ -122,6 +128,22 @@ func WithExtractor(ext extractor.Extractor) Option {
 	}
 }
 
+// WithUSStreams sets the optional US stream endpoints. It overrides the
+// KICKOFF_STREAM_* environment variables read by New.
+func WithUSStreams(cbssn, golazo string) Option {
+	return func(c *Catalog) {
+		c.streamCBSSN = cbssn
+		c.streamGolazo = golazo
+	}
+}
+
+// WithNow overrides the clock used for cache expiry decisions (tests only).
+func WithNow(nowFunc func() time.Time) Option {
+	return func(c *Catalog) {
+		c.now = nowFunc
+	}
+}
+
 // Catalog implements model.Resolver with dynamic broadcast matching, TV guide crawling,
 // and user-configured stream mapping.
 type Catalog struct {
@@ -134,18 +156,34 @@ type Catalog struct {
 	configPath      string
 	tvGuide         *tvguide.Service
 	extractor       extractor.Extractor
+	now             func() time.Time
+
+	// Optional US stream endpoints, resolved from KICKOFF_STREAM_* by New and
+	// overridable through WithUSStreams. Reading them in the constructor keeps
+	// configuration out of package initialization.
+	streamCBSSN  string
+	streamGolazo string
 
 	// parrilla is the Gol Caracol daily schedule fetcher: the authoritative
 	// per-match source of which channel airs each fixture in Colombia (T1).
 	// parrillaMu serializes cache misses so a given local date is fetched at most
 	// once even under concurrent match resolution, and parrillaCache holds the
-	// parsed snapshot per date (including negative, failed results).
+	// parsed snapshot per date, including failed attempts (see parrillaCacheEntry).
 	parrillaFetcher parrilla.Fetcher
-	parrillaCache   map[string]parrilla.Snapshot
+	parrillaCache   map[string]parrillaCacheEntry
 	parrillaMu      sync.Mutex
 
 	webCache   map[string]webCacheEntry
 	webCacheMu sync.RWMutex
+}
+
+// parrillaCacheEntry is one cached daily snapshot. ok distinguishes a real
+// schedule from a failed fetch, and fetchedAt bounds how long a failure is
+// trusted so a transient outage can heal without restarting the process.
+type parrillaCacheEntry struct {
+	snap      parrilla.Snapshot
+	ok        bool
+	fetchedAt time.Time
 }
 
 type webCacheEntry struct {
@@ -170,25 +208,27 @@ func New(opts ...Option) *Catalog {
 		streamAlive:     make(map[string]bool),
 		leagueOverrides: make(map[string][]model.Channel),
 		userStreams:     make(map[string]string),
-		tvGuide:         tvguide.NewService(),
+		tvGuide:         tvguide.NewService(tvguide.WithAutoRefresh(true)),
 		parrillaFetcher: parrilla.NewGolCaracol(),
-		parrillaCache:   make(map[string]parrilla.Snapshot),
+		parrillaCache:   make(map[string]parrillaCacheEntry),
 		extractor:       extractor.NewService(),
 		webCache:        make(map[string]webCacheEntry),
+		now:             time.Now,
+		streamCBSSN:     os.Getenv(envStreamCBSSN),
+		streamGolazo:    os.Getenv(envStreamGolazo),
 	}
 	for _, opt := range opts {
 		opt(c)
 	}
 	c.loadExternalConfig()
-	// Capture the env-configured US stream globals before the probe goroutine starts,
-	// so the goroutine never reads package-level mutable state concurrently with
-	// runtime overrides (e.g. tests that set StreamCBSSportsNetwork/StreamCBSGolazo).
+	// Capture the configured US stream endpoints before the probe goroutine
+	// starts, so the goroutine never reads the catalog's fields after New returns.
 	envStreams := make([]string, 0, 2)
-	if StreamCBSSportsNetwork != "" {
-		envStreams = append(envStreams, StreamCBSSportsNetwork)
+	if c.streamCBSSN != "" {
+		envStreams = append(envStreams, c.streamCBSSN)
 	}
-	if StreamCBSGolazo != "" {
-		envStreams = append(envStreams, StreamCBSGolazo)
+	if c.streamGolazo != "" {
+		envStreams = append(envStreams, c.streamGolazo)
 	}
 	go c.probeAllStreamsBackground(envStreams)
 	if c.extractor != nil {
@@ -347,6 +387,9 @@ func (c *Catalog) loadExternalConfig() {
 
 	var ext ExternalConfig
 	if err := json.Unmarshal(data, &ext); err != nil {
+		// A malformed config silently degrades every channel lookup, which looks
+		// like "nothing configured". Warn once, before the TUI takes the terminal.
+		fmt.Fprintf(os.Stderr, "kickoff: invalid %s: %v\n", cfgPath, err)
 		return
 	}
 
@@ -652,11 +695,11 @@ func (c *Catalog) resolveFromOfficialBroadcasts(broadcasts []string) []model.Cha
 			continue
 		}
 		if containsAny(bl, "cbssn", "cbs sports network", "cbs sports") {
-			c.appendSingleFromURL(&result, StreamCBSSportsNetwork, "CBS Sports Network", len(result) == 0)
+			c.appendSingleFromURL(&result, c.streamCBSSN, "CBS Sports Network", len(result) == 0)
 			continue
 		}
 		if containsAny(bl, "paramount", "golazo", "cbs sports golazo") {
-			c.appendSingleFromURL(&result, StreamCBSGolazo, "CBS Sports Golazo Network", len(result) == 0)
+			c.appendSingleFromURL(&result, c.streamGolazo, "CBS Sports Golazo Network", len(result) == 0)
 			continue
 		}
 	}
@@ -1083,17 +1126,18 @@ func parrillaDay(match model.Match) time.Time {
 }
 
 // parrillaSnapshot returns the cached parrilla snapshot for a date, fetching it at
-// most once per source calendar day. A failed fetch is cached too (negative
-// cache), so a broken source is retried on the next day instead of on every match.
+// most once per source calendar day. A successful snapshot is cached for its whole
+// day; a failed fetch is cached only for parrillaFailureTTL, so a transient outage
+// is retried during the same day instead of hiding the grid until midnight.
 func (c *Catalog) parrillaSnapshot(date time.Time) (parrilla.Snapshot, bool) {
 	key := date.In(locale.BogotaLocation()).Format("2006-01-02")
 
 	c.mu.RLock()
 	fetcher := c.parrillaFetcher
-	cached, ok := c.parrillaCache[key]
+	entry, ok := c.parrillaCache[key]
 	c.mu.RUnlock()
-	if ok {
-		return cached, true
+	if ok && c.parrillaEntryFresh(entry) {
+		return entry.snap, true
 	}
 	if fetcher == nil {
 		return parrilla.Snapshot{}, false
@@ -1107,10 +1151,10 @@ func (c *Catalog) parrillaSnapshot(date time.Time) (parrilla.Snapshot, bool) {
 
 	c.mu.RLock()
 	fetcher = c.parrillaFetcher
-	cached, ok = c.parrillaCache[key]
+	entry, ok = c.parrillaCache[key]
 	c.mu.RUnlock()
-	if ok {
-		return cached, true
+	if ok && c.parrillaEntryFresh(entry) {
+		return entry.snap, true
 	}
 	if fetcher == nil {
 		return parrilla.Snapshot{}, false
@@ -1119,19 +1163,30 @@ func (c *Catalog) parrillaSnapshot(date time.Time) (parrilla.Snapshot, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), parrillaFetchTimeout)
 	defer cancel()
 	snap, err := fetcher.Fetch(ctx, date)
-	if err != nil {
+	fetchOK := err == nil
+	if !fetchOK {
 		// Degrade gracefully: cache the empty result and let lower tiers run.
 		snap = parrilla.Snapshot{Date: key}
 	}
 
 	c.mu.Lock()
 	if c.parrillaCache == nil {
-		c.parrillaCache = make(map[string]parrilla.Snapshot)
+		c.parrillaCache = make(map[string]parrillaCacheEntry)
 	}
-	c.parrillaCache[key] = snap
+	c.parrillaCache[key] = parrillaCacheEntry{snap: snap, ok: fetchOK, fetchedAt: c.now()}
 	c.mu.Unlock()
 
 	return snap, true
+}
+
+// parrillaEntryFresh reports whether a cached entry may still be served.
+// Successful entries live for their whole source day (the cache key), while
+// failures expire after parrillaFailureTTL to allow an in-day retry.
+func (c *Catalog) parrillaEntryFresh(entry parrillaCacheEntry) bool {
+	if entry.ok {
+		return true
+	}
+	return c.now().Sub(entry.fetchedAt) < parrillaFailureTTL
 }
 
 // matchParrillaEntry finds the parrilla entry for a match. Team matching reuses
