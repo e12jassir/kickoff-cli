@@ -126,6 +126,15 @@ key you have not mapped is never offered. A fixture with no playable channel is
 hidden from the match list; if no stream source is configured at all, kickoff
 shows a configuration notice instead of an empty list.
 
+### Built-in free-to-air examples
+
+The starter template written by `kickoff init` maps two keys to public,
+official, free-to-air web streams: `realmadrid` (Real Madrid TV, operated by
+the club itself) and `teledeporte` (RTVE's public sports channel). They exist as
+working examples of the BYOS mapping, not as a curated channel list — every
+other key is left empty so you supply your own lawful source. Both can be
+overridden or removed from `channels.json` like any other stream.
+
 Streaming platforms (Disney+ Premium, DGO, Amazon Prime Video, Paramount+,
 DAZN, Apple TV, VIX, Fanatiz, OneFootball) are DRM-protected. kickoff has no
 DRM/CDM support and treats them as metadata only: they never receive a play
