@@ -665,6 +665,20 @@ func TestFormatGoalNotification(t *testing.T) {
 	}
 }
 
+func TestFormatGoalNotification_NoAthleteFallback(t *testing.T) {
+	m := sampleLiveMatch()
+	ev := &model.MatchEvent{
+		Clock:     "60'",
+		IsScoring: true,
+		IsOwnGoal: true,
+	}
+
+	title, _ := FormatGoalNotification(m, "2", "1", ev)
+	if !strings.Contains(title, "Jugador") {
+		t.Errorf("own goal without athlete should keep the presentation fallback, got %q", title)
+	}
+}
+
 func TestNewNotifier(t *testing.T) {
 	notifier := NewNotifier()
 	if notifier == nil {

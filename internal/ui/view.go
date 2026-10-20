@@ -604,7 +604,11 @@ func renderTabGoleadores(m Model, curr model.League) string {
 		}
 		for i := 0; i < limit; i++ {
 			s := m.statistics.Scorers[i]
-			row := fmt.Sprintf(" %-2d  %-24s  %-18s  %4s", i+1, truncateModalText(s.PlayerName, 24), truncateModalText(s.TeamName, 18), s.Value)
+			playerName := s.PlayerName
+			if playerName == "" {
+				playerName = "Jugador"
+			}
+			row := fmt.Sprintf(" %-2d  %-24s  %-18s  %4s", i+1, truncateModalText(playerName, 24), truncateModalText(s.TeamName, 18), s.Value)
 			if i < 3 {
 				lines = append(lines, lipgloss.NewStyle().Foreground(ColorHighlight).Bold(true).Render(row))
 			} else {
@@ -630,7 +634,11 @@ func renderTabGoleadores(m Model, curr model.League) string {
 		}
 		for i := 0; i < limit; i++ {
 			a := m.statistics.Assists[i]
-			row := fmt.Sprintf(" %-2d  %-24s  %-18s  %4s", i+1, truncateModalText(a.PlayerName, 24), truncateModalText(a.TeamName, 18), a.Value)
+			playerName := a.PlayerName
+			if playerName == "" {
+				playerName = "Jugador"
+			}
+			row := fmt.Sprintf(" %-2d  %-24s  %-18s  %4s", i+1, truncateModalText(playerName, 24), truncateModalText(a.TeamName, 18), a.Value)
 			if i < 3 {
 				lines = append(lines, lipgloss.NewStyle().Foreground(ColorHighlight).Bold(true).Render(row))
 			} else {
@@ -1263,7 +1271,7 @@ func renderTimeline(events []model.MatchEvent, homeTeamID string, modalContentWi
 		}
 
 		pName := strings.TrimSpace(ev.PlayerName)
-		if pName == "" || strings.EqualFold(pName, "jugador") {
+		if pName == "" {
 			if ev.IsYellow || ev.IsRedCard {
 				pName = "Cuerpo técnico"
 			} else if ev.IsOwnGoal {

@@ -533,8 +533,9 @@ func TestClient_FetchMatches_WithEvents(t *testing.T) {
 	if events[1].PlayerName != "V. Junior" || events[1].Clock != "40'" || !events[1].IsPenalty || events[1].Type != "penalty" {
 		t.Errorf("unexpected event 1: %+v", events[1])
 	}
-	// 3. Own goal Jugador fallback
-	if events[2].PlayerName != "Jugador" || events[2].Clock != "60'" || !events[2].IsOwnGoal || events[2].Type != "owngoal" {
+	// 3. Own goal without reported athlete: the parser keeps the name empty
+	// and leaves presentation fallbacks to the view.
+	if events[2].PlayerName != "" || events[2].Clock != "60'" || !events[2].IsOwnGoal || events[2].Type != "owngoal" {
 		t.Errorf("unexpected event 2: %+v", events[2])
 	}
 	// 4. Yellow Gavi
@@ -987,6 +988,43 @@ func TestClient_FetchStatistics_Parsing(t *testing.T) {
 	}
 	if len(cached.Statistics.Scorers) != 1 || cached.Statistics.Scorers[0].PlayerName != "Erling Haaland" {
 		t.Errorf("cached scorers mismatch: %+v", cached.Statistics.Scorers)
+	}
+}
+
+// TestClient_FetchStatistics_MissingAthleteName guards that the statistics
+// parser does not invent presentation text when ESPN reports no athlete.
+func TestClient_FetchStatistics_MissingAthleteName(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{
+			"stats": [
+				{
+					"name": "goals",
+					"displayName": "Goals",
+					"leaders": [
+						{"displayValue": "10", "value": 10, "team": {"displayName": "Manchester City"}}
+					]
+				}
+			]
+		}`)
+	}))
+	defer server.Close()
+
+	client := NewClient(
+		WithBaseURL(server.URL),
+		WithCacheDir(t.TempDir()),
+		WithRetryBackoff(func() time.Duration { return 0 }),
+	)
+
+	stats, err := client.FetchStatistics(context.Background(), "premier")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(stats.Scorers) != 1 {
+		t.Fatalf("expected 1 scorer, got %d", len(stats.Scorers))
+	}
+	if got := stats.Scorers[0].PlayerName; got != "" {
+		t.Errorf("expected empty player name when no athlete is reported, got %q", got)
 	}
 }
 

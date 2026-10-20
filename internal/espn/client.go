@@ -831,8 +831,7 @@ func (c *Client) FetchMatches(ctx context.Context, leagueKey string) ([]model.Ma
 				continue
 			}
 
-			pName := "Jugador"
-			var aName string
+			var pName, aName string
 			if len(d.AthletesInvolved) > 0 {
 				if d.AthletesInvolved[0].DisplayName != "" {
 					pName = d.AthletesInvolved[0].DisplayName
@@ -1841,7 +1840,7 @@ func (c *Client) FetchStatistics(ctx context.Context, leagueKey string) (*model.
 	parseLeaders := func(leaders []rawStatsLeader, isScorer bool) []model.ScorerEntry {
 		var res []model.ScorerEntry
 		for i, l := range leaders {
-			pName := "Jugador"
+			var pName string
 			tName := ""
 			var statsList []rawStatisticItem
 

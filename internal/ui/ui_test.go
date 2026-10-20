@@ -2545,3 +2545,40 @@ func TestModel_AsyncWebChannelsEnrichment(t *testing.T) {
 		t.Errorf("expected second channel [Web] ESPN Deportes HD not recommended, got %+v", m.channels[1])
 	}
 }
+
+func TestRenderTimeline_PlayerFallback(t *testing.T) {
+	events := []model.MatchEvent{
+		{Type: "card_yellow", Clock: "30'", TeamID: "home", IsYellow: true},
+		{Type: "owngoal", Clock: "60'", TeamID: "home", IsOwnGoal: true},
+		{Type: "goal", Clock: "75'", TeamID: "home", IsScoring: true},
+		{Type: "goal", Clock: "80'", TeamID: "home", IsScoring: true, PlayerName: "R. Lewandowski"},
+	}
+
+	got := renderTimeline(events, "home", 60, true)
+
+	wantFragments := []string{"Cuerpo técnico", "Autogol", "Gol ", "R. Lewandowski"}
+	for _, fragment := range wantFragments {
+		if !strings.Contains(got, fragment) {
+			t.Errorf("expected timeline to contain %q, got:\n%s", fragment, got)
+		}
+	}
+	if strings.Contains(strings.ToLower(got), "jugador") {
+		t.Errorf("timeline must not render the parser sentinel, got:\n%s", got)
+	}
+}
+
+func TestRenderTabGoleadores_PlayerFallback(t *testing.T) {
+	m := Model{
+		statistics: &model.LeagueStatistics{
+			Scorers: []model.ScorerEntry{
+				{Rank: 1, TeamName: "Manchester City", Value: "10"},
+			},
+		},
+	}
+
+	got := renderTabGoleadores(m, model.League{})
+	// One "Jugador" is the table header; the scorer row must add its own.
+	if strings.Count(got, "Jugador") < 2 {
+		t.Errorf("expected scorer row to render the presentation fallback, got:\n%s", got)
+	}
+}
