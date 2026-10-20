@@ -1002,13 +1002,18 @@ func parrillaSnap(channels []string) parrilla.Snapshot {
 // playable entry is emitted, a "por definir" entry emits nothing, and a listing
 // whose channels have no resolvable URL emits nothing.
 func TestCatalog_ParrillaTier(t *testing.T) {
-	t.Run("both teams with a playable entry emits the channel", func(t *testing.T) {
+	t.Run("both teams with a playable entry emits the dual profile", func(t *testing.T) {
 		cat := newTestCatalog(WithParrilla(&parrillaFake{snap: parrillaSnap([]string{"ESPN 2"})}))
 
 		match := newParrillaMatch(nil)
 		chs := cat.GetChannels(match)
-		if len(chs) != 1 || chs[0].Name != "ESPN 2" {
-			t.Fatalf("expected the parrilla entry channel ESPN 2, got %+v", chs)
+		if len(chs) != 2 {
+			t.Fatalf("expected the parrilla entry to emit a dual profile, got %+v", chs)
+		}
+		for _, ch := range chs {
+			if ch.Name != "ESPN 2" {
+				t.Fatalf("expected the parrilla entry channel ESPN 2, got %+v", chs)
+			}
 		}
 		if !cat.HasPlayableSource(match) {
 			t.Fatalf("expected HasPlayableSource=true for a configured parrilla channel")
@@ -1073,6 +1078,75 @@ func TestParrillaDay_IsTimezoneIndependent(t *testing.T) {
 	}
 }
 
+// TestParrillaTier_UsesM3UFallback proves the parrilla tier can resolve a
+// listed channel from an imported M3U playlist when no stream map entry exists,
+// and that the resolved signal is emitted as a dual 720p/min + 1080p/max pair.
+func TestParrillaTier_UsesM3UFallback(t *testing.T) {
+	const streamURL = "http://example.invalid/espn2.m3u8"
+
+	cat := New(
+		WithConfigFile(filepath.Join(t.TempDir(), "none.json")),
+		WithParrilla(&parrillaFake{snap: parrillaSnap([]string{"ESPN 2"})}),
+		WithM3UChannels([]M3UChannel{{Name: "ESPN 2 HD", URL: streamURL}}),
+		WithExtractor(nil),
+	)
+
+	match := newParrillaMatch(nil)
+	match.StartTime = time.Date(2026, time.October, 17, 14, 0, 0, 0, time.FixedZone("COT", -5*3600))
+
+	chs := cat.GetChannels(match)
+	if len(chs) != 2 {
+		t.Fatalf("expected a dual profile pair from the M3U fallback, got %+v", chs)
+	}
+	if chs[0].Resolution != "720p" || chs[0].BitrateMode != "min" {
+		t.Errorf("expected the first profile to be 720p/min, got %s/%s", chs[0].Resolution, chs[0].BitrateMode)
+	}
+	if chs[1].Resolution != "1080p" || chs[1].BitrateMode != "max" {
+		t.Errorf("expected the second profile to be 1080p/max, got %s/%s", chs[1].Resolution, chs[1].BitrateMode)
+	}
+	for _, ch := range chs {
+		if ch.URL != streamURL {
+			t.Errorf("expected the M3U URL %q, got %q", streamURL, ch.URL)
+		}
+	}
+}
+
+// TestParrillaTier_EmitsSecondaryChannels proves the parrilla expansion mirrors
+// tier 2 for compound national broadcasters: a primary dual profile plus the
+// secondary feed resolved independently.
+func TestParrillaTier_EmitsSecondaryChannels(t *testing.T) {
+	cat := New(
+		WithConfigFile(filepath.Join(t.TempDir(), "none.json")),
+		WithStreams(map[string]string{"caracol": "http://example.invalid/caracol.m3u8"}),
+		WithM3UChannels([]M3UChannel{{Name: "Caracol HD2", URL: "http://example.invalid/caracolhd2.m3u8"}}),
+		WithParrilla(&parrillaFake{snap: parrillaSnap([]string{"Caracol TV"})}),
+		WithExtractor(nil),
+	)
+
+	match := newParrillaMatch(nil)
+	match.StartTime = time.Date(2026, time.October, 17, 14, 0, 0, 0, time.FixedZone("COT", -5*3600))
+
+	chs := cat.GetChannels(match)
+
+	var primary, secondary int
+	for _, ch := range chs {
+		switch ch.Name {
+		case "Caracol TV":
+			primary++
+		case "Caracol HD2":
+			secondary++
+		default:
+			t.Errorf("unexpected channel %q", ch.Name)
+		}
+	}
+	if primary != 2 {
+		t.Errorf("expected two Caracol TV profiles, got %d (%+v)", primary, chs)
+	}
+	if secondary != 1 {
+		t.Errorf("expected one Caracol HD2 secondary channel, got %d (%+v)", secondary, chs)
+	}
+}
+
 // TestCatalog_ParrillaSnapshotFetchedOncePerDay proves the daily parrilla is
 // fetched at most once per local day, even across many resolutions.
 func TestCatalog_ParrillaSnapshotFetchedOncePerDay(t *testing.T) {
@@ -1081,8 +1155,8 @@ func TestCatalog_ParrillaSnapshotFetchedOncePerDay(t *testing.T) {
 
 	match := newParrillaMatch(nil)
 	for i := 0; i < 5; i++ {
-		if chs := cat.GetChannels(match); len(chs) != 1 {
-			t.Fatalf("call %d: expected the parrilla channel, got %+v", i, chs)
+		if chs := cat.GetChannels(match); len(chs) != 2 {
+			t.Fatalf("call %d: expected the dual parrilla profile, got %+v", i, chs)
 		}
 	}
 
@@ -1180,7 +1254,7 @@ func TestCatalog_ParrillaPrecedence(t *testing.T) {
 		cat := newTestCatalog(WithParrilla(fake))
 
 		chs := cat.GetChannels(newParrillaMatch([]string{"DAZN 1 Bar HD"}))
-		if len(chs) != 1 || chs[0].Name != "ESPN 2" {
+		if len(chs) == 0 || chs[0].Name != "ESPN 2" {
 			t.Fatalf("expected parrilla ESPN 2 when ESPN lists only unplayable DAZN, got %+v", chs)
 		}
 	})

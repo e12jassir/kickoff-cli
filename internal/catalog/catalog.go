@@ -974,12 +974,62 @@ func formatWebChannelName(raw string) string {
 	return fmt.Sprintf("[Web] %s", name)
 }
 
+// parrillaSignal identifies a canonical stream key together with the label used
+// when the signal is emitted as a channel.
+type parrillaSignal struct {
+	key   string
+	label string
+}
+
+// parrillaCompanionSignals mirrors the compound national broadcaster expansion
+// used for ESPN metadata (tier 2): a fixture published on one of these feeds is
+// also available on the companion feeds listed here.
+func parrillaCompanionSignals(primary string) []parrillaSignal {
+	switch primary {
+	case "gol_caracol":
+		return []parrillaSignal{
+			{key: "caracol", label: "Caracol TV HD"},
+			{key: "caracol_hd2", label: "Caracol HD2"},
+		}
+	case "caracol":
+		return []parrillaSignal{{key: "caracol_hd2", label: "Caracol HD2"}}
+	case "rcn":
+		return []parrillaSignal{{key: "rcn_hd2", label: "RCN HD2"}}
+	case "win_sports_mas":
+		return []parrillaSignal{
+			{key: "win_plus", label: "Win+ Fútbol"},
+			{key: "win", label: "Win Sports HD"},
+		}
+	case "win_plus":
+		return []parrillaSignal{{key: "win", label: "Win Sports HD"}}
+	case "win":
+		return []parrillaSignal{{key: "win_plus", label: "Win+ Fútbol"}}
+	}
+	return nil
+}
+
+// resolveSignalURL resolves a canonical signal from the user's stream map first
+// and falls back to the imported M3U playlist, the same order tiers 2 and 4 use.
+func (c *Catalog) resolveSignalURL(key, label string) (string, bool) {
+	if u, ok := c.StreamEndpoint(key); ok {
+		return u, true
+	}
+	if m3u, ok := MatchM3UChannel(label, c.m3uSnapshot()); ok {
+		return m3u.URL, true
+	}
+	return "", false
+}
+
 // resolveFromParrilla resolves a match through the Gol Caracol daily parrilla.
 //
 // It matches entries with the same BOTH-teams rule the tvguide package uses
 // (tvguide.MatchScore), preferring the entry whose published start time falls in
-// the match window, and emits only channels that map to a configured stream URL.
-// When the schedule is unreachable it returns nothing so lower tiers can run.
+// the match window. Each published channel is canonicalized to a stream key and
+// resolved from the user's stream map, falling back to the imported M3U playlist.
+// A resolved signal is emitted as a 720p/min plus 1080p/max pair, and compound
+// national broadcasters also emit their companion feeds. When no listed channel
+// resolves to a URL, or the schedule is unreachable, it returns nothing so lower
+// tiers can run.
 func (c *Catalog) resolveFromParrilla(match model.Match) []model.Channel {
 	snap, ok := c.parrillaSnapshot(parrillaDay(match))
 	if !ok {
@@ -999,12 +1049,21 @@ func (c *Catalog) resolveFromParrilla(match model.Match) []model.Channel {
 		if !known {
 			continue
 		}
-		url, configured := c.StreamEndpoint(key)
-		if !configured {
-			continue
+		label, known := parrilla.CanonicalDisplay(name)
+		if !known {
+			label = name
 		}
-		if ch, valid := makeSingleChannel(name, url, "1080p", "max", len(candidates) == 0); valid {
-			candidates = append(candidates, ch)
+		if url, resolved := c.resolveSignalURL(key, label); resolved {
+			candidates = append(candidates, makeDualProfile(label, url, len(candidates) == 0)...)
+		}
+		for _, companion := range parrillaCompanionSignals(key) {
+			url, resolved := c.resolveSignalURL(companion.key, companion.label)
+			if !resolved {
+				continue
+			}
+			if ch, valid := makeSingleChannel(companion.label, url, "1080p", "max", len(candidates) == 0); valid {
+				candidates = append(candidates, ch)
+			}
 		}
 	}
 	return c.filterAndDeduplicate(candidates)
