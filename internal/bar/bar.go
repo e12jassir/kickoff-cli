@@ -238,6 +238,13 @@ func ShortTeam(c model.Competitor) string {
 
 // FormatClock extracts and formats the current match clock / minute or status.
 func FormatClock(status model.MatchStatus) string {
+	switch strings.ToUpper(strings.TrimSpace(status.Code)) {
+	case "STATUS_HALFTIME":
+		return "HT"
+	case "STATUS_FULL_TIME":
+		return "FT"
+	}
+
 	if status.Completed || status.State == "post" {
 		return "FT"
 	}

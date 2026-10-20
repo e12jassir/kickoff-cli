@@ -558,6 +558,59 @@ func TestFormatClock(t *testing.T) {
 	}
 }
 
+func TestFormatClock_ByStatusCode(t *testing.T) {
+	tests := []struct {
+		name     string
+		status   model.MatchStatus
+		expected string
+	}{
+		{
+			name:     "halftime code wins over Spanish detail",
+			status:   model.MatchStatus{State: "in", Code: "STATUS_HALFTIME", Detail: "Entretiempo"},
+			expected: "HT",
+		},
+		{
+			name:     "halftime code wins over Spanish description",
+			status:   model.MatchStatus{State: "in", Code: "STATUS_HALFTIME", Description: "Entretiempo"},
+			expected: "HT",
+		},
+		{
+			name:     "halftime code wins over numeric detail",
+			status:   model.MatchStatus{State: "in", Code: "STATUS_HALFTIME", Detail: "45'"},
+			expected: "HT",
+		},
+		{
+			name:     "halftime code without feed text",
+			status:   model.MatchStatus{State: "in", Code: "STATUS_HALFTIME"},
+			expected: "HT",
+		},
+		{
+			name:     "full time code without completed flag",
+			status:   model.MatchStatus{State: "in", Code: "STATUS_FULL_TIME"},
+			expected: "FT",
+		},
+		{
+			name:     "falls back to numeric detail without code",
+			status:   model.MatchStatus{State: "in", Detail: "72'"},
+			expected: "72'",
+		},
+		{
+			name:     "falls back to English description without code",
+			status:   model.MatchStatus{State: "in", Description: "Halftime"},
+			expected: "HT",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := FormatClock(tt.status)
+			if got != tt.expected {
+				t.Errorf("FormatClock(%+v) = %q, expected %q", tt.status, got, tt.expected)
+			}
+		})
+	}
+}
+
 func TestFormatGoalNotification(t *testing.T) {
 	m := sampleLiveMatch()
 	ev := &model.MatchEvent{
