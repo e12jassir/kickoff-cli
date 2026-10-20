@@ -25,10 +25,23 @@ const (
 	defaultPastCacheTTL = 6 * time.Hour
 	defaultTimeout      = 10 * time.Second
 	userAgent           = "kickoff-cli/1.0 (+https://github.com/e12jassir/kickoff-cli)"
+
+	// probeConcurrency caps the scoreboard probes a cold cache may keep in
+	// flight. The historical sweep fans out over 14 days, and without a cap a
+	// single startup could burst ~29 simultaneous requests to ESPN.
+	probeConcurrency = 4
+	// probeDays is the size of the past and upcoming day windows.
+	probeDays = 14
 )
 
 type rawResponse struct {
 	Events []rawEvent `json:"events"`
+}
+
+// scoreboardProbe is the result of probing the scoreboard for a single day.
+type scoreboardProbe struct {
+	dayOffset int
+	events    []rawEvent
 }
 
 type rawEvent struct {
@@ -220,6 +233,11 @@ type Client struct {
 	loc          *time.Location
 	now          func() time.Time
 	retryBackoff func() time.Duration
+
+	// probeSem is a client-wide limiter for scoreboard probes; probeSemOnce
+	// lazily creates it so a client built without NewClient still works.
+	probeSemOnce sync.Once
+	probeSem     chan struct{}
 }
 
 type Option func(*Client)
@@ -1062,83 +1080,132 @@ func (c *Client) FetchMatches(ctx context.Context, leagueKey string) ([]model.Ma
 	return matches, nil
 }
 
+// probeScoreboardDays fetches one scoreboard per day offset. Probes are
+// dispatched through a client-wide limiter so a cold-cache sweep never keeps
+// more than probeConcurrency requests in flight, and it stops dispatching as
+// soon as ctx is cancelled.
+func (c *Client) probeScoreboardDays(ctx context.Context, leagueCode string, now time.Time, offsets []int) []scoreboardProbe {
+	if len(offsets) == 0 {
+		return nil
+	}
+
+	// Buffering to len(offsets) guarantees senders never block, so wg.Wait
+	// cannot deadlock while results are still unread.
+	results := make(chan scoreboardProbe, len(offsets))
+	var wg sync.WaitGroup
+
+	for _, offset := range offsets {
+		release, err := c.acquireProbeSlot(ctx)
+		if err != nil {
+			break
+		}
+
+		wg.Add(1)
+		go func(dayOffset int) {
+			defer wg.Done()
+			defer release()
+
+			if probe, ok := c.fetchScoreboardDay(ctx, leagueCode, now, dayOffset); ok {
+				results <- probe
+			}
+		}(offset)
+	}
+
+	wg.Wait()
+	close(results)
+
+	probes := make([]scoreboardProbe, 0, len(offsets))
+	for probe := range results {
+		probes = append(probes, probe)
+	}
+	return probes
+}
+
+// acquireProbeSlot reserves one probe slot, waiting for a free one at most
+// until ctx is cancelled. The returned function releases the slot.
+func (c *Client) acquireProbeSlot(ctx context.Context) (func(), error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	slots := c.probeSlots()
+	select {
+	case slots <- struct{}{}:
+		return func() { <-slots }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (c *Client) probeSlots() chan struct{} {
+	c.probeSemOnce.Do(func() {
+		c.probeSem = make(chan struct{}, probeConcurrency)
+	})
+	return c.probeSem
+}
+
+// fetchScoreboardDay requests the scoreboard for a single day offset. Requests
+// without events are reported as not found so callers only merge real data.
+func (c *Client) fetchScoreboardDay(ctx context.Context, leagueCode string, now time.Time, dayOffset int) (scoreboardProbe, bool) {
+	dateStr := now.AddDate(0, 0, dayOffset).Format("20060102")
+	endpoint := fmt.Sprintf("%s/%s/scoreboard?dates=%s", c.baseURL, leagueCode, dateStr)
+	if strings.Contains(c.baseURL, "espn.com") {
+		// Same broadcast-preserving params as FetchMatches: see the comment there.
+		endpoint += "&lang=es"
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return scoreboardProbe{}, false
+	}
+	req.Header.Set("User-Agent", userAgent)
+
+	resp, err := c.doWithRetry(req)
+	if err != nil {
+		return scoreboardProbe{}, false
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return scoreboardProbe{}, false
+	}
+
+	var raw rawResponse
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return scoreboardProbe{}, false
+	}
+	if len(raw.Events) == 0 {
+		return scoreboardProbe{}, false
+	}
+
+	return scoreboardProbe{dayOffset: dayOffset, events: raw.Events}, true
+}
+
 // fetchRecentPastScoreboardEvents probes dates 1-14 days into the past to capture the full recent matchday round.
 func (c *Client) fetchRecentPastScoreboardEvents(ctx context.Context, leagueCode string, now time.Time) []rawEvent {
 	probeCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 
-	type probeRes struct {
-		dayOffset int
-		events    []rawEvent
+	offsets := make([]int, 0, probeDays)
+	for offset := 1; offset <= probeDays; offset++ {
+		offsets = append(offsets, -offset)
 	}
 
-	resChan := make(chan probeRes, 14)
-	var wg sync.WaitGroup
-
-	for d := 1; d <= 14; d++ {
-		wg.Add(1)
-		go func(offset int) {
-			defer wg.Done()
-			select {
-			case <-probeCtx.Done():
-				return
-			default:
-			}
-
-			dateStr := now.AddDate(0, 0, -offset).Format("20060102")
-			endpoint := fmt.Sprintf("%s/%s/scoreboard?dates=%s", c.baseURL, leagueCode, dateStr)
-			if strings.Contains(c.baseURL, "espn.com") {
-				// Same broadcast-preserving params as FetchMatches: see the comment there.
-				endpoint += "&lang=es"
-			}
-
-			req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, endpoint, nil)
-			if err != nil {
-				return
-			}
-			req.Header.Set("User-Agent", userAgent)
-
-			resp, err := c.doWithRetry(req)
-			if err != nil {
-				return
-			}
-			defer resp.Body.Close()
-
-			if resp.StatusCode != http.StatusOK {
-				return
-			}
-
-			var raw rawResponse
-			if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
-				return
-			}
-
-			if len(raw.Events) > 0 {
-				resChan <- probeRes{dayOffset: offset, events: raw.Events}
-			}
-		}(d)
-	}
-
-	wg.Wait()
-	close(resChan)
-
-	var allRes []probeRes
-	for r := range resChan {
-		allRes = append(allRes, r)
+	allRes := c.probeScoreboardDays(probeCtx, leagueCode, now, offsets)
+	if len(allRes) == 0 {
+		return nil
 	}
 
 	sort.Slice(allRes, func(i, j int) bool {
 		return allRes[i].dayOffset < allRes[j].dayOffset
 	})
 
-	if len(allRes) == 0 {
-		return nil
-	}
-
-	mostRecentOffset := allRes[0].dayOffset
+	// Offsets are negative for past probes, so the most recent day is the one
+	// closest to zero, i.e. the last element after sorting ascending.
+	mostRecentOffset := allRes[len(allRes)-1].dayOffset
 	var pastEvents []rawEvent
 	for _, r := range allRes {
-		if r.dayOffset <= mostRecentOffset+3 {
+		if r.dayOffset >= mostRecentOffset-3 {
 			pastEvents = append(pastEvents, r.events...)
 		}
 	}
@@ -1146,77 +1213,24 @@ func (c *Client) fetchRecentPastScoreboardEvents(ctx context.Context, leagueCode
 }
 
 // fetchUpcomingScoreboardEvents probes dates 1-14 days into the future to find the next active matchday.
+// It starts at offset 1 because the current day is already covered by the default scoreboard request.
 func (c *Client) fetchUpcomingScoreboardEvents(ctx context.Context, leagueCode string, now time.Time) []rawEvent {
 	probeCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 
-	type probeRes struct {
-		dayOffset int
-		events    []rawEvent
+	offsets := make([]int, 0, probeDays)
+	for offset := 1; offset <= probeDays; offset++ {
+		offsets = append(offsets, offset)
 	}
 
-	resChan := make(chan probeRes, 15)
-	var wg sync.WaitGroup
-
-	for d := 0; d <= 14; d++ {
-		wg.Add(1)
-		go func(offset int) {
-			defer wg.Done()
-			select {
-			case <-probeCtx.Done():
-				return
-			default:
-			}
-
-			dateStr := now.AddDate(0, 0, offset).Format("20060102")
-			endpoint := fmt.Sprintf("%s/%s/scoreboard?dates=%s", c.baseURL, leagueCode, dateStr)
-			if strings.Contains(c.baseURL, "espn.com") {
-				// Same broadcast-preserving params as FetchMatches: see the comment there.
-				endpoint += "&lang=es"
-			}
-
-			req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, endpoint, nil)
-			if err != nil {
-				return
-			}
-			req.Header.Set("User-Agent", userAgent)
-
-			resp, err := c.doWithRetry(req)
-			if err != nil {
-				return
-			}
-			defer resp.Body.Close()
-
-			if resp.StatusCode != http.StatusOK {
-				return
-			}
-
-			var raw rawResponse
-			if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
-				return
-			}
-
-			if len(raw.Events) > 0 {
-				resChan <- probeRes{dayOffset: offset, events: raw.Events}
-			}
-		}(d)
-	}
-
-	wg.Wait()
-	close(resChan)
-
-	var allRes []probeRes
-	for r := range resChan {
-		allRes = append(allRes, r)
+	allRes := c.probeScoreboardDays(probeCtx, leagueCode, now, offsets)
+	if len(allRes) == 0 {
+		return nil
 	}
 
 	sort.Slice(allRes, func(i, j int) bool {
 		return allRes[i].dayOffset < allRes[j].dayOffset
 	})
-
-	if len(allRes) == 0 {
-		return nil
-	}
 
 	earliestOffset := allRes[0].dayOffset
 	var upcomingEvents []rawEvent

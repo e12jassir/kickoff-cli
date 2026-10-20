@@ -1541,6 +1541,236 @@ func TestClient_FetchRecentPastScoreboardEvents_14DaysWindow(t *testing.T) {
 	}
 }
 
+// probeConcurrencySampler records how many probe requests are in flight at the
+// same time on an httptest.Server handler.
+type probeConcurrencySampler struct {
+	// delay keeps each request in flight long enough for concurrent probes to
+	// overlap reliably, even on fast machines.
+	delay    time.Duration
+	inFlight atomic.Int32
+	max      atomic.Int32
+	requests atomic.Int32
+}
+
+func (s *probeConcurrencySampler) handler(w http.ResponseWriter, r *http.Request) {
+	current := s.inFlight.Add(1)
+	defer s.inFlight.Add(-1)
+	s.requests.Add(1)
+	for {
+		observed := s.max.Load()
+		if current <= observed || s.max.CompareAndSwap(observed, current) {
+			break
+		}
+	}
+
+	time.Sleep(s.delay)
+
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprint(w, `{"events": []}`)
+}
+
+func (s *probeConcurrencySampler) reset() {
+	s.max.Store(0)
+	s.requests.Store(0)
+}
+
+// TestClient_ScoreboardProbes_BoundConcurrentRequests guards the cold-cache
+// startup burst: the historical sweep must never keep more than 4 probe
+// requests in flight, even when several leagues are fetched at the same time.
+func TestClient_ScoreboardProbes_BoundConcurrentRequests(t *testing.T) {
+	sampler := &probeConcurrencySampler{delay: 15 * time.Millisecond}
+	server := httptest.NewServer(http.HandlerFunc(sampler.handler))
+	defer server.Close()
+
+	client := NewClient(
+		WithBaseURL(server.URL),
+		WithCacheDir(t.TempDir()),
+		WithRetryBackoff(func() time.Duration { return 0 }),
+	)
+	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+
+	t.Run("past sweep", func(t *testing.T) {
+		sampler.reset()
+		client.fetchRecentPastScoreboardEvents(context.Background(), "laliga", now)
+		assertBoundedProbeConcurrency(t, sampler)
+		if got := sampler.requests.Load(); got != 14 {
+			t.Fatalf("expected 14 past probes, got %d", got)
+		}
+	})
+
+	t.Run("upcoming sweep", func(t *testing.T) {
+		sampler.reset()
+		client.fetchUpcomingScoreboardEvents(context.Background(), "laliga", now)
+		assertBoundedProbeConcurrency(t, sampler)
+		if got := sampler.requests.Load(); got != 14 {
+			t.Fatalf("expected 14 upcoming probes, got %d", got)
+		}
+	})
+
+	t.Run("two leagues at once", func(t *testing.T) {
+		sampler.reset()
+		var wg sync.WaitGroup
+		for _, leagueCode := range []string{"esp.1", "eng.1"} {
+			wg.Add(1)
+			go func(code string) {
+				defer wg.Done()
+				client.fetchRecentPastScoreboardEvents(context.Background(), code, now)
+			}(leagueCode)
+		}
+		wg.Wait()
+		assertBoundedProbeConcurrency(t, sampler)
+		if got := sampler.requests.Load(); got != 28 {
+			t.Fatalf("expected 28 probes for two leagues, got %d", got)
+		}
+	})
+}
+
+// assertBoundedProbeConcurrency checks the hard limit of 4 in-flight probes and
+// also that the sweep actually overlaps requests instead of running serially.
+func assertBoundedProbeConcurrency(t *testing.T, sampler *probeConcurrencySampler) {
+	t.Helper()
+	observed := sampler.max.Load()
+	t.Logf("max in-flight probe requests observed: %d (limit 4)", observed)
+	if observed > 4 {
+		t.Fatalf("observed %d concurrent probe requests, want at most 4", observed)
+	}
+	if observed < 2 {
+		t.Fatalf("observed %d concurrent probe requests, want the sweep to overlap at least 2", observed)
+	}
+}
+
+// TestClient_UpcomingProbe_SkipsCurrentDay guards against probing the current
+// day twice: the default scoreboard already covers it, so the upcoming sweep
+// must start at offset 1.
+func TestClient_UpcomingProbe_SkipsCurrentDay(t *testing.T) {
+	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	currentDay := now.In(locale.Location()).Format("20060102")
+	nextDay := now.In(locale.Location()).AddDate(0, 0, 1).Format("20060102")
+
+	var mu sync.Mutex
+	defaultRequests := 0
+	datedRequests := make(map[string]int)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		mu.Lock()
+		dates := r.URL.Query().Get("dates")
+		if dates == "" {
+			defaultRequests++
+		} else {
+			datedRequests[dates]++
+		}
+		mu.Unlock()
+
+		if dates == "" {
+			// Only a finished match from a previous day: this forces FetchMatches
+			// to look for the next matchday through the upcoming sweep.
+			fmt.Fprintf(w, `{
+				"events": [
+					{
+						"id": "past1",
+						"date": "2026-10-18T23:00Z",
+						"competitions": [
+							{
+								"id": "c1",
+								"competitors": [
+									{"id": "1", "homeAway": "home", "team": {"displayName": "Team A"}},
+									{"id": "2", "homeAway": "away", "team": {"displayName": "Team B"}}
+								]
+							}
+						],
+						"status": {"type": {"state": "post", "completed": true}}
+					}
+				]
+			}`)
+			return
+		}
+
+		fmt.Fprint(w, `{"events": []}`)
+	}))
+	defer server.Close()
+
+	client := NewClient(
+		WithBaseURL(server.URL),
+		WithCacheDir(t.TempDir()),
+		WithNow(func() time.Time { return now }),
+		WithRetryBackoff(func() time.Duration { return 0 }),
+	)
+
+	if _, err := client.FetchMatches(context.Background(), "laliga"); err != nil {
+		t.Fatalf("FetchMatches failed: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if defaultRequests != 1 {
+		t.Fatalf("expected the default scoreboard to be requested once, got %d", defaultRequests)
+	}
+	if got := datedRequests[currentDay]; got != 0 {
+		t.Fatalf("current day %s was probed %d extra time(s); the default scoreboard already covers it", currentDay, got)
+	}
+	if got := datedRequests[nextDay]; got != 1 {
+		t.Fatalf("expected the upcoming sweep to probe %s exactly once, got %d", nextDay, got)
+	}
+
+	pastProbes, upcomingProbes := 0, 0
+	for _, count := range datedRequests {
+		if count != 1 {
+			t.Fatalf("expected every probed day to be requested exactly once, got a duplicate: %+v", datedRequests)
+		}
+	}
+	for date := range datedRequests {
+		parsed, err := time.Parse("20060102", date)
+		if err != nil {
+			t.Fatalf("unexpected dates value %q: %v", date, err)
+		}
+		if parsed.Before(now.Truncate(24 * time.Hour)) {
+			pastProbes++
+		} else {
+			upcomingProbes++
+		}
+	}
+	if pastProbes != 14 || upcomingProbes != 14 {
+		t.Fatalf("expected 14 past + 14 upcoming probes, got %d past + %d upcoming", pastProbes, upcomingProbes)
+	}
+}
+
+// TestClient_ScoreboardProbes_RespectContextCancellation guards the limiter
+// against deadlocks: a cancelled context must release waiting probes and return
+// instead of blocking on the remaining offsets.
+func TestClient_ScoreboardProbes_RespectContextCancellation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Hold every probe in flight until the caller cancels it.
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	client := NewClient(
+		WithBaseURL(server.URL),
+		WithCacheDir(t.TempDir()),
+		WithRetryBackoff(func() time.Duration { return 0 }),
+	)
+	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		client.fetchRecentPastScoreboardEvents(ctx, "laliga", now)
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("probe sweep did not return after context cancellation")
+	}
+}
+
 // roundTripFunc adapts a function into an http.RoundTripper so tests can
 // intercept requests without touching the network.
 type roundTripFunc func(*http.Request) (*http.Response, error)
