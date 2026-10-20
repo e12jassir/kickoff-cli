@@ -8,8 +8,15 @@ coverage.out
 .atl/
 PLAN-10-10.md
 PROPUESTAS_*.md
-repomix-output.xml
 
+# Internal SDD process artifacts — published specs stay, planning stays private
+openspec/changes/
+openspec/config.yaml
+
+# Repomix dumps (generated locally, never commit the codebase as a blob)
+repomix-output.xml
+repomix-output.txt
+repomix-output.*
 
 # built binary
 /kickoff
