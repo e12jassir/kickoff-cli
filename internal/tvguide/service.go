@@ -40,7 +40,7 @@ type Service struct {
 	cacheDir   string
 	cacheTTL   time.Duration
 	now        func() time.Time
-	loc        *time.Location
+	loc        *time.Location // display zone; source schedules use Bogota
 	targets    []ChannelTarget
 	httpClient *http.Client
 	baseURL    string
@@ -95,7 +95,9 @@ func WithNow(nowFunc func() time.Time) Option {
 	}
 }
 
-// WithTimezone overrides the local timezone.
+// WithTimezone overrides the display timezone held by the service. Resolution
+// itself is anchored to locale.BogotaLocation, so this option does not change
+// which guide entry matches a fixture; the view layer owns display conversion.
 func WithTimezone(loc *time.Location) Option {
 	return func(s *Service) {
 		s.loc = loc
@@ -123,9 +125,9 @@ func NewService(opts ...Option) *Service {
 	}
 	defaultCache := filepath.Join(cacheBase, "kickoff")
 
-	// The crawler and the ESPN client must share the same display timezone: if
-	// they disagree, the day boundary shifts and a match can be shown on the
-	// wrong day. Both resolve it through the single locale source of truth.
+	// Retain the display timezone on the service so callers can model the user's
+	// zone. Source schedules and cache days are anchored to Bogota instead, so
+	// the display choice never influences which guide or programme matches.
 	loc := locale.Location()
 
 	s := &Service{
@@ -167,9 +169,11 @@ func (s *Service) cacheFilePath(dateStr string) string {
 	return filepath.Join(s.cacheDir, fmt.Sprintf("tvguide_%s.json", dateStr))
 }
 
-// loadCache loads today's guide from disk if present and within TTL.
+// loadCache loads today's guide from disk if present and within TTL. The day is
+// the source calendar day in Colombia, not the display day: the crawled guide
+// lists the Colombian schedule.
 func (s *Service) loadCache() bool {
-	todayStr := s.now().In(s.loc).Format("2006-01-02")
+	todayStr := s.now().In(locale.BogotaLocation()).Format("2006-01-02")
 	filePath := s.cacheFilePath(todayStr)
 
 	data, err := os.ReadFile(filePath)
@@ -204,7 +208,7 @@ func (s *Service) loadCache() bool {
 
 // loadAnyCache loads today's cache file regardless of TTL (used for graceful offline fallback).
 func (s *Service) loadAnyCache() bool {
-	todayStr := s.now().In(s.loc).Format("2006-01-02")
+	todayStr := s.now().In(locale.BogotaLocation()).Format("2006-01-02")
 	filePath := s.cacheFilePath(todayStr)
 
 	data, err := os.ReadFile(filePath)
@@ -239,7 +243,7 @@ func (s *Service) saveCache(guides []ChannelGuide) error {
 		return err
 	}
 
-	todayStr := s.now().In(s.loc).Format("2006-01-02")
+	todayStr := s.now().In(locale.BogotaLocation()).Format("2006-01-02")
 	filePath := s.cacheFilePath(todayStr)
 
 	cache := GuideCache{
@@ -268,7 +272,7 @@ func (s *Service) Refresh(ctx context.Context) error {
 
 	s.mu.Lock()
 	s.guides = guides
-	s.loadedDate = s.now().In(s.loc).Format("2006-01-02")
+	s.loadedDate = s.now().In(locale.BogotaLocation()).Format("2006-01-02")
 	s.mu.Unlock()
 
 	_ = s.saveCache(guides)
@@ -280,7 +284,7 @@ func (s *Service) SetGuides(guides []ChannelGuide) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.guides = guides
-	s.loadedDate = s.now().In(s.loc).Format("2006-01-02")
+	s.loadedDate = s.now().In(locale.BogotaLocation()).Format("2006-01-02")
 }
 
 // Guides returns a snapshot of currently loaded channel guides.
@@ -384,8 +388,10 @@ func (s *Service) ResolveMatch(match model.Match) (ChannelTarget, bool) {
 	hasMatchTime := !match.StartTime.IsZero()
 	matchMins := 0
 	if hasMatchTime {
-		localTime := match.StartTime.In(s.loc)
-		matchMins = localTime.Hour()*60 + localTime.Minute()
+		// Guide entries publish Colombian wall-clock times, so the kickoff must be
+		// read in the source zone regardless of the user's display timezone.
+		sourceTime := match.StartTime.In(locale.BogotaLocation())
+		matchMins = sourceTime.Hour()*60 + sourceTime.Minute()
 	}
 
 	bestScore := 0

@@ -1046,6 +1046,33 @@ func TestCatalog_ParrillaTier(t *testing.T) {
 	})
 }
 
+// TestParrillaDay_IsTimezoneIndependent proves the source schedule is always
+// interpreted in Colombia, regardless of the user's display timezone. A 19:00
+// COT kickoff is already 02:00 of the next day in Madrid, so a display-zone
+// interpretation would request the wrong parrilla date.
+func TestParrillaDay_IsTimezoneIndependent(t *testing.T) {
+	// 2026-10-18T00:00Z is 2026-10-17 19:00 in Colombia and 2026-10-18 02:00 in Madrid.
+	kickoff := time.Date(2026, time.October, 18, 0, 0, 0, 0, time.UTC)
+	match := model.Match{StartTime: kickoff}
+
+	for _, tz := range []string{"Europe/Madrid", "America/New_York"} {
+		t.Run(tz, func(t *testing.T) {
+			t.Setenv(locale.EnvVar, tz)
+
+			day := parrillaDay(match)
+			if got := day.Format("2006-01-02"); got != "2026-10-17" {
+				t.Fatalf("expected the Colombian date 2026-10-17, got %s", got)
+			}
+			if day.Hour() != 19 || day.Minute() != 0 {
+				t.Fatalf("expected 19:00 Colombian wall clock, got %02d:%02d", day.Hour(), day.Minute())
+			}
+			if got := day.Location().String(); got != "COT" {
+				t.Fatalf("expected the source zone COT, got %q", got)
+			}
+		})
+	}
+}
+
 // TestCatalog_ParrillaSnapshotFetchedOncePerDay proves the daily parrilla is
 // fetched at most once per local day, even across many resolutions.
 func TestCatalog_ParrillaSnapshotFetchedOncePerDay(t *testing.T) {

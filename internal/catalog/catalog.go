@@ -1010,11 +1010,13 @@ func (c *Catalog) resolveFromParrilla(match model.Match) []model.Channel {
 	return c.filterAndDeduplicate(candidates)
 }
 
-// parrillaDay returns the local calendar date whose Gol Caracol schedule applies
-// to a match: its kickoff day in the display timezone, or today when the kickoff
-// is unknown. The times published in the parrilla are Colombian local times.
+// parrillaDay returns the Colombian calendar date whose Gol Caracol schedule
+// applies to a match: its kickoff day in the source timezone, or today in the
+// source timezone when the kickoff is unknown. The times published in the
+// parrilla are Colombian local times, so the display timezone must never decide
+// which daily schedule is requested.
 func parrillaDay(match model.Match) time.Time {
-	loc := locale.Location()
+	loc := locale.BogotaLocation()
 	if match.StartTime.IsZero() {
 		return time.Now().In(loc)
 	}
@@ -1022,10 +1024,10 @@ func parrillaDay(match model.Match) time.Time {
 }
 
 // parrillaSnapshot returns the cached parrilla snapshot for a date, fetching it at
-// most once per local calendar day. A failed fetch is cached too (negative
+// most once per source calendar day. A failed fetch is cached too (negative
 // cache), so a broken source is retried on the next day instead of on every match.
 func (c *Catalog) parrillaSnapshot(date time.Time) (parrilla.Snapshot, bool) {
-	key := date.In(locale.Location()).Format("2006-01-02")
+	key := date.In(locale.BogotaLocation()).Format("2006-01-02")
 
 	c.mu.RLock()
 	fetcher := c.parrillaFetcher
@@ -1112,12 +1114,15 @@ func matchParrillaEntry(snap parrilla.Snapshot, match model.Match) (parrilla.Ent
 	return parrilla.Entry{}, false
 }
 
-// localClockMinutes converts a timestamp into minutes since local midnight.
+// localClockMinutes converts a source schedule timestamp into minutes since
+// midnight in the source timezone. Guide and parrilla times are published as
+// Colombian wall-clock values, so the match kickoff must be read in the same
+// zone before the two windows are compared.
 func localClockMinutes(t time.Time) (int, bool) {
 	if t.IsZero() {
 		return 0, false
 	}
-	lt := t.In(locale.Location())
+	lt := t.In(locale.BogotaLocation())
 	return lt.Hour()*60 + lt.Minute(), true
 }
 
