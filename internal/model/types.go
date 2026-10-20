@@ -54,6 +54,9 @@ type Competitor struct {
 
 // MatchStatus represents the state of a match.
 type MatchStatus struct {
+	// Code is the language-invariant ESPN status type name (for example
+	// STATUS_HALFTIME or STATUS_FULL_TIME).
+	Code        string `json:"code,omitempty"`
 	Description string `json:"description"`
 	Detail      string `json:"detail"`
 	State       string `json:"state"` // "pre", "in", "post"

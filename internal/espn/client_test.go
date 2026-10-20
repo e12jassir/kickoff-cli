@@ -533,8 +533,9 @@ func TestClient_FetchMatches_WithEvents(t *testing.T) {
 	if events[1].PlayerName != "V. Junior" || events[1].Clock != "40'" || !events[1].IsPenalty || events[1].Type != "penalty" {
 		t.Errorf("unexpected event 1: %+v", events[1])
 	}
-	// 3. Own goal Jugador fallback
-	if events[2].PlayerName != "Jugador" || events[2].Clock != "60'" || !events[2].IsOwnGoal || events[2].Type != "owngoal" {
+	// 3. Own goal without reported athlete: the parser keeps the name empty
+	// and leaves presentation fallbacks to the view.
+	if events[2].PlayerName != "" || events[2].Clock != "60'" || !events[2].IsOwnGoal || events[2].Type != "owngoal" {
 		t.Errorf("unexpected event 2: %+v", events[2])
 	}
 	// 4. Yellow Gavi
@@ -987,6 +988,43 @@ func TestClient_FetchStatistics_Parsing(t *testing.T) {
 	}
 	if len(cached.Statistics.Scorers) != 1 || cached.Statistics.Scorers[0].PlayerName != "Erling Haaland" {
 		t.Errorf("cached scorers mismatch: %+v", cached.Statistics.Scorers)
+	}
+}
+
+// TestClient_FetchStatistics_MissingAthleteName guards that the statistics
+// parser does not invent presentation text when ESPN reports no athlete.
+func TestClient_FetchStatistics_MissingAthleteName(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{
+			"stats": [
+				{
+					"name": "goals",
+					"displayName": "Goals",
+					"leaders": [
+						{"displayValue": "10", "value": 10, "team": {"displayName": "Manchester City"}}
+					]
+				}
+			]
+		}`)
+	}))
+	defer server.Close()
+
+	client := NewClient(
+		WithBaseURL(server.URL),
+		WithCacheDir(t.TempDir()),
+		WithRetryBackoff(func() time.Duration { return 0 }),
+	)
+
+	stats, err := client.FetchStatistics(context.Background(), "premier")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(stats.Scorers) != 1 {
+		t.Fatalf("expected 1 scorer, got %d", len(stats.Scorers))
+	}
+	if got := stats.Scorers[0].PlayerName; got != "" {
+		t.Errorf("expected empty player name when no athlete is reported, got %q", got)
 	}
 }
 
@@ -1572,6 +1610,98 @@ func TestClient_FetchMatches_BroadcastsFromRecordedFixture(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestClient_FetchMatches_StatusCode guards that the language-invariant ESPN
+// status type name reaches model.MatchStatus.Code, so presentation layers do
+// not have to infer halftime or full time from localized feed text.
+func TestClient_FetchMatches_StatusCode(t *testing.T) {
+	t.Run("recorded fixture full time", func(t *testing.T) {
+		fixture := readScoreboardFixture(t)
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(fixture)
+		}))
+		defer server.Close()
+
+		fixedNow := time.Date(2026, 10, 17, 12, 0, 0, 0, time.FixedZone("America/Bogota", -5*3600))
+		client := NewClient(
+			WithBaseURL(server.URL),
+			WithCacheDir(t.TempDir()),
+			WithNow(func() time.Time { return fixedNow }),
+			WithRetryBackoff(func() time.Duration { return 0 }),
+		)
+
+		matches, err := client.FetchMatches(context.Background(), "premier")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(matches) != 2 {
+			t.Fatalf("expected 2 matches from fixture, got %d", len(matches))
+		}
+		for _, m := range matches {
+			if m.Status.Code != "STATUS_FULL_TIME" {
+				t.Errorf("match %s: expected status code STATUS_FULL_TIME, got %q", m.ID, m.Status.Code)
+			}
+		}
+	})
+
+	t.Run("halftime with Spanish feed text", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{
+				"events": [
+					{
+						"id": "2001",
+						"date": "2026-10-13T19:00Z",
+						"competitions": [
+							{
+								"id": "2001",
+								"competitors": [
+									{"id": "10", "homeAway": "home", "score": "0", "team": {"id": "10", "name": "Barcelona", "displayName": "FC Barcelona"}},
+									{"id": "20", "homeAway": "away", "score": "0", "team": {"id": "20", "name": "Real Madrid", "displayName": "Real Madrid"}}
+								],
+								"status": {
+									"type": {
+										"name": "STATUS_HALFTIME",
+										"state": "in",
+										"completed": false,
+										"description": "Entretiempo",
+										"detail": "Entretiempo"
+									}
+								}
+							}
+						]
+					}
+				]
+			}`)
+		}))
+		defer server.Close()
+
+		fixedNow := time.Date(2026, 10, 13, 12, 0, 0, 0, time.FixedZone("America/Bogota", -5*3600))
+		client := NewClient(
+			WithBaseURL(server.URL),
+			WithCacheDir(t.TempDir()),
+			WithNow(func() time.Time { return fixedNow }),
+			WithRetryBackoff(func() time.Duration { return 0 }),
+		)
+
+		matches, err := client.FetchMatches(context.Background(), "laliga")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(matches) != 1 {
+			t.Fatalf("expected 1 match, got %d", len(matches))
+		}
+		status := matches[0].Status
+		if status.Code != "STATUS_HALFTIME" {
+			t.Errorf("expected status code STATUS_HALFTIME, got %q", status.Code)
+		}
+		if status.Detail != "Entretiempo" {
+			t.Errorf("expected detail to stay untouched, got %q", status.Detail)
+		}
+	})
 }
 
 // TestClient_ScoreboardQueryParams_PreserveBroadcasts is the regression guard

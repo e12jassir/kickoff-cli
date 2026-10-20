@@ -40,6 +40,7 @@ type rawEvent struct {
 
 type rawCompetition struct {
 	ID            string            `json:"id"`
+	Status        *rawStatus        `json:"status"`
 	Venue         *rawVenue         `json:"venue"`
 	Competitors   []rawCompetitor   `json:"competitors"`
 	Details       []rawDetail       `json:"details"`
@@ -192,6 +193,7 @@ type rawStatus struct {
 }
 
 type rawStatusType struct {
+	Name        string `json:"name"`
 	Description string `json:"description"`
 	Detail      string `json:"detail"`
 	State       string `json:"state"`
@@ -807,13 +809,20 @@ func (c *Client) FetchMatches(ctx context.Context, leagueKey string) ([]model.Ma
 			Description: "Programado",
 			State:       "pre",
 		}
-		if ev.Status != nil && ev.Status.Type != nil {
-			if ev.Status.Type.Description != "" {
-				status.Description = ev.Status.Type.Description
+		// ESPN scoreboard responses carry the status inside the competition.
+		// Some payloads duplicate it at event level, so keep that as fallback.
+		feedStatus := comp.Status
+		if feedStatus == nil {
+			feedStatus = ev.Status
+		}
+		if feedStatus != nil && feedStatus.Type != nil {
+			if feedStatus.Type.Description != "" {
+				status.Description = feedStatus.Type.Description
 			}
-			status.Detail = ev.Status.Type.Detail
-			status.State = ev.Status.Type.State
-			status.Completed = ev.Status.Type.Completed
+			status.Code = feedStatus.Type.Name
+			status.Detail = feedStatus.Type.Detail
+			status.State = feedStatus.Type.State
+			status.Completed = feedStatus.Type.Completed
 		}
 
 		var events []model.MatchEvent
@@ -822,8 +831,7 @@ func (c *Client) FetchMatches(ctx context.Context, leagueKey string) ([]model.Ma
 				continue
 			}
 
-			pName := "Jugador"
-			var aName string
+			var pName, aName string
 			if len(d.AthletesInvolved) > 0 {
 				if d.AthletesInvolved[0].DisplayName != "" {
 					pName = d.AthletesInvolved[0].DisplayName
@@ -1832,7 +1840,7 @@ func (c *Client) FetchStatistics(ctx context.Context, leagueKey string) (*model.
 	parseLeaders := func(leaders []rawStatsLeader, isScorer bool) []model.ScorerEntry {
 		var res []model.ScorerEntry
 		for i, l := range leaders {
-			pName := "Jugador"
+			var pName string
 			tName := ""
 			var statsList []rawStatisticItem
 
