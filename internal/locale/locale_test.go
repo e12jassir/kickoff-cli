@@ -53,6 +53,28 @@ func TestResolve_UnsetEnvTimezoneUsesDefault(t *testing.T) {
 	}
 }
 
+// TestBogotaLocation_IsFixedCOT pins the source timezone used to interpret
+// schedules published in Colombia. It must be a fixed UTC-5 zone so the
+// resolution path never depends on the host tzdata database.
+func TestBogotaLocation_IsFixedCOT(t *testing.T) {
+	loc := BogotaLocation()
+	if loc == nil {
+		t.Fatal("BogotaLocation returned nil")
+	}
+	if got := loc.String(); got != "COT" {
+		t.Errorf("expected zone name COT, got %q", got)
+	}
+
+	for _, at := range []time.Time{
+		time.Date(2026, time.January, 15, 12, 0, 0, 0, time.UTC),
+		time.Date(2026, time.July, 15, 12, 0, 0, 0, time.UTC),
+	} {
+		if _, offset := at.In(loc).Zone(); offset != -5*3600 {
+			t.Errorf("expected a constant UTC-5 offset at %s, got %d seconds", at, offset)
+		}
+	}
+}
+
 func TestLocation_CachesResult(t *testing.T) {
 	first := Location()
 	if first == nil {
