@@ -76,12 +76,14 @@ type standingsLoadedMsg struct {
 	leagueKey string
 	standings *model.LeagueStandings
 	err       error
+	gen       uint64
 }
 
 type statisticsLoadedMsg struct {
 	leagueKey  string
 	statistics *model.LeagueStatistics
 	err        error
+	gen        uint64
 }
 
 type webChannelsLoadedMsg struct {
@@ -183,7 +185,7 @@ func (m Model) nextSyncInterval() time.Duration {
 	return 30 * time.Second
 }
 
-func fetchMatchesCmd(client model.Client, leagueKey string) tea.Cmd {
+func fetchMatchesCmd(client model.Client, leagueKey string, gen uint64) tea.Cmd {
 	return func() tea.Msg {
 		matches, err := client.FetchMatches(context.Background(), leagueKey)
 		return matchesLoadedMsg{
@@ -191,11 +193,12 @@ func fetchMatchesCmd(client model.Client, leagueKey string) tea.Cmd {
 			matches:   matches,
 			err:       err,
 			isSilent:  false,
+			gen:       gen,
 		}
 	}
 }
 
-func forceRefreshMatchesCmd(client model.Client, leagueKey string, isSilent bool) tea.Cmd {
+func forceRefreshMatchesCmd(client model.Client, leagueKey string, isSilent bool, gen uint64) tea.Cmd {
 	return func() tea.Msg {
 		ctx := model.WithForceRefresh(context.Background())
 		matches, err := client.FetchMatches(ctx, leagueKey)
@@ -204,6 +207,7 @@ func forceRefreshMatchesCmd(client model.Client, leagueKey string, isSilent bool
 			matches:   matches,
 			err:       err,
 			isSilent:  isSilent,
+			gen:       gen,
 		}
 	}
 }
@@ -241,24 +245,26 @@ func forceFetchMatchStatsCmd(client model.Client, leagueKey, eventID string) tea
 	}
 }
 
-func fetchStandingsCmd(client model.Client, leagueKey string) tea.Cmd {
+func fetchStandingsCmd(client model.Client, leagueKey string, gen uint64) tea.Cmd {
 	return func() tea.Msg {
 		st, err := client.FetchStandings(context.Background(), leagueKey)
 		return standingsLoadedMsg{
 			leagueKey: leagueKey,
 			standings: st,
 			err:       err,
+			gen:       gen,
 		}
 	}
 }
 
-func fetchStatisticsCmd(client model.Client, leagueKey string) tea.Cmd {
+func fetchStatisticsCmd(client model.Client, leagueKey string, gen uint64) tea.Cmd {
 	return func() tea.Msg {
 		stat, err := client.FetchStatistics(context.Background(), leagueKey)
 		return statisticsLoadedMsg{
 			leagueKey:  leagueKey,
 			statistics: stat,
 			err:        err,
+			gen:        gen,
 		}
 	}
 }
@@ -319,6 +325,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, pulseTickCmd()
 
 	case standingsLoadedMsg:
+		if msg.gen != m.loadGen {
+			return m, nil
+		}
 		curr := m.CurrentLeague()
 		if msg.leagueKey == curr.Key {
 			m.standings = msg.standings
@@ -330,6 +339,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case statisticsLoadedMsg:
+		if msg.gen != m.loadGen {
+			return m, nil
+		}
 		curr := m.CurrentLeague()
 		if msg.leagueKey == curr.Key {
 			m.statistics = msg.statistics
@@ -344,7 +356,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds := []tea.Cmd{autoSyncTickCmd(m.nextSyncInterval())}
 		if m.state == StateBrowsing || m.state == StateChannelSelect || m.state == StatePlaying {
 			league := m.CurrentLeague()
-			cmds = append(cmds, forceRefreshMatchesCmd(m.client, league.Key, true))
+			cmds = append(cmds, forceRefreshMatchesCmd(m.client, league.Key, true, m.loadGen))
 
 			if m.state == StateChannelSelect {
 				if selMatch, ok := m.CurrentSelectedMatch(); ok && selMatch.ID != "" && selMatch.Status.State == "in" {
@@ -355,6 +367,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 
 	case matchesLoadedMsg:
+		if msg.gen != m.loadGen {
+			return m, nil
+		}
 		curr := m.CurrentLeague()
 		if msg.leagueKey == curr.Key {
 			if msg.err != nil {
@@ -768,13 +783,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.channelCursor = 0
 					m.modalTab = 0
 					m.errorMsg = ""
+					m.loadGen++
+					gen := m.loadGen
 					league := m.CurrentLeague()
 					m.loadingMsg = "Consultando partidos de hoy (" + league.Name + ")..."
 					return m, tea.Batch(
 						m.spinner.Tick,
-						fetchMatchesCmd(m.client, league.Key),
-						fetchStandingsCmd(m.client, league.Key),
-						fetchStatisticsCmd(m.client, league.Key),
+						fetchMatchesCmd(m.client, league.Key, gen),
+						fetchStandingsCmd(m.client, league.Key, gen),
+						fetchStatisticsCmd(m.client, league.Key, gen),
 					)
 				}
 			}
@@ -790,33 +807,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "3":
 				m.leagueTab = TabPosiciones
 				if m.standings == nil && m.standingsErr == nil {
-					return m, fetchStandingsCmd(m.client, m.CurrentLeague().Key)
+					return m, fetchStandingsCmd(m.client, m.CurrentLeague().Key, m.loadGen)
 				}
 				return m, nil
 			case "4":
 				m.leagueTab = TabGoleadores
 				if m.statistics == nil && m.statisticsErr == nil {
-					return m, fetchStatisticsCmd(m.client, m.CurrentLeague().Key)
+					return m, fetchStatisticsCmd(m.client, m.CurrentLeague().Key, m.loadGen)
 				}
 				return m, nil
 			case "right", "l", "tab":
 				m.leagueTab = (m.leagueTab + 1) % 4
 				league := m.CurrentLeague()
 				if m.leagueTab == TabPosiciones && m.standings == nil && m.standingsErr == nil {
-					return m, fetchStandingsCmd(m.client, league.Key)
+					return m, fetchStandingsCmd(m.client, league.Key, m.loadGen)
 				}
 				if m.leagueTab == TabGoleadores && m.statistics == nil && m.statisticsErr == nil {
-					return m, fetchStatisticsCmd(m.client, league.Key)
+					return m, fetchStatisticsCmd(m.client, league.Key, m.loadGen)
 				}
 				return m, nil
 			case "left", "h", "shift+tab":
 				m.leagueTab = (m.leagueTab - 1 + 4) % 4
 				league := m.CurrentLeague()
 				if m.leagueTab == TabPosiciones && m.standings == nil && m.standingsErr == nil {
-					return m, fetchStandingsCmd(m.client, league.Key)
+					return m, fetchStandingsCmd(m.client, league.Key, m.loadGen)
 				}
 				if m.leagueTab == TabGoleadores && m.statistics == nil && m.statisticsErr == nil {
-					return m, fetchStatisticsCmd(m.client, league.Key)
+					return m, fetchStatisticsCmd(m.client, league.Key, m.loadGen)
 				}
 				return m, nil
 			case "[", "p":
@@ -913,6 +930,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.connecting = false
 				m.selectedMatchID = ""
 				m.state = StateMainMenu
+				m.loadGen++
 				m.matches = nil
 				m.pastMatches = nil
 				m.matchCursor = 0
@@ -933,11 +951,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				league := m.CurrentLeague()
 				m.loadingMsg = "Recargando datos (" + league.Name + ")..."
 				m.errorMsg = ""
+				m.loadGen++
+				gen := m.loadGen
 				return m, tea.Batch(
 					m.spinner.Tick,
-					forceRefreshMatchesCmd(m.client, league.Key, false),
-					fetchStandingsCmd(m.client, league.Key),
-					fetchStatisticsCmd(m.client, league.Key),
+					forceRefreshMatchesCmd(m.client, league.Key, false, gen),
+					fetchStandingsCmd(m.client, league.Key, gen),
+					fetchStatisticsCmd(m.client, league.Key, gen),
 				)
 			}
 
@@ -1018,6 +1038,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.connecting = false
 				m.selectedMatchID = ""
 				m.state = StateMainMenu
+				m.loadGen++
 				m.matches = nil
 				m.pastMatches = nil
 				m.matchCursor = 0
@@ -1036,11 +1057,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				league := m.CurrentLeague()
 				m.loadingMsg = "Recargando datos (" + league.Name + ")..."
 				m.errorMsg = ""
+				m.loadGen++
+				gen := m.loadGen
 				return m, tea.Batch(
 					m.spinner.Tick,
-					forceRefreshMatchesCmd(m.client, league.Key, false),
-					fetchStandingsCmd(m.client, league.Key),
-					fetchStatisticsCmd(m.client, league.Key),
+					forceRefreshMatchesCmd(m.client, league.Key, false, gen),
+					fetchStandingsCmd(m.client, league.Key, gen),
+					fetchStatisticsCmd(m.client, league.Key, gen),
 				)
 			}
 		}

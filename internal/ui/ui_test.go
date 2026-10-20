@@ -216,6 +216,7 @@ func TestModel_Enter_Transition_To_Matches(t *testing.T) {
 
 	// Deliver loaded matches
 	newM, _ = m.Update(matchesLoadedMsg{
+		gen:       m.loadGen,
 		leagueKey: m.CurrentLeague().Key,
 		matches:   mockMatches,
 	})
@@ -255,6 +256,7 @@ func TestModel_Esc_Back_To_MainMenu(t *testing.T) {
 	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = newM.(Model)
 	newM, _ = m.Update(matchesLoadedMsg{
+		gen:       m.loadGen,
 		leagueKey: m.CurrentLeague().Key,
 		matches: []model.Match{
 			{ID: "m1", Title: "Team A vs Team B"},
@@ -286,6 +288,7 @@ func TestModel_Esc_Back_To_MainMenu(t *testing.T) {
 	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = newM.(Model)
 	newM, _ = m.Update(matchesLoadedMsg{
+		gen:       m.loadGen,
 		leagueKey: m.CurrentLeague().Key,
 		matches:   []model.Match{{ID: "m2"}},
 	})
@@ -301,6 +304,7 @@ func TestModel_Esc_Back_To_MainMenu(t *testing.T) {
 	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = newM.(Model)
 	newM, _ = m.Update(matchesLoadedMsg{
+		gen:       m.loadGen,
 		leagueKey: m.CurrentLeague().Key,
 		matches:   []model.Match{{ID: "m3"}},
 	})
@@ -331,6 +335,7 @@ func TestModel_Channel_Modal_And_Playback(t *testing.T) {
 	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = newM.(Model)
 	newM, _ = m.Update(matchesLoadedMsg{
+		gen:       m.loadGen,
 		leagueKey: m.CurrentLeague().Key,
 		matches: []model.Match{
 			{ID: "m1", Title: "Liverpool vs Arsenal"},
@@ -431,6 +436,7 @@ func TestModel_Finished_Match_Modal(t *testing.T) {
 	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = newM.(Model)
 	newM, _ = m.Update(matchesLoadedMsg{
+		gen:       m.loadGen,
 		leagueKey: m.CurrentLeague().Key,
 		matches: []model.Match{
 			{
@@ -497,6 +503,7 @@ func TestModel_EmptyMatches_And_Error(t *testing.T) {
 
 	// Simulate empty matches loaded
 	newM, _ = m.Update(matchesLoadedMsg{
+		gen:       m.loadGen,
 		leagueKey: m.CurrentLeague().Key,
 		matches:   []model.Match{},
 	})
@@ -517,6 +524,7 @@ func TestModel_EmptyMatches_And_Error(t *testing.T) {
 
 	// Simulate error
 	newM, _ = m.Update(matchesLoadedMsg{
+		gen:       m.loadGen,
 		leagueKey: m.CurrentLeague().Key,
 		err:       errors.New("connection failed"),
 	})
@@ -654,6 +662,7 @@ func TestModel_Match_Events_And_Stats_Modal(t *testing.T) {
 	}
 
 	newM, _ = m.Update(matchesLoadedMsg{
+		gen:       m.loadGen,
 		leagueKey: m.CurrentLeague().Key,
 		matches:   []model.Match{matchWithEvents},
 	})
@@ -898,6 +907,7 @@ func TestModel_Modal_CursorGatingAndFallbacks(t *testing.T) {
 	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = newM.(Model)
 	newM, _ = m.Update(matchesLoadedMsg{
+		gen:       m.loadGen,
 		leagueKey: m.CurrentLeague().Key,
 		matches: []model.Match{
 			{
@@ -1624,6 +1634,7 @@ func TestModel_Tab1_EmptyStats_PreMatch(t *testing.T) {
 	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = newM.(Model)
 	newM, _ = m.Update(matchesLoadedMsg{
+		gen:       m.loadGen,
 		leagueKey: m.CurrentLeague().Key,
 		matches: []model.Match{
 			{
@@ -1676,6 +1687,7 @@ func TestModel_Tab1_LoadingSpinner_Then_EmptyStats_LiveMatch(t *testing.T) {
 	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = newM.(Model)
 	newM, _ = m.Update(matchesLoadedMsg{
+		gen:       m.loadGen,
 		leagueKey: m.CurrentLeague().Key,
 		matches: []model.Match{
 			{
@@ -1744,6 +1756,7 @@ func TestModel_Tab1_PopulatedStats_LiveMatch(t *testing.T) {
 	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = newM.(Model)
 	newM, _ = m.Update(matchesLoadedMsg{
+		gen:       m.loadGen,
 		leagueKey: m.CurrentLeague().Key,
 		matches: []model.Match{
 			{
@@ -1812,6 +1825,7 @@ func TestModel_Tab1_PostMatch_NoStats_ShowsEmptyNotice(t *testing.T) {
 	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = newM.(Model)
 	newM, _ = m.Update(matchesLoadedMsg{
+		gen:       m.loadGen,
 		leagueKey: m.CurrentLeague().Key,
 		matches: []model.Match{
 			{
@@ -1863,6 +1877,7 @@ func TestModel_Modal_AnchoredBySelectedMatchID_OnAutoSync(t *testing.T) {
 	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = newM.(Model)
 	newM, _ = m.Update(matchesLoadedMsg{
+		gen:       m.loadGen,
 		leagueKey: m.CurrentLeague().Key,
 		matches: []model.Match{
 			{
@@ -1905,6 +1920,7 @@ func TestModel_Modal_AnchoredBySelectedMatchID_OnAutoSync(t *testing.T) {
 	// While modal is open, autoSync refreshes matches silently:
 	// m-live finishes and moves to pastMatches!
 	newM, _ = m.Update(matchesLoadedMsg{
+		gen:       m.loadGen,
 		leagueKey: m.CurrentLeague().Key,
 		isSilent:  true,
 		matches: []model.Match{
@@ -2308,6 +2324,7 @@ func TestModel_ActiveFixtures_RetainedInMatchList(t *testing.T) {
 	m := newBrowsingModel(cat)
 
 	newM, _ := m.Update(matchesLoadedMsg{
+		gen:       m.loadGen,
 		leagueKey: m.CurrentLeague().Key,
 		matches: []model.Match{
 			{
@@ -2341,6 +2358,7 @@ func TestModel_PlayabilityGatedVisibility_KeepsPlayableActiveMatch(t *testing.T)
 	m := newBrowsingModel(cat)
 
 	newM, _ := m.Update(matchesLoadedMsg{
+		gen:       m.loadGen,
 		leagueKey: m.CurrentLeague().Key,
 		matches: []model.Match{
 			{
@@ -2372,6 +2390,7 @@ func TestModel_PlayabilityGatedVisibility_CompletedNeverFiltered(t *testing.T) {
 	m := newBrowsingModel(cat)
 
 	newM, _ := m.Update(matchesLoadedMsg{
+		gen:       m.loadGen,
 		leagueKey: m.CurrentLeague().Key,
 		matches: []model.Match{
 			{
@@ -2412,6 +2431,7 @@ func TestModel_PlayabilityGatedVisibility_UnconfiguredStreamsNotice(t *testing.T
 	m := newBrowsingModel(cat)
 
 	newM, _ := m.Update(matchesLoadedMsg{
+		gen:       m.loadGen,
 		leagueKey: m.CurrentLeague().Key,
 		matches: []model.Match{
 			{
@@ -2452,6 +2472,7 @@ func TestModel_PlayabilityGatedVisibility_NonNarrowResolverNotFiltered(t *testin
 	m := newBrowsingModel(cat)
 
 	newM, _ := m.Update(matchesLoadedMsg{
+		gen:       m.loadGen,
 		leagueKey: m.CurrentLeague().Key,
 		matches: []model.Match{
 			{
@@ -2511,6 +2532,7 @@ func TestModel_AsyncWebChannelsEnrichment(t *testing.T) {
 	}
 
 	newM, _ := m.Update(matchesLoadedMsg{
+		gen:       m.loadGen,
 		leagueKey: m.CurrentLeague().Key,
 		matches:   []model.Match{testMatch},
 	})
@@ -2606,8 +2628,8 @@ func TestEnterMatch_DoesNotBlockOnCatalog(t *testing.T) {
 	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = newM.(Model)
 	newM, _ = m.Update(matchesLoadedMsg{
-		leagueKey: m.CurrentLeague().Key,
 		gen:       m.loadGen,
+		leagueKey: m.CurrentLeague().Key,
 		matches: []model.Match{{
 			ID:     "m-blocking",
 			Status: model.MatchStatus{State: "in", Description: "1T 10'"},
@@ -2722,5 +2744,65 @@ func TestLateChannelsMsg_Discarded(t *testing.T) {
 	m = newM.(Model)
 	if len(m.channels) != 1 || m.channels[0].Name != "ESPN" {
 		t.Errorf("stale result overwrote resolved channels: %+v", m.channels)
+	}
+}
+
+// --- Load generation against stale messages -----------------------------------
+
+func TestEscWhileLoading_LateMatchesMsgIgnored(t *testing.T) {
+	m := NewModel(&mockClient{}, &mockCatalog{}, &mockPlayer{})
+
+	// Expand the first category, focus its first league, then load it.
+	for i := 0; i < 3; i++ {
+		newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		m = newM.(Model)
+	}
+	if m.state != StateLoading {
+		t.Fatalf("expected StateLoading after entering the league, got %d", m.state)
+	}
+	staleGen := m.loadGen
+	if staleGen == 0 {
+		t.Fatalf("expected league entry to bump the load generation")
+	}
+	leagueKey := m.CurrentLeague().Key
+
+	// Esc aborts the load and returns to the main menu.
+	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = newM.(Model)
+	if m.state != StateMainMenu {
+		t.Fatalf("expected StateMainMenu after Esc, got %d", m.state)
+	}
+	if m.loadGen == staleGen {
+		t.Fatalf("expected Esc to bump the load generation")
+	}
+
+	// Results from the aborted load must be ignored.
+	newM, _ = m.Update(matchesLoadedMsg{
+		gen:       staleGen,
+		leagueKey: leagueKey,
+		matches:   []model.Match{{ID: "late-match"}},
+	})
+	m = newM.(Model)
+	newM, _ = m.Update(standingsLoadedMsg{
+		gen:       staleGen,
+		leagueKey: leagueKey,
+		standings: &model.LeagueStandings{LeagueKey: leagueKey},
+	})
+	m = newM.(Model)
+	newM, _ = m.Update(statisticsLoadedMsg{
+		gen:        staleGen,
+		leagueKey:  leagueKey,
+		statistics: &model.LeagueStatistics{LeagueKey: leagueKey},
+	})
+	m = newM.(Model)
+
+	if m.state != StateMainMenu {
+		t.Errorf("late load results changed the state to %d", m.state)
+	}
+	if len(m.matches) != 0 || len(m.pastMatches) != 0 {
+		t.Errorf("late matches repopulated the model: %+v", m.matches)
+	}
+	if m.standings != nil || m.statistics != nil {
+		t.Errorf("late standings/statistics repopulated the model")
 	}
 }
