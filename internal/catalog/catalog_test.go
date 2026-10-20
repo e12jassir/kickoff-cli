@@ -1360,4 +1360,3 @@ func TestCatalog_Tier5_DynamicExtractor(t *testing.T) {
 		}
 	})
 }
-

@@ -1663,8 +1663,3 @@ func TestNormalizeTeamDisplayName(t *testing.T) {
 		}
 	}
 }
-
-
-
-
-
