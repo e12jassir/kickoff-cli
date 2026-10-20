@@ -40,6 +40,7 @@ type matchesLoadedMsg struct {
 	matches   []model.Match
 	err       error
 	isSilent  bool
+	gen       uint64
 }
 
 type matchStatsLoadedMsg struct {
@@ -86,6 +87,24 @@ type statisticsLoadedMsg struct {
 type webChannelsLoadedMsg struct {
 	matchID  string
 	channels []model.Channel
+}
+
+// channelsResolvedMsg carries the catalog channel lookup for a match. The lookup
+// runs inside a command so a slow catalog can never stall the event loop.
+type channelsResolvedMsg struct {
+	matchID  string
+	gen      uint64
+	channels []model.Channel
+}
+
+func resolveChannelsCmd(catalog model.Resolver, match model.Match, gen uint64) tea.Cmd {
+	return func() tea.Msg {
+		return channelsResolvedMsg{
+			matchID:  match.ID,
+			gen:      gen,
+			channels: catalog.GetChannels(match),
+		}
+	}
 }
 
 type webStreamsResolver interface {
@@ -486,6 +505,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case channelsResolvedMsg:
+		if (m.state != StateChannelSelect && m.state != StatePlaying) || msg.matchID == "" || msg.matchID != m.selectedMatchID || msg.gen != m.loadGen {
+			return m, nil
+		}
+		m.channelsLoading = false
+		seen := make(map[string]bool, len(msg.channels)+len(m.channels))
+		merged := make([]model.Channel, 0, len(msg.channels)+len(m.channels))
+		addChannels := func(chans []model.Channel) {
+			for _, ch := range chans {
+				key := ch.URL
+				if key == "" {
+					key = ch.Name
+				}
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+				merged = append(merged, ch)
+			}
+		}
+		// Catalog channels keep priority over web enrichment regardless of which
+		// async result arrives first.
+		addChannels(msg.channels)
+		addChannels(m.channels)
+		m.channels = merged
+		for i := range m.channels {
+			m.channels[i].Recommended = (i == 0)
+		}
+		return m, nil
+
 	case webChannelsLoadedMsg:
 		if (m.state == StateChannelSelect || m.state == StatePlaying) && msg.matchID != "" && msg.matchID == m.selectedMatchID && len(msg.channels) > 0 {
 			seen := make(map[string]bool)
@@ -715,6 +764,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.standings = nil
 					m.statistics = nil
 					m.channels = nil
+					m.channelsLoading = false
 					m.channelCursor = 0
 					m.modalTab = 0
 					m.errorMsg = ""
@@ -810,11 +860,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if len(pms) > 0 && m.resumenCursor < len(pms) {
 						selectedMatch := pms[m.resumenCursor]
 						m.selectedMatchID = selectedMatch.ID
-						m.channels = m.catalog.GetChannels(selectedMatch)
+						m.channels = nil
 						m.channelCursor = 0
+						m.channelsLoading = true
 						m.modalTab = 0
 						m.state = StateChannelSelect
-						var cmds []tea.Cmd
+						cmds := []tea.Cmd{resolveChannelsCmd(m.catalog, selectedMatch, m.loadGen)}
 						if (selectedMatch.Stats == nil || selectedMatch.Lineups == nil) && selectedMatch.ID != "" && !m.detailsLoaded[selectedMatch.ID] {
 							cmds = append(cmds, fetchMatchStatsCmd(m.client, m.CurrentLeague().Key, selectedMatch.ID))
 						}
@@ -833,11 +884,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if len(m.matches) > 0 && m.matchCursor < len(m.matches) {
 						selectedMatch := m.matches[m.matchCursor]
 						m.selectedMatchID = selectedMatch.ID
-						m.channels = m.catalog.GetChannels(selectedMatch)
+						m.channels = nil
 						m.channelCursor = 0
+						m.channelsLoading = true
 						m.modalTab = 0
 						m.state = StateChannelSelect
-						var cmds []tea.Cmd
+						cmds := []tea.Cmd{resolveChannelsCmd(m.catalog, selectedMatch, m.loadGen)}
 						if (selectedMatch.Stats == nil || selectedMatch.Lineups == nil) && selectedMatch.ID != "" && !m.detailsLoaded[selectedMatch.ID] {
 							cmds = append(cmds, fetchMatchStatsCmd(m.client, m.CurrentLeague().Key, selectedMatch.ID))
 						}
@@ -868,6 +920,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.standings = nil
 				m.statistics = nil
 				m.channels = nil
+				m.channelsLoading = false
 				m.channelCursor = 0
 				m.modalTab = 0
 				m.statusMsg = ""
@@ -949,6 +1002,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.state = StateBrowsing
 				m.selectedMatchID = ""
 				m.channels = nil
+				m.channelsLoading = false
 				m.channelCursor = 0
 				m.modalTab = 0
 				return m, nil
@@ -971,6 +1025,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.standings = nil
 				m.statistics = nil
 				m.channels = nil
+				m.channelsLoading = false
 				m.channelCursor = 0
 				m.modalTab = 0
 				m.statusMsg = ""

@@ -350,9 +350,10 @@ func TestModel_Channel_Modal_And_Playback(t *testing.T) {
 		t.Errorf("expected matchCursor 1, got %d", m.matchCursor)
 	}
 
-	// Press Enter to open channel modal
-	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	// Press Enter to open channel modal; channels resolve asynchronously.
+	newM, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = newM.(Model)
+	m = drainCmd(m, cmd)
 	if m.state != StateChannelSelect {
 		t.Fatalf("expected StateChannelSelect, got %d", m.state)
 	}
@@ -383,8 +384,9 @@ func TestModel_Channel_Modal_And_Playback(t *testing.T) {
 	}
 
 	// Reopen modal and select channel with Enter
-	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	newM, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = newM.(Model)
+	m = drainCmd(m, cmd)
 	newM, playCmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = newM.(Model)
 
@@ -672,10 +674,8 @@ func TestModel_Match_Events_And_Stats_Modal(t *testing.T) {
 		t.Fatalf("expected stats fetch command when match stats are nil")
 	}
 
-	// Deliver stats & lineups message
-	statsMsg := cmd()
-	newM, _ = m.Update(statsMsg)
-	m = newM.(Model)
+	// Deliver stats & lineups message from the batch dispatched on Enter.
+	m = drainCmd(m, cmd)
 
 	if len(m.matches) == 0 || m.matches[0].Stats == nil || m.matches[0].Lineups == nil {
 		t.Fatalf("expected match stats and lineups to be populated")
@@ -915,9 +915,10 @@ func TestModel_Modal_CursorGatingAndFallbacks(t *testing.T) {
 	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m = newM.(Model)
 
-	// Enter match modal
-	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	// Enter match modal; channels resolve asynchronously.
+	newM, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = newM.(Model)
+	m = drainCmd(m, cmd)
 	if m.state != StateChannelSelect {
 		t.Fatalf("expected StateChannelSelect, got %d", m.state)
 	}
@@ -965,7 +966,7 @@ func TestModel_Modal_CursorGatingAndFallbacks(t *testing.T) {
 	}
 
 	// In Tab 2, pressing Enter should NOT launch playback
-	newM, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	newM, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = newM.(Model)
 	if cmd != nil {
 		t.Errorf("expected nil cmd on Enter in Tab 2")
@@ -1007,7 +1008,7 @@ func TestModel_ChannelModal_SanitizedAndAligned(t *testing.T) {
 		Status:    model.MatchStatus{State: "in", Description: "1T 25'"},
 	}
 
-	out := renderChannelModal(match, channels, 0, 0, false, "", false)
+	out := renderChannelModal(match, channels, 0, 0, false, "", false, false)
 
 	// 1. Must NOT contain bullet indentations "·" preceding channel names
 	if strings.Contains(out, "· Win+ Fútbol") || strings.Contains(out, "· Win Sports") {
@@ -2523,17 +2524,15 @@ func TestModel_AsyncWebChannelsEnrichment(t *testing.T) {
 	if m.state != StateChannelSelect {
 		t.Fatalf("expected StateChannelSelect, got %d", m.state)
 	}
-	if len(m.channels) != 1 {
-		t.Fatalf("expected 1 initial channel before async load, got %d", len(m.channels))
+	if len(m.channels) != 0 {
+		t.Fatalf("expected no channels before the async resolution, got %d", len(m.channels))
 	}
 	if cmd == nil {
 		t.Fatalf("expected async fetch command, got nil")
 	}
 
-	// Deliver async message
-	msg := cmd()
-	newM, _ = m.Update(msg)
-	m = newM.(Model)
+	// Deliver the async results: catalog channels plus web enrichment.
+	m = drainCmd(m, cmd)
 
 	if len(m.channels) != 3 {
 		t.Fatalf("expected 3 channels after web enrichment, got %d", len(m.channels))
@@ -2543,5 +2542,185 @@ func TestModel_AsyncWebChannelsEnrichment(t *testing.T) {
 	}
 	if m.channels[1].Name != "[Web] ESPN Deportes HD" || m.channels[1].Recommended {
 		t.Errorf("expected second channel [Web] ESPN Deportes HD not recommended, got %+v", m.channels[1])
+	}
+}
+
+// --- Async channel resolution -------------------------------------------------
+
+// blockingCatalog blocks inside GetChannels until release is closed, simulating a
+// slow catalog lookup so tests can prove the event loop never waits for it.
+type blockingCatalog struct {
+	channels []model.Channel
+	started  chan struct{}
+	release  chan struct{}
+}
+
+func newBlockingCatalog(channels ...model.Channel) *blockingCatalog {
+	return &blockingCatalog{
+		channels: channels,
+		started:  make(chan struct{}, 4),
+		release:  make(chan struct{}),
+	}
+}
+
+func (c *blockingCatalog) GetChannels(match model.Match) []model.Channel {
+	c.started <- struct{}{}
+	<-c.release
+	return c.channels
+}
+
+// runCmdMessages executes a command (including nested batches) and returns every
+// message it produces without applying them to a model.
+func runCmdMessages(cmd tea.Cmd) []tea.Msg {
+	if cmd == nil {
+		return nil
+	}
+	msg := cmd()
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		var out []tea.Msg
+		for _, sub := range batch {
+			out = append(out, runCmdMessages(sub)...)
+		}
+		return out
+	}
+	return []tea.Msg{msg}
+}
+
+// drainCmd applies every message produced by cmd to the model.
+func drainCmd(m Model, cmd tea.Cmd) Model {
+	for _, msg := range runCmdMessages(cmd) {
+		next, _ := m.Update(msg)
+		m = next.(Model)
+	}
+	return m
+}
+
+func TestEnterMatch_DoesNotBlockOnCatalog(t *testing.T) {
+	cat := newBlockingCatalog(model.Channel{
+		Name:        "ESPN",
+		DisplayName: "ESPN",
+		URL:         "http://example.com/live.m3u8",
+	})
+	m := NewModel(&mockClient{}, cat, &mockPlayer{})
+
+	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newM.(Model)
+	newM, _ = m.Update(matchesLoadedMsg{
+		leagueKey: m.CurrentLeague().Key,
+		gen:       m.loadGen,
+		matches: []model.Match{{
+			ID:     "m-blocking",
+			Status: model.MatchStatus{State: "in", Description: "1T 10'"},
+		}},
+	})
+	m = newM.(Model)
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m = newM.(Model)
+
+	type updateResult struct {
+		model tea.Model
+		cmd   tea.Cmd
+	}
+	done := make(chan updateResult, 1)
+	go func() {
+		nm, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		done <- updateResult{model: nm, cmd: cmd}
+	}()
+
+	var res updateResult
+	select {
+	case res = <-done:
+	case <-time.After(2 * time.Second):
+		close(cat.release)
+		t.Fatal("Update blocked on catalog.GetChannels; the event loop must never wait for the catalog")
+	}
+
+	m = res.model.(Model)
+	if m.state != StateChannelSelect {
+		t.Fatalf("expected StateChannelSelect, got %d", m.state)
+	}
+	if m.channels != nil {
+		t.Fatalf("expected channels to stay nil while the lookup is in flight, got %+v", m.channels)
+	}
+	if !m.channelsLoading {
+		t.Fatalf("expected the modal to report a pending channel lookup")
+	}
+	if res.cmd == nil {
+		t.Fatalf("expected an async channel resolution command, got nil")
+	}
+
+	// Esc must keep working while the catalog lookup is still blocked.
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = newM.(Model)
+	if m.state != StateBrowsing {
+		t.Fatalf("expected StateBrowsing after Esc while resolving channels, got %d", m.state)
+	}
+
+	// Let the blocked lookup finish; its late result must not resurrect the modal.
+	close(cat.release)
+	m = drainCmd(m, res.cmd)
+	if m.state != StateBrowsing {
+		t.Errorf("late channel result changed the state to %d", m.state)
+	}
+	if m.channels != nil {
+		t.Errorf("late channel result repopulated channels after Esc: %+v", m.channels)
+	}
+}
+
+func TestLateChannelsMsg_Discarded(t *testing.T) {
+	m := NewModel(&mockClient{}, &mockCatalog{}, &mockPlayer{})
+	m.state = StateChannelSelect
+	m.leagueTab = TabPartidos
+	m.matches = []model.Match{{ID: "m-anchored"}}
+	m.selectedMatchID = "m-anchored"
+	m.loadGen = 7
+	m.channels = nil
+	m.channelsLoading = true
+
+	newM, _ := m.Update(channelsResolvedMsg{
+		matchID:  "m-other",
+		gen:      7,
+		channels: []model.Channel{{Name: "Other", URL: "http://example.com/other.m3u8"}},
+	})
+	m = newM.(Model)
+	if m.channels != nil || !m.channelsLoading {
+		t.Fatalf("message for another match must be discarded, got channels=%+v loading=%v", m.channels, m.channelsLoading)
+	}
+
+	newM, _ = m.Update(channelsResolvedMsg{
+		matchID:  "m-anchored",
+		gen:      6,
+		channels: []model.Channel{{Name: "Stale", URL: "http://example.com/stale.m3u8"}},
+	})
+	m = newM.(Model)
+	if m.channels != nil || !m.channelsLoading {
+		t.Fatalf("message from a stale generation must be discarded, got channels=%+v loading=%v", m.channels, m.channelsLoading)
+	}
+
+	newM, _ = m.Update(channelsResolvedMsg{
+		matchID:  "m-anchored",
+		gen:      7,
+		channels: []model.Channel{{Name: "ESPN", URL: "http://example.com/live.m3u8"}},
+	})
+	m = newM.(Model)
+	if len(m.channels) != 1 || m.channels[0].Name != "ESPN" {
+		t.Fatalf("expected the current channel result to be applied, got %+v", m.channels)
+	}
+	if m.channelsLoading {
+		t.Errorf("expected the loading flag to clear once channels resolve")
+	}
+	if !m.channels[0].Recommended {
+		t.Errorf("expected the first resolved channel to be recommended")
+	}
+
+	// A stale result arriving after a successful one must not overwrite it.
+	newM, _ = m.Update(channelsResolvedMsg{
+		matchID:  "m-anchored",
+		gen:      6,
+		channels: []model.Channel{{Name: "Ghost", URL: "http://example.com/ghost.m3u8"}},
+	})
+	m = newM.(Model)
+	if len(m.channels) != 1 || m.channels[0].Name != "ESPN" {
+		t.Errorf("stale result overwrote resolved channels: %+v", m.channels)
 	}
 }

@@ -236,7 +236,7 @@ func renderBrowsing(m Model) string {
 				modalWidth = 74
 				modalBox = modalBox.Width(modalWidth + 6)
 			}
-			modalContent := renderChannelModal(selMatch, m.channels, m.channelCursor, m.modalTab, m.livePulse, m.spinner.View(), m.IsDetailsLoaded(selMatch.ID), m.noEmoji, modalWidth)
+			modalContent := renderChannelModal(selMatch, m.channels, m.channelCursor, m.modalTab, m.livePulse, m.spinner.View(), m.IsDetailsLoaded(selMatch.ID), m.channelsLoading, m.noEmoji, modalWidth)
 			body = modalBox.Render(modalContent)
 			if m.modalTab == 0 {
 				footer = FooterHelpStyle.Render("h/l o ←/→: pestaña  •  j/k o ↑/↓: canal  •  enter: reproducir  •  esc: volver")
@@ -708,7 +708,7 @@ func renderMatchItem(match model.Match, isSelected bool, livePulse bool) []strin
 	return []string{line1, line2}
 }
 
-func renderChannelModal(match model.Match, channels []model.Channel, selectedIdx int, modalTab int, livePulse bool, spinnerStr string, detailsLoaded bool, optArgs ...any) string {
+func renderChannelModal(match model.Match, channels []model.Channel, selectedIdx int, modalTab int, livePulse bool, spinnerStr string, detailsLoaded bool, channelsLoading bool, optArgs ...any) string {
 	noEmoji := false
 	modalContentWidth := 60
 
@@ -830,6 +830,12 @@ func renderChannelModal(match model.Match, channels []model.Channel, selectedIdx
 			emptyNoticeText := "[ Sin señales activas • La transmisión inicia cerca al partido ]"
 			if strings.ToLower(match.Status.State) == "in" {
 				emptyNoticeText = "[ Sin señales activas • No hay transmisión disponible en este momento ]"
+			}
+			if channelsLoading {
+				emptyNoticeText = "Resolviendo señales de transmisión..."
+				if spinnerStr != "" {
+					emptyNoticeText = fmt.Sprintf("%s  %s", spinnerStr, emptyNoticeText)
+				}
 			}
 			emptyNotice := lipgloss.NewStyle().Width(modalContentWidth).Align(lipgloss.Center).Foreground(ColorMuted).Render(emptyNoticeText)
 			modal.WriteString(emptyNotice + "\n")
