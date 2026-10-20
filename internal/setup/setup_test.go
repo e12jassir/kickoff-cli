@@ -226,3 +226,110 @@ func TestFormatBytes(t *testing.T) {
 		}
 	}
 }
+
+func TestSetup_Installer_InitStartsInstallation(t *testing.T) {
+	m := startInstaller("v0.2.4", true)
+	if m.state != stateInstalling {
+		t.Fatalf("expected installer model in stateInstalling, got %v", m.state)
+	}
+	if len(m.installSteps) == 0 || m.installSteps[0].Status != "running" {
+		t.Fatalf("expected first install step to be running")
+	}
+
+	cmd := m.Init()
+	if cmd == nil {
+		t.Fatalf("expected Init to return the initial installation command")
+	}
+
+	batch, ok := cmd().(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("expected Init to return a batch command")
+	}
+
+	foundFirstStep := false
+	for _, batchCmd := range batch {
+		if batchCmd == nil {
+			continue
+		}
+		if msg, ok := batchCmd().(installStepMsg); ok {
+			if msg.stepIndex != 0 {
+				t.Errorf("expected initial install command to run step 0, got %d", msg.stepIndex)
+			}
+			if msg.nextStep != 1 {
+				t.Errorf("expected initial step to queue step 1, got %d", msg.nextStep)
+			}
+			foundFirstStep = true
+		}
+	}
+	if !foundFirstStep {
+		t.Fatalf("expected Init command batch to contain the first install step result")
+	}
+}
+
+func TestSetup_Installing_AbortConfirmation(t *testing.T) {
+	m := NewModel("v0.2.4")
+	m.state = stateInstalling
+	m.installComplete = false
+	m.installSteps[0].Status = "running"
+
+	// ctrl+c asks for confirmation instead of being ignored.
+	newM, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	m = newM.(Model)
+	if !m.abortPrompt {
+		t.Fatalf("expected ctrl+c to open the abort confirmation prompt")
+	}
+	if m.state != stateInstalling {
+		t.Errorf("expected to stay in stateInstalling while confirming, got %v", m.state)
+	}
+	if cmd != nil {
+		t.Errorf("expected no command while waiting for confirmation")
+	}
+
+	// esc cancels the confirmation and keeps the installation running.
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = newM.(Model)
+	if m.abortPrompt {
+		t.Errorf("expected esc to dismiss the abort confirmation prompt")
+	}
+	if m.state != stateInstalling {
+		t.Errorf("expected to stay in stateInstalling after dismissing prompt, got %v", m.state)
+	}
+
+	// q opens the confirmation again and y aborts back to the menu.
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	m = newM.(Model)
+	if !m.abortPrompt {
+		t.Fatalf("expected q to open the abort confirmation prompt")
+	}
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m = newM.(Model)
+	if m.abortPrompt {
+		t.Errorf("expected confirmation prompt to close after aborting")
+	}
+	if m.state != stateMenu {
+		t.Errorf("expected abort to return to stateMenu, got %v", m.state)
+	}
+	if !m.installCancelled {
+		t.Errorf("expected installation to be marked as cancelled")
+	}
+
+	// Late installStepMsg results must not resume the cancelled pipeline.
+	newM, _ = m.Update(installStepMsg{stepIndex: 0, success: true, nextStep: 1})
+	m = newM.(Model)
+	if m.installSteps[0].Status != "running" {
+		t.Errorf("expected cancelled installation to ignore late step results, got %q", m.installSteps[0].Status)
+	}
+}
+
+func TestSetup_Installing_AbortPrompt_View(t *testing.T) {
+	m := NewModel("v0.2.4")
+	m.width = 84
+	m.height = 35
+	m.state = stateInstalling
+	m.abortPrompt = true
+
+	view := m.View()
+	if !strings.Contains(view, "Abort installation?") {
+		t.Errorf("expected installing view to show the abort confirmation")
+	}
+}
