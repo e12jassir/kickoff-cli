@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/e12jassir/kickoff-cli/internal/fsutil"
 	"github.com/e12jassir/kickoff-cli/internal/locale"
 	"github.com/e12jassir/kickoff-cli/internal/model"
 )
@@ -257,7 +258,7 @@ func (s *Service) saveCache(guides []ChannelGuide) error {
 		return err
 	}
 
-	return os.WriteFile(filePath, data, 0o644)
+	return fsutil.AtomicWriteFile(filePath, data, 0o644)
 }
 
 // Refresh performs a network crawl across all targets and persists to cache.

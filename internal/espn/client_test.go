@@ -1028,49 +1028,6 @@ func TestClient_FetchStatistics_MissingAthleteName(t *testing.T) {
 	}
 }
 
-func TestAtomicWriteFile(t *testing.T) {
-	tempDir := t.TempDir()
-	targetPath := filepath.Join(tempDir, "sub", "test.txt")
-
-	data1 := []byte("first content")
-	if err := atomicWriteFile(targetPath, data1, 0o644); err != nil {
-		t.Fatalf("atomicWriteFile failed: %v", err)
-	}
-
-	read1, err := os.ReadFile(targetPath)
-	if err != nil {
-		t.Fatalf("failed to read target file: %v", err)
-	}
-	if string(read1) != string(data1) {
-		t.Errorf("expected %q, got %q", string(data1), string(read1))
-	}
-
-	// Atomic overwrite
-	data2 := []byte("overwritten content")
-	if err := atomicWriteFile(targetPath, data2, 0o644); err != nil {
-		t.Fatalf("atomicWriteFile overwrite failed: %v", err)
-	}
-
-	read2, err := os.ReadFile(targetPath)
-	if err != nil {
-		t.Fatalf("failed to read overwritten file: %v", err)
-	}
-	if string(read2) != string(data2) {
-		t.Errorf("expected %q, got %q", string(data2), string(read2))
-	}
-
-	// Verify no temporary files remain in sub directory
-	entries, err := os.ReadDir(filepath.Join(tempDir, "sub"))
-	if err != nil {
-		t.Fatalf("failed to read dir: %v", err)
-	}
-	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), ".tmp-") {
-			t.Errorf("unexpected temporary file found: %s", entry.Name())
-		}
-	}
-}
-
 func TestClient_AtomicCacheWrites(t *testing.T) {
 	tempDir := t.TempDir()
 	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
