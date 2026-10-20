@@ -376,7 +376,11 @@ func programmeOverlapsMatch(entry ProgramEntry, matchStartMins int) (overlaps, h
 //     time slot can never lift a weak candidate above a correct one.
 //   - If two different channels share the top score, the result is ambiguous
 //     and the call declines rather than picking one. Unverified behaviour is
-//     strictly better than a wrong channel.
+//     strictly better than a wrong channel. Ties are counted per canonical
+//     channel identity, not per raw slug: GatoTV publishes some signals under
+//     more than one slug (caracol_television / caracol_colombia), and comparing
+//     slugs would make a single channel look ambiguous. Two genuinely different
+//     channels still decline.
 func (s *Service) ResolveMatch(match model.Match) (ChannelTarget, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -395,12 +399,15 @@ func (s *Service) ResolveMatch(match model.Match) (ChannelTarget, bool) {
 	}
 
 	bestScore := 0
-	bestSlugs := make(map[string]struct{})
+	bestIdentities := make(map[string]struct{})
 	var bestTarget ChannelTarget
 
 	// consider records an eligible candidate. Ties across distinct channels are
-	// tracked so an ambiguous result can be declined at the end.
-	consider := func(guide ChannelGuide, score int) {
+	// tracked by canonical identity so an ambiguous result can be declined at the
+	// end. The guide index is the last-resort identity: a guide with neither name
+	// nor slug cannot be proven equal to another, and the index keeps repeated
+	// entries of the same guide on one identity.
+	consider := func(guide ChannelGuide, index, score int) {
 		if score < minMatchScore {
 			return
 		}
@@ -409,20 +416,23 @@ func (s *Service) ResolveMatch(match model.Match) (ChannelTarget, bool) {
 			Slug:      guide.Slug,
 			StreamURL: guide.StreamURL,
 		}
+		identity := guideChannelIdentity(guide)
+		if identity == "" {
+			identity = fmt.Sprintf("\x00guide-%d", index)
+		}
 		switch {
 		case score > bestScore:
 			bestScore = score
-			bestSlugs = map[string]struct{}{guide.Slug: {}}
+			bestIdentities = map[string]struct{}{identity: {}}
 			bestTarget = target
 		case score == bestScore:
-			bestSlugs[guide.Slug] = struct{}{}
-			if bestTarget.Slug == "" {
-				bestTarget = target
-			}
+			// Same signal under another slug: record the identity only and keep
+			// the first target, so the chosen slug is deterministic.
+			bestIdentities[identity] = struct{}{}
 		}
 	}
 
-	for _, guide := range s.guides {
+	for i, guide := range s.guides {
 		if len(guide.Entries) > 0 {
 			for _, entry := range guide.Entries {
 				matched, baseScore := MatchScore(entry.Title, match)
@@ -440,7 +450,7 @@ func (s *Service) ResolveMatch(match model.Match) (ChannelTarget, bool) {
 					}
 				}
 
-				consider(guide, baseScore)
+				consider(guide, i, baseScore)
 			}
 			continue
 		}
@@ -450,12 +460,12 @@ func (s *Service) ResolveMatch(match model.Match) (ChannelTarget, bool) {
 		for _, prog := range guide.Programs {
 			matched, score := MatchScore(prog, match)
 			if matched {
-				consider(guide, score)
+				consider(guide, i, score)
 			}
 		}
 	}
 
-	if bestScore < minMatchScore || len(bestSlugs) > 1 {
+	if bestScore < minMatchScore || len(bestIdentities) > 1 {
 		return ChannelTarget{}, false
 	}
 
