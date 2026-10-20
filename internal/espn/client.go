@@ -26,6 +26,11 @@ const (
 	defaultTimeout      = 10 * time.Second
 	userAgent           = "kickoff-cli/1.0 (+https://github.com/e12jassir/kickoff-cli)"
 
+	// maxRetryAfter caps how long a Retry-After hint may delay the next attempt.
+	// Servers occasionally advertise minutes or hours, which would freeze the
+	// interactive UI far past the point where a retry is still useful.
+	maxRetryAfter = 10 * time.Second
+
 	// probeConcurrency caps the scoreboard probes a cold cache may keep in
 	// flight. The historical sweep fans out over 14 days, and without a cap a
 	// single startup could burst ~29 simultaneous requests to ESPN.
@@ -353,6 +358,11 @@ func (c *Client) calculateBackoff(attempt int, resp *http.Response) time.Duratio
 	if resp != nil {
 		if ra := resp.Header.Get("Retry-After"); ra != "" {
 			if d, ok := parseRetryAfter(ra, c.now()); ok {
+				// A server can ask for minutes or hours. Honor the hint but never
+				// let it stall the caller for longer than maxRetryAfter.
+				if d > maxRetryAfter {
+					return maxRetryAfter
+				}
 				return d
 			}
 		}

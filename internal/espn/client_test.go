@@ -1212,6 +1212,34 @@ func TestClient_CalculateBackoff(t *testing.T) {
 	}
 }
 
+func TestClient_CalculateBackoff_CapsRetryAfter(t *testing.T) {
+	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	client := NewClient(
+		WithNow(func() time.Time { return now }),
+		WithRetryBackoff(func() time.Duration { return 100 * time.Millisecond }),
+	)
+
+	// A hostile or misconfigured server can ask for hours. Waiting that long
+	// blocks the TUI, so the honored delay is capped.
+	seconds := &http.Response{Header: http.Header{"Retry-After": []string{"120"}}}
+	if d := client.calculateBackoff(0, seconds); d != 10*time.Second {
+		t.Errorf("expected Retry-After seconds capped at 10s, got %v", d)
+	}
+
+	date := &http.Response{Header: http.Header{
+		"Retry-After": []string{now.Add(time.Hour).Format(http.TimeFormat)},
+	}}
+	if d := client.calculateBackoff(0, date); d != 10*time.Second {
+		t.Errorf("expected Retry-After date capped at 10s, got %v", d)
+	}
+
+	// Values below the cap keep their exact value.
+	short := &http.Response{Header: http.Header{"Retry-After": []string{"3"}}}
+	if d := client.calculateBackoff(0, short); d != 3*time.Second {
+		t.Errorf("expected 3s preserved below the cap, got %v", d)
+	}
+}
+
 func TestClient_DoWithRetry_5xx_Success(t *testing.T) {
 	var mainAttempts atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
