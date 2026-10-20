@@ -118,6 +118,10 @@ type prewarmResolver interface {
 	PrewarmMatches(ctx context.Context, matches []model.Match)
 }
 
+type peekCachedResolver interface {
+	PeekCachedChannels(match model.Match) []model.Channel
+}
+
 func prewarmMatchesCmd(catalog model.Resolver, matches []model.Match) tea.Cmd {
 	return func() tea.Msg {
 		if pw, ok := catalog.(prewarmResolver); ok && len(matches) > 0 {
@@ -936,16 +940,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if len(pms) > 0 && m.resumenCursor < len(pms) {
 						selectedMatch := pms[m.resumenCursor]
 						m.selectedMatchID = selectedMatch.ID
-						m.channels = nil
+						var preChs []model.Channel
+						if peeker, ok := m.catalog.(peekCachedResolver); ok {
+							preChs = peeker.PeekCachedChannels(selectedMatch)
+						}
+						if len(preChs) > 0 {
+							m.channels = preChs
+							m.channelsLoading = false
+						} else {
+							m.channels = nil
+							m.channelsLoading = true
+						}
 						m.channelCursor = 0
-						m.channelsLoading = true
 						m.modalTab = 0
 						m.state = StateChannelSelect
 						cmds := []tea.Cmd{resolveChannelsCmd(m.catalog, selectedMatch, m.loadGen)}
 						if (selectedMatch.Stats == nil || selectedMatch.Lineups == nil) && selectedMatch.ID != "" && !m.detailsLoaded[selectedMatch.ID] {
 							cmds = append(cmds, fetchMatchStatsCmd(m.client, m.CurrentLeague().Key, selectedMatch.ID))
 						}
-						if _, ok := m.catalog.(webStreamsResolver); ok {
+						if _, ok := m.catalog.(webStreamsResolver); ok && len(preChs) == 0 {
 							cmds = append(cmds, fetchWebChannelsCmd(m.catalog, selectedMatch))
 						}
 						if len(cmds) == 0 {
@@ -960,16 +973,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if len(m.matches) > 0 && m.matchCursor < len(m.matches) {
 						selectedMatch := m.matches[m.matchCursor]
 						m.selectedMatchID = selectedMatch.ID
-						m.channels = nil
+						var preChs []model.Channel
+						if peeker, ok := m.catalog.(peekCachedResolver); ok {
+							preChs = peeker.PeekCachedChannels(selectedMatch)
+						}
+						if len(preChs) > 0 {
+							m.channels = preChs
+							m.channelsLoading = false
+						} else {
+							m.channels = nil
+							m.channelsLoading = true
+						}
 						m.channelCursor = 0
-						m.channelsLoading = true
 						m.modalTab = 0
 						m.state = StateChannelSelect
 						cmds := []tea.Cmd{resolveChannelsCmd(m.catalog, selectedMatch, m.loadGen)}
 						if (selectedMatch.Stats == nil || selectedMatch.Lineups == nil) && selectedMatch.ID != "" && !m.detailsLoaded[selectedMatch.ID] {
 							cmds = append(cmds, fetchMatchStatsCmd(m.client, m.CurrentLeague().Key, selectedMatch.ID))
 						}
-						if _, ok := m.catalog.(webStreamsResolver); ok {
+						if _, ok := m.catalog.(webStreamsResolver); ok && len(preChs) == 0 {
 							cmds = append(cmds, fetchWebChannelsCmd(m.catalog, selectedMatch))
 						}
 						if len(cmds) == 0 {

@@ -1005,8 +1005,30 @@ func (c *Catalog) ResolveWebChannels(ctx context.Context, match model.Match) []m
 	return webChs
 }
 
+// PeekCachedChannels returns currently cached channels for a match in memory
+// without performing any network I/O, safely callable from the event loop in 0ms.
+func (c *Catalog) PeekCachedChannels(match model.Match) []model.Channel {
+	title := match.Title
+	if title == "" {
+		title = fmt.Sprintf("%s vs %s", match.HomeTeam.DisplayName, match.AwayTeam.DisplayName)
+	}
+	cacheKey := match.ID
+	if cacheKey == "" {
+		cacheKey = fmt.Sprintf("%s:%s", normalizeLeagueKey(match.LeagueKey), title)
+	}
+
+	c.webCacheMu.RLock()
+	entry, cached := c.webCache[cacheKey]
+	c.webCacheMu.RUnlock()
+
+	if cached && len(entry.channels) > 0 {
+		return entry.channels
+	}
+	return nil
+}
+
 // PrewarmMatches pre-resolves web streams for matches in the background with bounded
-// concurrency (max 2 workers) so that user interactions resolve in 0ms.
+// concurrency so that user interactions resolve in 0ms.
 func (c *Catalog) PrewarmMatches(ctx context.Context, matches []model.Match) {
 	c.mu.RLock()
 	ext := c.extractor
@@ -1015,11 +1037,24 @@ func (c *Catalog) PrewarmMatches(ctx context.Context, matches []model.Match) {
 		return
 	}
 
-	sem := make(chan struct{}, 2)
+	// Warm the agenda once up-front so worker goroutines don't race on network fetching
+	_, _ = ext.FetchAgenda(ctx)
+
+	// Prioritize live matches ("in") and active fixtures first
+	prioritized := make([]model.Match, 0, len(matches))
 	for _, m := range matches {
 		if m.Status.Completed || strings.ToLower(m.Status.State) == "post" {
 			continue
 		}
+		if strings.ToLower(m.Status.State) == "in" {
+			prioritized = append([]model.Match{m}, prioritized...)
+		} else {
+			prioritized = append(prioritized, m)
+		}
+	}
+
+	sem := make(chan struct{}, 4)
+	for _, m := range prioritized {
 		title := m.Title
 		if title == "" {
 			title = fmt.Sprintf("%s vs %s", m.HomeTeam.DisplayName, m.AwayTeam.DisplayName)
