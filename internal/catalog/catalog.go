@@ -911,7 +911,7 @@ func (c *Catalog) GetChannels(match model.Match) []model.Channel {
 		entry, cached := c.webCache[cacheKey]
 		c.webCacheMu.RUnlock()
 
-		if cached && time.Since(entry.cachedAt) < 2*time.Minute {
+		if cached && time.Since(entry.cachedAt) < 30*time.Minute {
 			candidates = append(candidates, entry.channels...)
 		} else {
 			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
@@ -956,12 +956,15 @@ func (c *Catalog) ResolveWebChannels(ctx context.Context, match model.Match) []m
 	entry, cached := c.webCache[cacheKey]
 	c.webCacheMu.RUnlock()
 
-	if cached && time.Since(entry.cachedAt) < 2*time.Minute && len(entry.channels) > 0 {
+	if cached && time.Since(entry.cachedAt) < 30*time.Minute && len(entry.channels) > 0 {
 		return entry.channels
 	}
 
 	streams, err := ext.ResolveMatchStreams(ctx, match)
 	if err != nil || len(streams) == 0 {
+		if cached && len(entry.channels) > 0 {
+			return entry.channels
+		}
 		return nil
 	}
 
@@ -1000,6 +1003,52 @@ func (c *Catalog) ResolveWebChannels(ctx context.Context, match model.Match) []m
 	}
 
 	return webChs
+}
+
+// PrewarmMatches pre-resolves web streams for matches in the background with bounded
+// concurrency (max 2 workers) so that user interactions resolve in 0ms.
+func (c *Catalog) PrewarmMatches(ctx context.Context, matches []model.Match) {
+	c.mu.RLock()
+	ext := c.extractor
+	c.mu.RUnlock()
+	if ext == nil || len(matches) == 0 {
+		return
+	}
+
+	sem := make(chan struct{}, 2)
+	for _, m := range matches {
+		if m.Status.Completed || strings.ToLower(m.Status.State) == "post" {
+			continue
+		}
+		title := m.Title
+		if title == "" {
+			title = fmt.Sprintf("%s vs %s", m.HomeTeam.DisplayName, m.AwayTeam.DisplayName)
+		}
+		cacheKey := m.ID
+		if cacheKey == "" {
+			cacheKey = fmt.Sprintf("%s:%s", normalizeLeagueKey(m.LeagueKey), title)
+		}
+
+		c.webCacheMu.RLock()
+		entry, cached := c.webCache[cacheKey]
+		c.webCacheMu.RUnlock()
+		if cached && time.Since(entry.cachedAt) < 30*time.Minute && len(entry.channels) > 0 {
+			continue
+		}
+
+		select {
+		case sem <- struct{}{}:
+		case <-ctx.Done():
+			return
+		}
+
+		go func(targetMatch model.Match) {
+			defer func() { <-sem }()
+			pCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+			defer cancel()
+			_ = c.ResolveWebChannels(pCtx, targetMatch)
+		}(m)
+	}
 }
 
 func formatWebChannelName(raw string) string {

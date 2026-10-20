@@ -419,3 +419,61 @@ func TestResolveMatchStreams(t *testing.T) {
 		t.Errorf("expected 0 streams for unmatched game, got %d", len(none))
 	}
 }
+
+func TestFetchAgenda_StaleAndDiskFallback(t *testing.T) {
+	statusCode := http.StatusOK
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if statusCode != http.StatusOK {
+			w.WriteHeader(statusCode)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"data":[{"id":1,"attributes":{"diary_description":"PSG vs Barcelona","diary_hour":"14:00:00","embeds":{"data":[{"attributes":{"embed_name":"ESPN","embed_iframe":"https://example.com/stream"}}]}}}]}`))
+	}))
+	defer ts.Close()
+
+	tempDir := t.TempDir()
+	s1 := NewService(
+		WithBaseDomains(ts.URL),
+		WithCacheDir(tempDir),
+		WithCacheTTL(1*time.Millisecond),
+	)
+
+	// Step 1: Successful initial fetch persists to disk
+	events, err := s1.FetchAgenda(context.Background())
+	if err != nil {
+		t.Fatalf("initial FetchAgenda failed: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+
+	// Wait for async disk write
+	time.Sleep(50 * time.Millisecond)
+
+	// Step 2: Server now returns 503 Service Unavailable (Cloudflare outage under load)
+	statusCode = http.StatusServiceUnavailable
+
+	// Memory fallback on same instance (stale-while-revalidate)
+	staleEvents, err := s1.FetchAgenda(context.Background())
+	if err != nil {
+		t.Fatalf("expected stale memory fallback to succeed, got error: %v", err)
+	}
+	if len(staleEvents) != 1 {
+		t.Fatalf("expected 1 event from stale fallback, got %d", len(staleEvents))
+	}
+
+	// Step 3: Fresh service instance (restarted app) recovers from disk cache
+	s2 := NewService(
+		WithBaseDomains(ts.URL),
+		WithCacheDir(tempDir),
+		WithCacheTTL(1*time.Millisecond),
+	)
+	diskEvents, err := s2.FetchAgenda(context.Background())
+	if err != nil {
+		t.Fatalf("expected disk cache fallback to succeed on fresh service, got error: %v", err)
+	}
+	if len(diskEvents) != 1 || diskEvents[0].HomeTeam != "PSG" {
+		t.Fatalf("expected 1 recovered event from disk cache, got %+v", diskEvents)
+	}
+}

@@ -114,6 +114,30 @@ type webStreamsResolver interface {
 	ResolveWebChannels(ctx context.Context, match model.Match) []model.Channel
 }
 
+type prewarmResolver interface {
+	PrewarmMatches(ctx context.Context, matches []model.Match)
+}
+
+func prewarmMatchesCmd(catalog model.Resolver, matches []model.Match) tea.Cmd {
+	return func() tea.Msg {
+		if pw, ok := catalog.(prewarmResolver); ok && len(matches) > 0 {
+			ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+			defer cancel()
+			pw.PrewarmMatches(ctx, matches)
+		}
+		return nil
+	}
+}
+
+func isTopLeague(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(key)) {
+	case "uefa.champions", "champions", "eng.1", "premier", "esp.1", "laliga", "col.1", "colombia", "ita.1", "seriea", "ger.1", "bundesliga", "conmebol.libertadores", "libertadores":
+		return true
+	default:
+		return false
+	}
+}
+
 func fetchWebChannelsCmd(catalog model.Resolver, match model.Match) tea.Cmd {
 	return func() tea.Msg {
 		if res, ok := catalog.(webStreamsResolver); ok {
@@ -488,6 +512,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.resumenCursor = 0
 				}
 				m.errorMsg = ""
+				if isTopLeague(msg.leagueKey) && len(activeMatches) > 0 {
+					return m, prewarmMatchesCmd(m.catalog, activeMatches)
+				}
 			}
 		}
 		return m, nil

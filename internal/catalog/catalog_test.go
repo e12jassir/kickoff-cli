@@ -1629,3 +1629,42 @@ func TestCatalog_Tier5_DynamicExtractor(t *testing.T) {
 		}
 	})
 }
+
+func TestCatalog_PrewarmMatches(t *testing.T) {
+	mock := &mockExtractor{
+		resolveFunc: func(ctx context.Context, match model.Match) ([]extractor.ExtractedStream, error) {
+			return []extractor.ExtractedStream{
+				{
+					ChannelName: "ESPN HD",
+					StreamURL:   "http://example.com/live.m3u8",
+					Resolution:  "1080p",
+					Alive:       true,
+				},
+			}, nil
+		},
+	}
+
+	cat := newTestCatalog(WithExtractor(mock))
+	matches := []model.Match{
+		{
+			ID:        "m-prewarm-1",
+			Title:     "PSG vs Barcelona",
+			LeagueKey: "uefa.champions",
+			Status:    model.MatchStatus{State: "in"},
+		},
+	}
+
+	// Run prewarming
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	cat.PrewarmMatches(ctx, matches)
+
+	// Allow goroutine to populate cache
+	time.Sleep(50 * time.Millisecond)
+
+	// Now GetChannels should hit the prewarmed cache directly
+	chs := cat.GetChannels(matches[0])
+	if len(chs) != 1 || chs[0].DisplayName != "[Web] ESPN HD" {
+		t.Fatalf("expected prewarmed channel, got %+v", chs)
+	}
+}

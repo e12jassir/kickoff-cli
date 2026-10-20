@@ -9,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -54,6 +56,7 @@ type Service struct {
 	cacheTTL     time.Duration
 	cachedAgenda []ExtractedEvent
 	lastFetch    time.Time
+	cacheDir     string
 }
 
 // Option configures the extractor Service.
@@ -93,13 +96,31 @@ func WithCacheTTL(d time.Duration) Option {
 	}
 }
 
+// WithCacheDir configures custom disk cache directory for offline resilience.
+func WithCacheDir(dir string) Option {
+	return func(s *Service) {
+		if dir != "" {
+			s.cacheDir = dir
+		}
+	}
+}
+
 // NewService instantiates a new dynamic match extractor service.
 func NewService(opts ...Option) *Service {
+	cacheBase, err := os.UserCacheDir()
+	if err != nil || cacheBase == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			cacheBase = filepath.Join(home, ".cache")
+		} else {
+			cacheBase = os.TempDir()
+		}
+	}
 	s := &Service{
 		client:      &http.Client{Timeout: defaultHTTPTimeout},
 		baseDomains: DefaultKnownDomains,
 		userAgent:   defaultUserAgent,
-		cacheTTL:    5 * time.Minute,
+		cacheTTL:    15 * time.Minute,
+		cacheDir:    filepath.Join(cacheBase, "kickoff"),
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -107,7 +128,40 @@ func NewService(opts ...Option) *Service {
 	return s
 }
 
-// FetchAgenda scrapes the agenda from mirror domains with fallback and context cancellation.
+func (s *Service) diskCachePath() string {
+	todayStr := time.Now().In(locale.BogotaLocation()).Format("2006-01-02")
+	return filepath.Join(s.cacheDir, fmt.Sprintf("extractor_agenda_%s.json", todayStr))
+}
+
+func (s *Service) saveDiskCache(events []ExtractedEvent) {
+	if len(events) == 0 || s.cacheDir == "" {
+		return
+	}
+	_ = os.MkdirAll(s.cacheDir, 0o755)
+	data, err := json.Marshal(events)
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(s.diskCachePath(), data, 0o644)
+}
+
+func (s *Service) loadDiskCache() ([]ExtractedEvent, error) {
+	if s.cacheDir == "" {
+		return nil, fmt.Errorf("no cache dir")
+	}
+	data, err := os.ReadFile(s.diskCachePath())
+	if err != nil {
+		return nil, err
+	}
+	var events []ExtractedEvent
+	if err := json.Unmarshal(data, &events); err != nil {
+		return nil, err
+	}
+	return events, nil
+}
+
+// FetchAgenda scrapes the agenda from mirror domains with fallback, context cancellation,
+// and resilient stale-while-revalidate disk persistence.
 func (s *Service) FetchAgenda(ctx context.Context) ([]ExtractedEvent, error) {
 	s.mu.RLock()
 	if len(s.cachedAgenda) > 0 && time.Since(s.lastFetch) < s.cacheTTL {
@@ -137,11 +191,24 @@ func (s *Service) FetchAgenda(ctx context.Context) ([]ExtractedEvent, error) {
 		if err == nil && len(events) > 0 {
 			s.cachedAgenda = events
 			s.lastFetch = time.Now()
+			go s.saveDiskCache(events)
 			return events, nil
 		}
 		if err != nil {
 			lastErr = err
 		}
+	}
+
+	// Resilient fallback (stale-while-revalidate):
+	// 1. If we have memory cache (even if stale), use it when upstream is failing.
+	if len(s.cachedAgenda) > 0 {
+		return s.cachedAgenda, nil
+	}
+	// 2. If we have today's disk cache from earlier, recover from disk.
+	if diskEvents, err := s.loadDiskCache(); err == nil && len(diskEvents) > 0 {
+		s.cachedAgenda = diskEvents
+		s.lastFetch = time.Now()
+		return diskEvents, nil
 	}
 
 	if lastErr != nil {
