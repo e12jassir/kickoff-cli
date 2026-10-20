@@ -88,24 +88,27 @@ func initialInstallSteps() []installStep {
 
 // Model represents the Bubble Tea model for the setup and diagnostics screen.
 type Model struct {
-	version         string
-	width           int
-	height          int
-	cursor          int
-	state           screenState
-	options         []string
-	checks          []SystemCheck
-	statusMsg       string
-	statusColor     lipgloss.Color
-	quitting        bool
-	launchKickoff   bool
-	cfgPath         string
-	cacheDir        string
-	spinner         spinner.Model
-	installSteps    []installStep
-	installComplete bool
-	latestRelease   *updater.ReleaseInfo
-	uninstallDone   bool
+	version          string
+	width            int
+	height           int
+	cursor           int
+	state            screenState
+	options          []string
+	checks           []SystemCheck
+	statusMsg        string
+	statusColor      lipgloss.Color
+	quitting         bool
+	launchKickoff    bool
+	cfgPath          string
+	cacheDir         string
+	spinner          spinner.Model
+	installSteps     []installStep
+	installComplete  bool
+	autoStartInstall bool
+	abortPrompt      bool
+	installCancelled bool
+	latestRelease    *updater.ReleaseInfo
+	uninstallDone    bool
 }
 
 // Messages for asynchronous tasks.
@@ -384,6 +387,9 @@ func formatBytes(b int64) string {
 
 // Init initializes the Bubble Tea program.
 func (m Model) Init() tea.Cmd {
+	if m.autoStartInstall {
+		return m.installCommand()
+	}
 	return nil
 }
 
@@ -446,6 +452,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case installStepMsg:
+		if m.installCancelled {
+			return m, nil
+		}
 		if msg.stepIndex >= 0 && msg.stepIndex < len(m.installSteps) {
 			if msg.success {
 				m.installSteps[msg.stepIndex].Status = "done"
@@ -527,12 +536,40 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case stateInstalling:
+		if m.abortPrompt {
+			switch key {
+			case "y", "Y", "enter":
+				m.abortPrompt = false
+				if !m.installComplete {
+					m.installCancelled = true
+					m.statusMsg = "Installation aborted."
+					m.statusColor = ColorGold
+				}
+				m.state = stateMenu
+			case "n", "N", "esc", "q", "ctrl+c":
+				m.abortPrompt = false
+				if !m.installComplete {
+					m.statusMsg = ""
+				}
+			}
+			return m, nil
+		}
+
 		if m.installComplete {
 			switch key {
 			case "enter", "esc", "q", "ctrl+c":
 				m.state = stateMenu
 				return m, nil
 			}
+			return m, nil
+		}
+
+		switch key {
+		case "ctrl+c", "q", "esc":
+			m.abortPrompt = true
+			m.statusMsg = "Abort installation? Press y to confirm, any other key to continue."
+			m.statusColor = ColorGold
+			return m, nil
 		}
 
 	case stateUpdatePrompt:
@@ -569,10 +606,17 @@ func (m *Model) startInstallation(force bool) (tea.Model, tea.Cmd) {
 	}
 	m.state = stateInstalling
 	m.installComplete = false
+	m.abortPrompt = false
+	m.installCancelled = false
 	m.installSteps = initialInstallSteps()
 	m.installSteps[0].Status = "running"
 	m.statusMsg = ""
-	return *m, tea.Batch(m.spinner.Tick, m.runInstallStep(0))
+	return *m, m.installCommand()
+}
+
+// installCommand starts the spinner and the first installation step.
+func (m Model) installCommand() tea.Cmd {
+	return tea.Batch(m.spinner.Tick, m.runInstallStep(0))
 }
 
 func (m Model) handleSelect() (tea.Model, tea.Cmd) {
@@ -1088,13 +1132,25 @@ func (m Model) View() string {
 				Align(lipgloss.Center).
 				Render("enter/esc: back to menu")
 			content.WriteString("\n" + footer)
+		} else if m.abortPrompt {
+			statusLine := lipgloss.NewStyle().
+				Foreground(ColorGold).
+				Bold(true).
+				Render("\n  [ Abort installation? Press y to confirm ]")
+			content.WriteString(statusLine + "\n")
+			footer := lipgloss.NewStyle().
+				Foreground(ColorMuted).
+				Width(targetWidth).
+				Align(lipgloss.Center).
+				Render("y: abort • n/esc: keep installing")
+			content.WriteString("\n" + footer)
 		} else {
 			content.WriteString("\n")
 			footer := lipgloss.NewStyle().
 				Foreground(ColorMuted).
 				Width(targetWidth).
 				Align(lipgloss.Center).
-				Render("Installing components in background...")
+				Render("Installing components... • ctrl+c/q/esc: abort")
 			content.WriteString("\n" + footer)
 		}
 
@@ -1196,15 +1252,28 @@ func (m Model) View() string {
 	return frameStyle.Render(content.String()) + "\n"
 }
 
+// startInstaller returns a model that runs the installation pipeline from Init.
+// The pipeline only starts when forced or when the system is not healthy.
+func startInstaller(version string, force bool) Model {
+	m := NewModel(version)
+	if !force && m.isSystemHealthy() {
+		return m
+	}
+	updated, _ := m.startInstallation(force)
+	m = updated.(Model)
+	if m.state == stateInstalling {
+		m.autoStartInstall = true
+	}
+	return m
+}
+
 // Run starts the interactive Bubble Tea setup TUI.
 // Returns (launchKickoff, error) where launchKickoff indicates if the user selected 'Launch Kickoff'.
 func Run(version string, args ...string) (bool, error) {
 	m := NewModel(version)
 	for _, arg := range args {
 		if arg == "--installer" || arg == "-installer" {
-			if !m.isSystemHealthy() {
-				m.startInstallation(false)
-			}
+			m = startInstaller(version, false)
 		}
 	}
 
