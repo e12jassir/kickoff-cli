@@ -563,18 +563,56 @@ func TestCatalog_OverridesTakePrecedence(t *testing.T) {
 	}
 }
 
-func TestCatalog_CBSOfficialBroadcasts(t *testing.T) {
-	oldCBSSN := StreamCBSSportsNetwork
-	oldGolazo := StreamCBSGolazo
-	defer func() {
-		StreamCBSSportsNetwork = oldCBSSN
-		StreamCBSGolazo = oldGolazo
-	}()
-
-	StreamCBSSportsNetwork = "http://example.invalid/cbssn.m3u8"
-	StreamCBSGolazo = "http://example.invalid/golazo.m3u8"
+// TestCatalog_USStreamsFromEnv proves the optional KICKOFF_STREAM_* endpoints are
+// read when the catalog is constructed, not once at package initialization. A
+// process that sets the variable before creating the catalog must see it.
+func TestCatalog_USStreamsFromEnv(t *testing.T) {
+	t.Setenv("KICKOFF_STREAM_CBSSN", "http://example.invalid/env-cbssn.m3u8")
+	t.Setenv("KICKOFF_STREAM_GOLAZO", "http://example.invalid/env-golazo.m3u8")
 
 	cat := newTestCatalog()
+	channels := cat.GetChannels(model.Match{
+		ID:         "env-us-streams",
+		LeagueKey:  "champions",
+		Title:      "Inter Miami vs New York City",
+		Broadcasts: []string{"CBSSN", "Paramount+"},
+	})
+	if len(channels) != 2 {
+		t.Fatalf("expected the two env-configured US streams, got %+v", channels)
+	}
+	if channels[0].URL != "http://example.invalid/env-cbssn.m3u8" {
+		t.Errorf("expected the env CBSSN URL, got %s", channels[0].URL)
+	}
+	if channels[1].URL != "http://example.invalid/env-golazo.m3u8" {
+		t.Errorf("expected the env Golazo URL, got %s", channels[1].URL)
+	}
+}
+
+// TestCatalog_USStreamsOptionOverridesEnv pins precedence: an explicit option wins
+// over the environment, matching every other programmatic stream source.
+func TestCatalog_USStreamsOptionOverridesEnv(t *testing.T) {
+	t.Setenv("KICKOFF_STREAM_CBSSN", "http://example.invalid/env-cbssn.m3u8")
+
+	cat := newTestCatalog(WithUSStreams("http://example.invalid/option-cbssn.m3u8", ""))
+	channels := cat.GetChannels(model.Match{
+		ID:         "option-us-streams",
+		LeagueKey:  "champions",
+		Title:      "Inter Miami vs New York City",
+		Broadcasts: []string{"CBSSN"},
+	})
+	if len(channels) != 1 {
+		t.Fatalf("expected one option-configured stream, got %+v", channels)
+	}
+	if channels[0].URL != "http://example.invalid/option-cbssn.m3u8" {
+		t.Errorf("expected the option URL to win, got %s", channels[0].URL)
+	}
+}
+
+func TestCatalog_CBSOfficialBroadcasts(t *testing.T) {
+	cat := newTestCatalog(WithUSStreams(
+		"http://example.invalid/cbssn.m3u8",
+		"http://example.invalid/golazo.m3u8",
+	))
 	match := model.Match{
 		ID:         "live-cbs-configured",
 		LeagueKey:  "champions",

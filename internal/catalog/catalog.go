@@ -43,10 +43,10 @@ const (
 	parrillaFailureTTL = 10 * time.Minute
 )
 
-// Optional US stream endpoints (configurable via environment variables).
-var (
-	StreamCBSSportsNetwork = os.Getenv("KICKOFF_STREAM_CBSSN")
-	StreamCBSGolazo        = os.Getenv("KICKOFF_STREAM_GOLAZO")
+// Environment variables carrying the optional US stream endpoints.
+const (
+	envStreamCBSSN  = "KICKOFF_STREAM_CBSSN"
+	envStreamGolazo = "KICKOFF_STREAM_GOLAZO"
 )
 
 type ExternalConfig struct {
@@ -128,6 +128,15 @@ func WithExtractor(ext extractor.Extractor) Option {
 	}
 }
 
+// WithUSStreams sets the optional US stream endpoints. It overrides the
+// KICKOFF_STREAM_* environment variables read by New.
+func WithUSStreams(cbssn, golazo string) Option {
+	return func(c *Catalog) {
+		c.streamCBSSN = cbssn
+		c.streamGolazo = golazo
+	}
+}
+
 // WithNow overrides the clock used for cache expiry decisions (tests only).
 func WithNow(nowFunc func() time.Time) Option {
 	return func(c *Catalog) {
@@ -148,6 +157,12 @@ type Catalog struct {
 	tvGuide         *tvguide.Service
 	extractor       extractor.Extractor
 	now             func() time.Time
+
+	// Optional US stream endpoints, resolved from KICKOFF_STREAM_* by New and
+	// overridable through WithUSStreams. Reading them in the constructor keeps
+	// configuration out of package initialization.
+	streamCBSSN  string
+	streamGolazo string
 
 	// parrilla is the Gol Caracol daily schedule fetcher: the authoritative
 	// per-match source of which channel airs each fixture in Colombia (T1).
@@ -199,20 +214,21 @@ func New(opts ...Option) *Catalog {
 		extractor:       extractor.NewService(),
 		webCache:        make(map[string]webCacheEntry),
 		now:             time.Now,
+		streamCBSSN:     os.Getenv(envStreamCBSSN),
+		streamGolazo:    os.Getenv(envStreamGolazo),
 	}
 	for _, opt := range opts {
 		opt(c)
 	}
 	c.loadExternalConfig()
-	// Capture the env-configured US stream globals before the probe goroutine starts,
-	// so the goroutine never reads package-level mutable state concurrently with
-	// runtime overrides (e.g. tests that set StreamCBSSportsNetwork/StreamCBSGolazo).
+	// Capture the configured US stream endpoints before the probe goroutine
+	// starts, so the goroutine never reads the catalog's fields after New returns.
 	envStreams := make([]string, 0, 2)
-	if StreamCBSSportsNetwork != "" {
-		envStreams = append(envStreams, StreamCBSSportsNetwork)
+	if c.streamCBSSN != "" {
+		envStreams = append(envStreams, c.streamCBSSN)
 	}
-	if StreamCBSGolazo != "" {
-		envStreams = append(envStreams, StreamCBSGolazo)
+	if c.streamGolazo != "" {
+		envStreams = append(envStreams, c.streamGolazo)
 	}
 	go c.probeAllStreamsBackground(envStreams)
 	if c.extractor != nil {
@@ -679,11 +695,11 @@ func (c *Catalog) resolveFromOfficialBroadcasts(broadcasts []string) []model.Cha
 			continue
 		}
 		if containsAny(bl, "cbssn", "cbs sports network", "cbs sports") {
-			c.appendSingleFromURL(&result, StreamCBSSportsNetwork, "CBS Sports Network", len(result) == 0)
+			c.appendSingleFromURL(&result, c.streamCBSSN, "CBS Sports Network", len(result) == 0)
 			continue
 		}
 		if containsAny(bl, "paramount", "golazo", "cbs sports golazo") {
-			c.appendSingleFromURL(&result, StreamCBSGolazo, "CBS Sports Golazo Network", len(result) == 0)
+			c.appendSingleFromURL(&result, c.streamGolazo, "CBS Sports Golazo Network", len(result) == 0)
 			continue
 		}
 	}
