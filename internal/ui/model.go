@@ -82,6 +82,11 @@ type Model struct {
 	// an actionable configuration hint instead of a silent empty list.
 	noStreamsConfigured bool
 
+	// loadGen is the generation of the currently displayed view data. Every
+	// destructive transition bumps it so results from a previous view can be
+	// identified and discarded instead of mutating the new state.
+	loadGen uint64
+
 	standings     *model.LeagueStandings
 	standingsErr  error
 	selectedGroup int
@@ -89,9 +94,10 @@ type Model struct {
 	statistics    *model.LeagueStatistics
 	statisticsErr error
 
-	channels      []model.Channel
-	channelCursor int
-	modalTab      int
+	channels        []model.Channel
+	channelCursor   int
+	channelsLoading bool
+	modalTab        int
 
 	livePulse  bool
 	pulseStep  int
