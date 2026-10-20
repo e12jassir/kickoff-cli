@@ -236,7 +236,7 @@ func renderBrowsing(m Model) string {
 				modalWidth = 74
 				modalBox = modalBox.Width(modalWidth + 6)
 			}
-			modalContent := renderChannelModal(selMatch, m.channels, m.channelCursor, m.modalTab, m.livePulse, m.spinner.View(), m.IsDetailsLoaded(selMatch.ID), m.channelsLoading, m.noEmoji, modalWidth)
+			modalContent := renderChannelModal(selMatch, m.displayNow(), m.channels, m.channelCursor, m.modalTab, m.livePulse, m.spinner.View(), m.IsDetailsLoaded(selMatch.ID), m.channelsLoading, m.noEmoji, modalWidth)
 			body = modalBox.Render(modalContent)
 			if m.modalTab == 0 {
 				footer = FooterHelpStyle.Render("h/l o ←/→: pestaña  •  j/k o ↑/↓: canal  •  enter: reproducir  •  esc: volver")
@@ -298,7 +298,7 @@ func renderTabPartidos(m Model, curr model.League) string {
 		return MatchBoxStyle.Render(EmptyStateStyle.Render(emptyMsg))
 	}
 
-	todayStr := time.Now().Format("2006-01-02")
+	todayStr := m.displayNow().Format("2006-01-02")
 	isTodayMatchday := false
 	for _, match := range m.matches {
 		if match.StartTime.Format("2006-01-02") == todayStr {
@@ -362,7 +362,7 @@ func renderTabPartidos(m Model, curr model.League) string {
 	for i := start; i < end; i++ {
 		match := m.matches[i]
 		isSelected := i == cursor
-		itemLines := renderMatchItem(match, isSelected, m.livePulse)
+		itemLines := renderMatchItem(match, m.displayNow(), isSelected, m.livePulse)
 		lines = append(lines, itemLines...)
 		if i < end-1 {
 			lines = append(lines, "")
@@ -650,12 +650,12 @@ func renderTabGoleadores(m Model, curr model.League) string {
 	return MatchBoxStyle.Render(strings.Join(lines, "\n"))
 }
 
-func renderMatchItem(match model.Match, isSelected bool, livePulse bool) []string {
+func renderMatchItem(match model.Match, now time.Time, isSelected bool, livePulse bool) []string {
 	timeStr := match.TimeStr
 	if timeStr == "" {
 		timeStr = "--:--"
 	}
-	todayStr := time.Now().Format("2006-01-02")
+	todayStr := now.Format("2006-01-02")
 	if !match.StartTime.IsZero() && match.StartTime.Format("2006-01-02") != todayStr {
 		timeStr = fmt.Sprintf("[%s] %s", match.StartTime.Format("02/01"), timeStr)
 	}
@@ -716,7 +716,7 @@ func renderMatchItem(match model.Match, isSelected bool, livePulse bool) []strin
 	return []string{line1, line2}
 }
 
-func renderChannelModal(match model.Match, channels []model.Channel, selectedIdx int, modalTab int, livePulse bool, spinnerStr string, detailsLoaded bool, channelsLoading bool, optArgs ...any) string {
+func renderChannelModal(match model.Match, now time.Time, channels []model.Channel, selectedIdx int, modalTab int, livePulse bool, spinnerStr string, detailsLoaded bool, channelsLoading bool, optArgs ...any) string {
 	noEmoji := false
 	modalContentWidth := 60
 
@@ -759,9 +759,10 @@ func renderChannelModal(match model.Match, channels []model.Channel, selectedIdx
 	default:
 		preText := match.TimeStr
 		if !match.StartTime.IsZero() {
-			now := time.Now().In(match.StartTime.Location())
-			today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, match.StartTime.Location())
-			matchDay := time.Date(match.StartTime.Year(), match.StartTime.Month(), match.StartTime.Day(), 0, 0, 0, 0, match.StartTime.Location())
+			loc := now.Location()
+			today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
+			matchLocal := match.StartTime.In(loc)
+			matchDay := time.Date(matchLocal.Year(), matchLocal.Month(), matchLocal.Day(), 0, 0, 0, 0, loc)
 			daysDiff := int(matchDay.Sub(today).Hours() / 24)
 
 			switch daysDiff {

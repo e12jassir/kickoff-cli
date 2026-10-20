@@ -1018,7 +1018,7 @@ func TestModel_ChannelModal_SanitizedAndAligned(t *testing.T) {
 		Status:    model.MatchStatus{State: "in", Description: "1T 25'"},
 	}
 
-	out := renderChannelModal(match, channels, 0, 0, false, "", false, false)
+	out := renderChannelModal(match, time.Now(), channels, 0, 0, false, "", false, false)
 
 	// 1. Must NOT contain bullet indentations "·" preceding channel names
 	if strings.Contains(out, "· Win+ Fútbol") || strings.Contains(out, "· Win Sports") {
@@ -2163,6 +2163,44 @@ func TestModalTabTransitionsAndLineups(t *testing.T) {
 	m = newM.(Model)
 	if m.modalTab != 2 {
 		t.Fatalf("expected modalTab 2 after Shift+Tab, got %d", m.modalTab)
+	}
+}
+
+// TestRenderTabPartidos_TodayUsesUserZone proves the "today" boundary follows the
+// user's display timezone, not the machine's local zone. At 16:00 UTC it is
+// already 01:00 the next day in Tokyo, so a fixture dated Oct 21 is today there.
+func TestRenderTabPartidos_TodayUsesUserZone(t *testing.T) {
+	tokyo, err := time.LoadLocation("Asia/Tokyo")
+	if err != nil {
+		t.Skipf("tzdata unavailable: %v", err)
+	}
+
+	m := NewModel(&mockClient{}, &mockCatalog{}, &mockPlayer{})
+	m.width = 100
+	m.height = 35
+	m.state = StateBrowsing
+	m.leagueTab = TabPartidos
+	m.clock = func() time.Time { return time.Date(2026, 10, 20, 16, 0, 0, 0, time.UTC) }
+	m.loc = tokyo
+
+	match := model.Match{
+		ID:        "tokyo-today",
+		Title:     "Urawa Reds vs Kashiwa Reysol",
+		HomeTeam:  model.Competitor{DisplayName: "Urawa Reds"},
+		AwayTeam:  model.Competitor{DisplayName: "Kashiwa Reysol"},
+		Status:    model.MatchStatus{State: "pre"},
+		StartTime: time.Date(2026, 10, 21, 19, 0, 0, 0, tokyo),
+		TimeStr:   "19:00",
+		Venue:     "Saitama Stadium",
+	}
+	m.matches = []model.Match{match}
+
+	view := renderTabPartidos(m, m.CurrentLeague())
+	if !strings.Contains(view, "PARTIDOS DE HOY") {
+		t.Errorf("expected the user-zone today header, got:\n%s", view)
+	}
+	if strings.Contains(view, "[21/10]") {
+		t.Errorf("expected no date prefix for a fixture that is today in Tokyo, got:\n%s", view)
 	}
 }
 
