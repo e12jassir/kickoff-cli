@@ -6,7 +6,7 @@ coverage.out
 
 # Local strategy docs and agent artifacts
 .atl/
-PLAN-10-10.md
+PLAN-*.md
 PROPUESTAS_*.md
 
 # Internal SDD process artifacts — published specs stay, planning stays private
