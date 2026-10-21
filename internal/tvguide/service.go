@@ -3,7 +3,6 @@ package tvguide
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"net/http"
 	"os"
@@ -12,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/e12jassir/kickoff-cli/internal/fsutil"
 	"github.com/e12jassir/kickoff-cli/internal/locale"
 	"github.com/e12jassir/kickoff-cli/internal/model"
 )
@@ -40,10 +40,14 @@ type Service struct {
 	cacheDir   string
 	cacheTTL   time.Duration
 	now        func() time.Time
-	loc        *time.Location
+	loc        *time.Location // display zone; source schedules use Bogota
 	targets    []ChannelTarget
 	httpClient *http.Client
 	baseURL    string
+
+	// autoRefresh opts in to the startup disk load and background crawl. It is
+	// explicit so tests never depend on how the binary was invoked.
+	autoRefresh bool
 
 	mu         sync.RWMutex
 	guides     []ChannelGuide
@@ -95,10 +99,21 @@ func WithNow(nowFunc func() time.Time) Option {
 	}
 }
 
-// WithTimezone overrides the local timezone.
+// WithTimezone overrides the display timezone held by the service. Resolution
+// itself is anchored to locale.BogotaLocation, so this option does not change
+// which guide entry matches a fixture; the view layer owns display conversion.
 func WithTimezone(loc *time.Location) Option {
 	return func(s *Service) {
 		s.loc = loc
+	}
+}
+
+// WithAutoRefresh enables the startup disk cache load and the background crawl
+// when the cache is cold. Long-lived callers opt in; tests and short-lived tools
+// stay offline and deterministic.
+func WithAutoRefresh(enabled bool) Option {
+	return func(s *Service) {
+		s.autoRefresh = enabled
 	}
 }
 
@@ -123,9 +138,9 @@ func NewService(opts ...Option) *Service {
 	}
 	defaultCache := filepath.Join(cacheBase, "kickoff")
 
-	// The crawler and the ESPN client must share the same display timezone: if
-	// they disagree, the day boundary shifts and a match can be shown on the
-	// wrong day. Both resolve it through the single locale source of truth.
+	// Retain the display timezone on the service so callers can model the user's
+	// zone. Source schedules and cache days are anchored to Bogota instead, so
+	// the display choice never influences which guide or programme matches.
 	loc := locale.Location()
 
 	s := &Service{
@@ -145,14 +160,16 @@ func NewService(opts ...Option) *Service {
 		s.crawler = NewCrawler(s.httpClient, s.baseURL)
 	}
 
-	// 1. Attempt zero-delay load from disk cache (in production or when custom cacheDir is configured)
+	// 1. Attempt a zero-delay load from disk: always for an explicitly
+	// configured cache directory, otherwise only when auto refresh is enabled.
 	var loaded bool
-	if flag.Lookup("test.v") == nil || s.cacheDir != defaultCache {
+	if s.cacheDir != defaultCache || s.autoRefresh {
 		loaded = s.loadCache()
 	}
 
-	// 2. If cache is not fresh and not executing unit tests, kick off background crawl
-	if !loaded && flag.Lookup("test.v") == nil {
+	// 2. If the cache is not fresh, refresh in the background. Never block the
+	// constructor on the network.
+	if !loaded && s.autoRefresh {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
@@ -167,9 +184,11 @@ func (s *Service) cacheFilePath(dateStr string) string {
 	return filepath.Join(s.cacheDir, fmt.Sprintf("tvguide_%s.json", dateStr))
 }
 
-// loadCache loads today's guide from disk if present and within TTL.
+// loadCache loads today's guide from disk if present and within TTL. The day is
+// the source calendar day in Colombia, not the display day: the crawled guide
+// lists the Colombian schedule.
 func (s *Service) loadCache() bool {
-	todayStr := s.now().In(s.loc).Format("2006-01-02")
+	todayStr := s.now().In(locale.BogotaLocation()).Format("2006-01-02")
 	filePath := s.cacheFilePath(todayStr)
 
 	data, err := os.ReadFile(filePath)
@@ -204,7 +223,7 @@ func (s *Service) loadCache() bool {
 
 // loadAnyCache loads today's cache file regardless of TTL (used for graceful offline fallback).
 func (s *Service) loadAnyCache() bool {
-	todayStr := s.now().In(s.loc).Format("2006-01-02")
+	todayStr := s.now().In(locale.BogotaLocation()).Format("2006-01-02")
 	filePath := s.cacheFilePath(todayStr)
 
 	data, err := os.ReadFile(filePath)
@@ -239,7 +258,7 @@ func (s *Service) saveCache(guides []ChannelGuide) error {
 		return err
 	}
 
-	todayStr := s.now().In(s.loc).Format("2006-01-02")
+	todayStr := s.now().In(locale.BogotaLocation()).Format("2006-01-02")
 	filePath := s.cacheFilePath(todayStr)
 
 	cache := GuideCache{
@@ -253,7 +272,7 @@ func (s *Service) saveCache(guides []ChannelGuide) error {
 		return err
 	}
 
-	return os.WriteFile(filePath, data, 0o644)
+	return fsutil.AtomicWriteFile(filePath, data, 0o644)
 }
 
 // Refresh performs a network crawl across all targets and persists to cache.
@@ -268,7 +287,7 @@ func (s *Service) Refresh(ctx context.Context) error {
 
 	s.mu.Lock()
 	s.guides = guides
-	s.loadedDate = s.now().In(s.loc).Format("2006-01-02")
+	s.loadedDate = s.now().In(locale.BogotaLocation()).Format("2006-01-02")
 	s.mu.Unlock()
 
 	_ = s.saveCache(guides)
@@ -280,7 +299,7 @@ func (s *Service) SetGuides(guides []ChannelGuide) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.guides = guides
-	s.loadedDate = s.now().In(s.loc).Format("2006-01-02")
+	s.loadedDate = s.now().In(locale.BogotaLocation()).Format("2006-01-02")
 }
 
 // Guides returns a snapshot of currently loaded channel guides.
@@ -372,7 +391,11 @@ func programmeOverlapsMatch(entry ProgramEntry, matchStartMins int) (overlaps, h
 //     time slot can never lift a weak candidate above a correct one.
 //   - If two different channels share the top score, the result is ambiguous
 //     and the call declines rather than picking one. Unverified behaviour is
-//     strictly better than a wrong channel.
+//     strictly better than a wrong channel. Ties are counted per canonical
+//     channel identity, not per raw slug: GatoTV publishes some signals under
+//     more than one slug (caracol_television / caracol_colombia), and comparing
+//     slugs would make a single channel look ambiguous. Two genuinely different
+//     channels still decline.
 func (s *Service) ResolveMatch(match model.Match) (ChannelTarget, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -384,17 +407,22 @@ func (s *Service) ResolveMatch(match model.Match) (ChannelTarget, bool) {
 	hasMatchTime := !match.StartTime.IsZero()
 	matchMins := 0
 	if hasMatchTime {
-		localTime := match.StartTime.In(s.loc)
-		matchMins = localTime.Hour()*60 + localTime.Minute()
+		// Guide entries publish Colombian wall-clock times, so the kickoff must be
+		// read in the source zone regardless of the user's display timezone.
+		sourceTime := match.StartTime.In(locale.BogotaLocation())
+		matchMins = sourceTime.Hour()*60 + sourceTime.Minute()
 	}
 
 	bestScore := 0
-	bestSlugs := make(map[string]struct{})
+	bestIdentities := make(map[string]struct{})
 	var bestTarget ChannelTarget
 
 	// consider records an eligible candidate. Ties across distinct channels are
-	// tracked so an ambiguous result can be declined at the end.
-	consider := func(guide ChannelGuide, score int) {
+	// tracked by canonical identity so an ambiguous result can be declined at the
+	// end. The guide index is the last-resort identity: a guide with neither name
+	// nor slug cannot be proven equal to another, and the index keeps repeated
+	// entries of the same guide on one identity.
+	consider := func(guide ChannelGuide, index, score int) {
 		if score < minMatchScore {
 			return
 		}
@@ -403,20 +431,23 @@ func (s *Service) ResolveMatch(match model.Match) (ChannelTarget, bool) {
 			Slug:      guide.Slug,
 			StreamURL: guide.StreamURL,
 		}
+		identity := guideChannelIdentity(guide)
+		if identity == "" {
+			identity = fmt.Sprintf("\x00guide-%d", index)
+		}
 		switch {
 		case score > bestScore:
 			bestScore = score
-			bestSlugs = map[string]struct{}{guide.Slug: {}}
+			bestIdentities = map[string]struct{}{identity: {}}
 			bestTarget = target
 		case score == bestScore:
-			bestSlugs[guide.Slug] = struct{}{}
-			if bestTarget.Slug == "" {
-				bestTarget = target
-			}
+			// Same signal under another slug: record the identity only and keep
+			// the first target, so the chosen slug is deterministic.
+			bestIdentities[identity] = struct{}{}
 		}
 	}
 
-	for _, guide := range s.guides {
+	for i, guide := range s.guides {
 		if len(guide.Entries) > 0 {
 			for _, entry := range guide.Entries {
 				matched, baseScore := MatchScore(entry.Title, match)
@@ -434,7 +465,7 @@ func (s *Service) ResolveMatch(match model.Match) (ChannelTarget, bool) {
 					}
 				}
 
-				consider(guide, baseScore)
+				consider(guide, i, baseScore)
 			}
 			continue
 		}
@@ -444,12 +475,12 @@ func (s *Service) ResolveMatch(match model.Match) (ChannelTarget, bool) {
 		for _, prog := range guide.Programs {
 			matched, score := MatchScore(prog, match)
 			if matched {
-				consider(guide, score)
+				consider(guide, i, score)
 			}
 		}
 	}
 
-	if bestScore < minMatchScore || len(bestSlugs) > 1 {
+	if bestScore < minMatchScore || len(bestIdentities) > 1 {
 		return ChannelTarget{}, false
 	}
 

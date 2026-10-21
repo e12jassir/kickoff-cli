@@ -116,7 +116,9 @@ func renderMainMenu(m Model) string {
 	menuBox := MenuBoxStyle.Render(strings.Join(lines, "\n"))
 
 	footerText := "↑/k ↓/j: navegar  •  enter/space: desplegar/entrar  •  ←/→: plegar/desplegar  •  q: salir"
-	if m.updateAvailable != "" {
+	if strings.Contains(m.statusMsg, "Reproduciendo") {
+		footerText = "↑/k ↓/j: navegar  •  enter: entrar  •  x: parar señal  •  q: salir"
+	} else if m.updateAvailable != "" {
 		footerText = fmt.Sprintf("↑/k ↓/j: navegar  •  enter: entrar  •  u: actualizar (%s)  •  q: salir", m.updateAvailable)
 	}
 	footer := FooterHelpStyle.Render(footerText)
@@ -194,7 +196,11 @@ func renderBrowsing(m Model) string {
 	tabsRow := lipgloss.JoinHorizontal(lipgloss.Center, renderedTabs[0], "   ", renderedTabs[1], "   ", renderedTabs[2], "   ", renderedTabs[3])
 
 	var body string
-	footer := FooterHelpStyle.Render("h/l o ←/→: pestaña  •  j/k o ↑/↓: navegar  •  enter: detalles  •  esc: ligas  •  r: recargar  •  q: salir")
+	footerHelp := "h/l o ←/→: pestaña  •  j/k o ↑/↓: navegar  •  enter: detalles  •  esc: ligas  •  r: recargar  •  q: salir"
+	if strings.Contains(m.statusMsg, "Reproduciendo") {
+		footerHelp = "h/l: pestaña  •  j/k: navegar  •  enter: detalles  •  x: parar señal  •  esc: ligas  •  q: salir"
+	}
+	footer := FooterHelpStyle.Render(footerHelp)
 
 	// Connecting stream pulse overlay check
 	if m.state == StatePlaying && m.connecting {
@@ -236,7 +242,7 @@ func renderBrowsing(m Model) string {
 				modalWidth = 74
 				modalBox = modalBox.Width(modalWidth + 6)
 			}
-			modalContent := renderChannelModal(selMatch, m.channels, m.channelCursor, m.modalTab, m.livePulse, m.spinner.View(), m.IsDetailsLoaded(selMatch.ID), m.noEmoji, modalWidth)
+			modalContent := renderChannelModal(selMatch, m.displayNow(), m.channels, m.channelCursor, m.modalTab, m.livePulse, m.spinner.View(), m.IsDetailsLoaded(selMatch.ID), m.channelsLoading, m.noEmoji, modalWidth)
 			body = modalBox.Render(modalContent)
 			if m.modalTab == 0 {
 				footer = FooterHelpStyle.Render("h/l o ←/→: pestaña  •  j/k o ↑/↓: canal  •  enter: reproducir  •  esc: volver")
@@ -298,7 +304,7 @@ func renderTabPartidos(m Model, curr model.League) string {
 		return MatchBoxStyle.Render(EmptyStateStyle.Render(emptyMsg))
 	}
 
-	todayStr := time.Now().Format("2006-01-02")
+	todayStr := m.displayNow().Format("2006-01-02")
 	isTodayMatchday := false
 	for _, match := range m.matches {
 		if match.StartTime.Format("2006-01-02") == todayStr {
@@ -362,7 +368,7 @@ func renderTabPartidos(m Model, curr model.League) string {
 	for i := start; i < end; i++ {
 		match := m.matches[i]
 		isSelected := i == cursor
-		itemLines := renderMatchItem(match, isSelected, m.livePulse)
+		itemLines := renderMatchItem(match, m.displayNow(), isSelected, m.livePulse)
 		lines = append(lines, itemLines...)
 		if i < end-1 {
 			lines = append(lines, "")
@@ -604,7 +610,11 @@ func renderTabGoleadores(m Model, curr model.League) string {
 		}
 		for i := 0; i < limit; i++ {
 			s := m.statistics.Scorers[i]
-			row := fmt.Sprintf(" %-2d  %-24s  %-18s  %4s", i+1, truncateModalText(s.PlayerName, 24), truncateModalText(s.TeamName, 18), s.Value)
+			playerName := s.PlayerName
+			if playerName == "" {
+				playerName = "Jugador"
+			}
+			row := fmt.Sprintf(" %-2d  %-24s  %-18s  %4s", i+1, truncateModalText(playerName, 24), truncateModalText(s.TeamName, 18), s.Value)
 			if i < 3 {
 				lines = append(lines, lipgloss.NewStyle().Foreground(ColorHighlight).Bold(true).Render(row))
 			} else {
@@ -630,7 +640,11 @@ func renderTabGoleadores(m Model, curr model.League) string {
 		}
 		for i := 0; i < limit; i++ {
 			a := m.statistics.Assists[i]
-			row := fmt.Sprintf(" %-2d  %-24s  %-18s  %4s", i+1, truncateModalText(a.PlayerName, 24), truncateModalText(a.TeamName, 18), a.Value)
+			playerName := a.PlayerName
+			if playerName == "" {
+				playerName = "Jugador"
+			}
+			row := fmt.Sprintf(" %-2d  %-24s  %-18s  %4s", i+1, truncateModalText(playerName, 24), truncateModalText(a.TeamName, 18), a.Value)
 			if i < 3 {
 				lines = append(lines, lipgloss.NewStyle().Foreground(ColorHighlight).Bold(true).Render(row))
 			} else {
@@ -642,12 +656,12 @@ func renderTabGoleadores(m Model, curr model.League) string {
 	return MatchBoxStyle.Render(strings.Join(lines, "\n"))
 }
 
-func renderMatchItem(match model.Match, isSelected bool, livePulse bool) []string {
+func renderMatchItem(match model.Match, now time.Time, isSelected bool, livePulse bool) []string {
 	timeStr := match.TimeStr
 	if timeStr == "" {
 		timeStr = "--:--"
 	}
-	todayStr := time.Now().Format("2006-01-02")
+	todayStr := now.Format("2006-01-02")
 	if !match.StartTime.IsZero() && match.StartTime.Format("2006-01-02") != todayStr {
 		timeStr = fmt.Sprintf("[%s] %s", match.StartTime.Format("02/01"), timeStr)
 	}
@@ -708,7 +722,19 @@ func renderMatchItem(match model.Match, isSelected bool, livePulse bool) []strin
 	return []string{line1, line2}
 }
 
-func renderChannelModal(match model.Match, channels []model.Channel, selectedIdx int, modalTab int, livePulse bool, spinnerStr string, detailsLoaded bool, optArgs ...any) string {
+// calendarDayDiff returns the signed number of calendar days from one instant to
+// another, comparing year/month/day only. Callers must pass both instants in the
+// same location. Unlike Hours()/24 this never truncates: a DST day can last 23 or
+// 25 hours, which would otherwise report tomorrow as today.
+func calendarDayDiff(from, to time.Time) int {
+	fy, fm, fd := from.Date()
+	ty, tm, td := to.Date()
+	fromDay := time.Date(fy, fm, fd, 0, 0, 0, 0, time.UTC)
+	toDay := time.Date(ty, tm, td, 0, 0, 0, 0, time.UTC)
+	return int(toDay.Sub(fromDay).Hours() / 24)
+}
+
+func renderChannelModal(match model.Match, now time.Time, channels []model.Channel, selectedIdx int, modalTab int, livePulse bool, spinnerStr string, detailsLoaded bool, channelsLoading bool, optArgs ...any) string {
 	noEmoji := false
 	modalContentWidth := 60
 
@@ -751,10 +777,7 @@ func renderChannelModal(match model.Match, channels []model.Channel, selectedIdx
 	default:
 		preText := match.TimeStr
 		if !match.StartTime.IsZero() {
-			now := time.Now().In(match.StartTime.Location())
-			today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, match.StartTime.Location())
-			matchDay := time.Date(match.StartTime.Year(), match.StartTime.Month(), match.StartTime.Day(), 0, 0, 0, 0, match.StartTime.Location())
-			daysDiff := int(matchDay.Sub(today).Hours() / 24)
+			daysDiff := calendarDayDiff(now, match.StartTime.In(now.Location()))
 
 			switch daysDiff {
 			case 0:
@@ -830,6 +853,12 @@ func renderChannelModal(match model.Match, channels []model.Channel, selectedIdx
 			emptyNoticeText := "[ Sin señales activas • La transmisión inicia cerca al partido ]"
 			if strings.ToLower(match.Status.State) == "in" {
 				emptyNoticeText = "[ Sin señales activas • No hay transmisión disponible en este momento ]"
+			}
+			if channelsLoading {
+				emptyNoticeText = "Resolviendo señales de transmisión..."
+				if spinnerStr != "" {
+					emptyNoticeText = fmt.Sprintf("%s  %s", spinnerStr, emptyNoticeText)
+				}
 			}
 			emptyNotice := lipgloss.NewStyle().Width(modalContentWidth).Align(lipgloss.Center).Foreground(ColorMuted).Render(emptyNoticeText)
 			modal.WriteString(emptyNotice + "\n")
@@ -1263,7 +1292,7 @@ func renderTimeline(events []model.MatchEvent, homeTeamID string, modalContentWi
 		}
 
 		pName := strings.TrimSpace(ev.PlayerName)
-		if pName == "" || strings.EqualFold(pName, "jugador") {
+		if pName == "" {
 			if ev.IsYellow || ev.IsRedCard {
 				pName = "Cuerpo técnico"
 			} else if ev.IsOwnGoal {

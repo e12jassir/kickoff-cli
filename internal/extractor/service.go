@@ -9,11 +9,14 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/e12jassir/kickoff-cli/internal/fsutil"
 	"github.com/e12jassir/kickoff-cli/internal/locale"
 	"github.com/e12jassir/kickoff-cli/internal/model"
 	"github.com/e12jassir/kickoff-cli/internal/tvguide"
@@ -34,13 +37,15 @@ var (
 	reTimeStr = regexp.MustCompile(`\b([01]?\d|2[0-3]):([0-5]\d)\b`)
 )
 
-// DefaultKnownDomains contains active mirror domains known to publish live match agendas.
+// Verified alive 2026-10-20: agenda18 (structured JSON, richest UCL
+// coverage incl. Disney/ESPN per-signal embeds), pelotalibretv and
+// futbol-librehd. librefutboltv.com now 302s to a survey-scam redirect and
+// futbollibre.lol hangs, so both were removed: they only burned up to 8s
+// of connect timeout each before the working fallback answered.
 var DefaultKnownDomains = []string{
 	"https://agenda18.com/agenda.json",
 	"https://pelotalibretv.net",
 	"https://futbol-librehd.com",
-	"https://librefutboltv.com",
-	"https://futbollibre.lol",
 }
 
 // Service coordinates scraping of agenda portals and manifest resolution.
@@ -52,6 +57,7 @@ type Service struct {
 	cacheTTL     time.Duration
 	cachedAgenda []ExtractedEvent
 	lastFetch    time.Time
+	cacheDir     string
 }
 
 // Option configures the extractor Service.
@@ -91,13 +97,31 @@ func WithCacheTTL(d time.Duration) Option {
 	}
 }
 
+// WithCacheDir configures custom disk cache directory for offline resilience.
+func WithCacheDir(dir string) Option {
+	return func(s *Service) {
+		if dir != "" {
+			s.cacheDir = dir
+		}
+	}
+}
+
 // NewService instantiates a new dynamic match extractor service.
 func NewService(opts ...Option) *Service {
+	cacheBase, err := os.UserCacheDir()
+	if err != nil || cacheBase == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			cacheBase = filepath.Join(home, ".cache")
+		} else {
+			cacheBase = os.TempDir()
+		}
+	}
 	s := &Service{
 		client:      &http.Client{Timeout: defaultHTTPTimeout},
 		baseDomains: DefaultKnownDomains,
 		userAgent:   defaultUserAgent,
-		cacheTTL:    5 * time.Minute,
+		cacheTTL:    15 * time.Minute,
+		cacheDir:    filepath.Join(cacheBase, "kickoff"),
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -105,7 +129,39 @@ func NewService(opts ...Option) *Service {
 	return s
 }
 
-// FetchAgenda scrapes the agenda from mirror domains with fallback and context cancellation.
+func (s *Service) diskCachePath() string {
+	todayStr := time.Now().In(locale.BogotaLocation()).Format("2006-01-02")
+	return filepath.Join(s.cacheDir, fmt.Sprintf("extractor_agenda_%s.json", todayStr))
+}
+
+func (s *Service) saveDiskCache(events []ExtractedEvent) {
+	if len(events) == 0 || s.cacheDir == "" {
+		return
+	}
+	data, err := json.Marshal(events)
+	if err != nil {
+		return
+	}
+	_ = fsutil.AtomicWriteFile(s.diskCachePath(), data, 0o644)
+}
+
+func (s *Service) loadDiskCache() ([]ExtractedEvent, error) {
+	if s.cacheDir == "" {
+		return nil, fmt.Errorf("no cache dir")
+	}
+	data, err := os.ReadFile(s.diskCachePath())
+	if err != nil {
+		return nil, err
+	}
+	var events []ExtractedEvent
+	if err := json.Unmarshal(data, &events); err != nil {
+		return nil, err
+	}
+	return events, nil
+}
+
+// FetchAgenda scrapes the agenda from mirror domains with fallback, context cancellation,
+// and resilient stale-while-revalidate disk persistence.
 func (s *Service) FetchAgenda(ctx context.Context) ([]ExtractedEvent, error) {
 	s.mu.RLock()
 	if len(s.cachedAgenda) > 0 && time.Since(s.lastFetch) < s.cacheTTL {
@@ -135,11 +191,24 @@ func (s *Service) FetchAgenda(ctx context.Context) ([]ExtractedEvent, error) {
 		if err == nil && len(events) > 0 {
 			s.cachedAgenda = events
 			s.lastFetch = time.Now()
+			go s.saveDiskCache(events)
 			return events, nil
 		}
 		if err != nil {
 			lastErr = err
 		}
+	}
+
+	// Resilient fallback (stale-while-revalidate):
+	// 1. If we have memory cache (even if stale), use it when upstream is failing.
+	if len(s.cachedAgenda) > 0 {
+		return s.cachedAgenda, nil
+	}
+	// 2. If we have today's disk cache from earlier, recover from disk.
+	if diskEvents, err := s.loadDiskCache(); err == nil && len(diskEvents) > 0 {
+		s.cachedAgenda = diskEvents
+		s.lastFetch = time.Now()
+		return diskEvents, nil
 	}
 
 	if lastErr != nil {

@@ -276,6 +276,60 @@ func TestMatchScore(t *testing.T) {
 	}
 }
 
+// countingCrawler records crawl attempts so background-refresh behavior can be
+// asserted without touching the network.
+type countingCrawler struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (c *countingCrawler) Crawl(ctx context.Context, targets []ChannelTarget) ([]ChannelGuide, error) {
+	c.mu.Lock()
+	c.calls++
+	c.mu.Unlock()
+	return nil, nil
+}
+
+func (c *countingCrawler) FetchChannel(ctx context.Context, slug string) ([]string, error) {
+	return nil, nil
+}
+
+func (c *countingCrawler) callCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.calls
+}
+
+// TestService_AutoRefreshIsExplicit proves the background crawl is an explicit
+// option instead of being inferred from the test binary's flags. A service built
+// without it must never touch the network, and one that opts in must.
+func TestService_AutoRefreshIsExplicit(t *testing.T) {
+	quiet := &countingCrawler{}
+	svc := NewService(WithCacheDir(t.TempDir()), WithCrawler(quiet), WithTargets(nil))
+	time.Sleep(50 * time.Millisecond)
+	if got := quiet.callCount(); got != 0 {
+		t.Fatalf("expected no background crawl without WithAutoRefresh(true), got %d", got)
+	}
+	if len(svc.Guides()) != 0 {
+		t.Fatalf("expected no guides, got %+v", svc.Guides())
+	}
+
+	eager := &countingCrawler{}
+	NewService(
+		WithCacheDir(t.TempDir()),
+		WithCrawler(eager),
+		WithTargets(nil),
+		WithAutoRefresh(true),
+	)
+	deadline := time.Now().Add(2 * time.Second)
+	for eager.callCount() == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := eager.callCount(); got == 0 {
+		t.Fatalf("expected a background crawl when auto refresh is enabled")
+	}
+}
+
 func TestService_ResolveMatch(t *testing.T) {
 	svc := NewService()
 	svc.SetGuides([]ChannelGuide{
@@ -354,6 +408,63 @@ func TestService_ResolveMatch(t *testing.T) {
 	}
 }
 
+// TestResolveMatch_SourceTimezoneOverlap proves that guide times, which are
+// published in Colombian local time, are compared against the kickoff converted
+// to Colombia. The display timezone must not shift the comparison window.
+func TestResolveMatch_SourceTimezoneOverlap(t *testing.T) {
+	madrid, err := time.LoadLocation("Europe/Madrid")
+	if err != nil {
+		t.Fatalf("failed to load Europe/Madrid: %v", err)
+	}
+
+	// 2026-10-18T00:00Z is 2026-10-17 19:00 in Colombia (02:00 in Madrid).
+	kickoff := time.Date(2026, time.October, 18, 0, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		name       string
+		start      string
+		end        string
+		expectFind bool
+	}{
+		{name: "programme at 19:00 COT overlaps the kickoff", start: "7:00 PM", end: "9:00 PM", expectFind: true},
+		{name: "programme outside the two-hour window is rejected", start: "10:00 PM", end: "11:30 PM", expectFind: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := NewService(
+				WithTimezone(madrid),
+				WithCacheDir(t.TempDir()),
+			)
+			svc.SetGuides([]ChannelGuide{{
+				Name:      "ESPN 2 HD",
+				Slug:      "espn_2_colombia",
+				StreamURL: "http://example.com/espn2.m3u8",
+				Entries: []ProgramEntry{{
+					Title:     "Arsenal vs Chelsea",
+					StartTime: tt.start,
+					EndTime:   tt.end,
+				}},
+			}})
+
+			match := model.Match{
+				HomeTeam:  model.Competitor{DisplayName: "Arsenal"},
+				AwayTeam:  model.Competitor{DisplayName: "Chelsea"},
+				Title:     "Arsenal vs Chelsea",
+				StartTime: kickoff,
+			}
+
+			target, found := svc.ResolveMatch(match)
+			if found != tt.expectFind {
+				t.Fatalf("expected found=%v for programme %s, got %v (target %+v)", tt.expectFind, tt.start, found, target)
+			}
+			if found && target.Name != "ESPN 2 HD" {
+				t.Errorf("expected ESPN 2 HD, got %q", target.Name)
+			}
+		})
+	}
+}
+
 func TestCacheSerialization_FreshAndExpired(t *testing.T) {
 	tempDir, err := os.MkdirTemp("", "tvguide_test_*")
 	if err != nil {
@@ -408,6 +519,62 @@ func TestCacheSerialization_FreshAndExpired(t *testing.T) {
 	)
 	if len(svc3.Guides()) != 0 {
 		t.Errorf("expected empty guides due to TTL expiration, got %v", svc3.Guides())
+	}
+}
+
+// TestService_SaveCacheAtomicReplace proves the guide cache is replaced by an
+// atomic rename instead of an in-place write: a truncated or partially written
+// cache would make the next startup load garbage. A rename changes the file
+// identity, while os.WriteFile would keep the same inode.
+func TestService_SaveCacheAtomicReplace(t *testing.T) {
+	tempDir := t.TempDir()
+	fixedTime := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
+	svc := NewService(
+		WithCacheDir(tempDir),
+		WithNow(func() time.Time { return fixedTime }),
+		WithCacheTTL(4*time.Hour),
+	)
+
+	first := []ChannelGuide{{Name: "ESPN 1 HD", Slug: "espn_colombia", Programs: []string{"A vs. B"}}}
+	if err := svc.saveCache(first); err != nil {
+		t.Fatalf("failed to save cache: %v", err)
+	}
+
+	cachePath := filepath.Join(tempDir, "tvguide_2026-10-14.json")
+	before, err := os.Stat(cachePath)
+	if err != nil {
+		t.Fatalf("cache file not created: %v", err)
+	}
+
+	second := []ChannelGuide{{Name: "ESPN 2 HD", Slug: "espn2_colombia", Programs: []string{"C vs. D"}}}
+	if err := svc.saveCache(second); err != nil {
+		t.Fatalf("failed to rewrite cache: %v", err)
+	}
+
+	after, err := os.Stat(cachePath)
+	if err != nil {
+		t.Fatalf("cache file missing after rewrite: %v", err)
+	}
+	if os.SameFile(before, after) {
+		t.Errorf("expected saveCache to replace the file atomically, but the inode was reused")
+	}
+
+	data, err := os.ReadFile(cachePath)
+	if err != nil {
+		t.Fatalf("failed to read cache: %v", err)
+	}
+	if !strings.Contains(string(data), "ESPN 2 HD") {
+		t.Errorf("expected the rewritten guide in the cache, got %s", data)
+	}
+
+	entries, err := os.ReadDir(tempDir)
+	if err != nil {
+		t.Fatalf("failed to read cache dir: %v", err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".tmp-") {
+			t.Errorf("unexpected temporary file left behind: %s", entry.Name())
+		}
 	}
 }
 
@@ -926,6 +1093,18 @@ func TestMatchScore_SpanishExonymsAndNameBridges(t *testing.T) {
 			shouldMatch: true,
 		},
 		{
+			name:        "Nápoles vs Bodø/Glimt bridges correctly with special characters",
+			guideTitle:  "Napoli vs Bodo/Glimt",
+			match:       model.Match{HomeTeam: model.Competitor{DisplayName: "Nápoles"}, AwayTeam: model.Competitor{DisplayName: "Bodø/Glimt"}},
+			shouldMatch: true,
+		},
+		{
+			name:        "Slavia Praga bridges to Slavia Prague",
+			guideTitle:  "Fenerbahce vs Slavia Prague",
+			match:       model.Match{HomeTeam: model.Competitor{DisplayName: "Fenerbahçe"}, AwayTeam: model.Competitor{DisplayName: "Slavia Praga"}},
+			shouldMatch: true,
+		},
+		{
 			name:        "Marsella bridges to Marseille",
 			guideTitle:  "Marseille vs Lyon",
 			match:       model.Match{HomeTeam: model.Competitor{DisplayName: "Marsella"}, AwayTeam: model.Competitor{DisplayName: "Lyon"}},
@@ -1096,6 +1275,141 @@ func TestResolveMatch_RejectsPartialEvidenceAndAmbiguity(t *testing.T) {
 			t.Fatalf("ambiguous tie must decline, got %q", target.Name)
 		}
 	})
+}
+
+// TestResolveMatch_DuplicateCaracolSlugs pins that two GatoTV slugs publishing
+// the same signal are one channel, not an ambiguous tie. GatoTV exposes Caracol
+// TV under caracol_television and caracol_colombia; both carry the same feed, so
+// a fixture listed on both must resolve to a single channel instead of being
+// declined. The first guide in the input order is kept.
+func TestResolveMatch_DuplicateCaracolSlugs(t *testing.T) {
+	svc := NewService()
+	svc.SetGuides([]ChannelGuide{
+		{
+			Name:      "Caracol TV HD",
+			Slug:      "caracol_television",
+			StreamURL: "http://example.com/caracol-television.m3u8",
+			Programs:  []string{"Feyenoord vs. Como"},
+		},
+		{
+			Name:      "Caracol TV HD",
+			Slug:      "caracol_colombia",
+			StreamURL: "http://example.com/caracol-colombia.m3u8",
+			Programs:  []string{"Feyenoord vs. Como"},
+		},
+	})
+
+	match := model.Match{
+		HomeTeam: model.Competitor{DisplayName: "Feyenoord Rotterdam"},
+		AwayTeam: model.Competitor{DisplayName: "Como"},
+	}
+
+	target, found := svc.ResolveMatch(match)
+	if !found {
+		t.Fatalf("duplicate slugs for one signal must resolve, got not found")
+	}
+	if target.Name != "Caracol TV HD" {
+		t.Fatalf("expected Caracol TV HD, got %q", target.Name)
+	}
+	if target.Slug != "caracol_television" {
+		t.Errorf("expected the first slug %q to be kept, got %q", "caracol_television", target.Slug)
+	}
+}
+
+// TestResolveMatch_TrueAmbiguityStillRejected proves the duplicate-slug fix did
+// not relax the conservative policy: two DIFFERENT signals tied on the top score
+// remain unresolved. Resolving one of them would be a guess.
+func TestResolveMatch_TrueAmbiguityStillRejected(t *testing.T) {
+	svc := NewService()
+	svc.SetGuides([]ChannelGuide{
+		{
+			Name:     "ESPN 1 HD",
+			Slug:     "espn_colombia",
+			Programs: []string{"Feyenoord vs. Como"},
+		},
+		{
+			Name:     "Win Sports HD",
+			Slug:     "win_sports",
+			Programs: []string{"Feyenoord vs. Como"},
+		},
+	})
+
+	match := model.Match{
+		HomeTeam: model.Competitor{DisplayName: "Feyenoord Rotterdam"},
+		AwayTeam: model.Competitor{DisplayName: "Como"},
+	}
+
+	if target, found := svc.ResolveMatch(match); found {
+		t.Fatalf("two distinct signals tied must decline, got %q (%s)", target.Name, target.Slug)
+	}
+}
+
+// TestDefaultTargets_NoDuplicateIdentities enforces that the crawl target list
+// carries one entry per signal. Two slugs for the same channel made every
+// fixture on that channel look ambiguous, because the resolver compared raw
+// slugs instead of the channel identity.
+func TestDefaultTargets_NoDuplicateIdentities(t *testing.T) {
+	seen := make(map[string]string, len(DefaultTargets))
+	for _, target := range DefaultTargets {
+		id := channelIdentity(target.Name)
+		if id == "" {
+			t.Fatalf("target %+v has no canonical identity", target)
+		}
+		if previous, duplicate := seen[id]; duplicate {
+			t.Errorf("identity %q appears twice: %q and %q", id, previous, target.Name)
+			continue
+		}
+		seen[id] = target.Name
+	}
+
+	// The first declared slug is the preferred crawl target; the alias must be
+	// dropped, not the canonical entry.
+	wantSlugs := map[string]string{
+		"Caracol TV HD": "caracol_television",
+		"Canal RCN HD":  "rcn_television",
+	}
+	for name, wantSlug := range wantSlugs {
+		found := false
+		for _, target := range DefaultTargets {
+			if target.Name != name {
+				continue
+			}
+			found = true
+			if target.Slug != wantSlug {
+				t.Errorf("%s: expected preferred slug %q, got %q", name, wantSlug, target.Slug)
+			}
+		}
+		if !found {
+			t.Errorf("%s: missing from DefaultTargets", name)
+		}
+	}
+}
+
+// TestChannelIdentity_DistinguishesSeparateSignals pins the boundaries of the
+// canonical identity: format labels (HD, FHD, 4K) never split one signal, while
+// a different feed published with a numbered suffix (Caracol HD2) stays apart.
+// Collapsing HD2 into Caracol TV would silently pick the wrong broadcast.
+func TestChannelIdentity_DistinguishesSeparateSignals(t *testing.T) {
+	tests := []struct {
+		name string
+		b    string
+		same bool
+	}{
+		{name: "Caracol TV HD", b: "Caracol TV", same: true},
+		{name: "Caracol TV HD", b: "Caracol TV FHD", same: true},
+		{name: "Caracol TV HD", b: "Caracol TV 4K", same: true},
+		{name: "Win Sports HD", b: "Win", same: true},
+		{name: "Caracol TV HD", b: "Caracol HD2", same: false},
+		{name: "ESPN 1 HD", b: "ESPN 2 HD", same: false},
+	}
+
+	for _, tt := range tests {
+		gotSame := channelIdentity(tt.name) == channelIdentity(tt.b)
+		if gotSame != tt.same {
+			t.Errorf("channelIdentity(%q) == channelIdentity(%q) = %v, want %v (%q vs %q)",
+				tt.name, tt.b, gotSame, tt.same, channelIdentity(tt.name), channelIdentity(tt.b))
+		}
+	}
 }
 
 // TestNormalize_ConcurrentSafe guards against sharing stateful transformers

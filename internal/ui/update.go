@@ -40,6 +40,7 @@ type matchesLoadedMsg struct {
 	matches   []model.Match
 	err       error
 	isSilent  bool
+	gen       uint64
 }
 
 type matchStatsLoadedMsg struct {
@@ -48,6 +49,7 @@ type matchStatsLoadedMsg struct {
 	lineups    *model.MatchLineups
 	referee    string
 	attendance int
+	err        error
 }
 
 type playbackStartedMsg struct {
@@ -75,12 +77,14 @@ type standingsLoadedMsg struct {
 	leagueKey string
 	standings *model.LeagueStandings
 	err       error
+	gen       uint64
 }
 
 type statisticsLoadedMsg struct {
 	leagueKey  string
 	statistics *model.LeagueStatistics
 	err        error
+	gen        uint64
 }
 
 type webChannelsLoadedMsg struct {
@@ -88,8 +92,54 @@ type webChannelsLoadedMsg struct {
 	channels []model.Channel
 }
 
+// channelsResolvedMsg carries the catalog channel lookup for a match. The lookup
+// runs inside a command so a slow catalog can never stall the event loop.
+type channelsResolvedMsg struct {
+	matchID  string
+	gen      uint64
+	channels []model.Channel
+}
+
+func resolveChannelsCmd(catalog model.Resolver, match model.Match, gen uint64) tea.Cmd {
+	return func() tea.Msg {
+		return channelsResolvedMsg{
+			matchID:  match.ID,
+			gen:      gen,
+			channels: catalog.GetChannels(match),
+		}
+	}
+}
+
 type webStreamsResolver interface {
 	ResolveWebChannels(ctx context.Context, match model.Match) []model.Channel
+}
+
+type prewarmResolver interface {
+	PrewarmMatches(ctx context.Context, matches []model.Match)
+}
+
+type peekCachedResolver interface {
+	PeekCachedChannels(match model.Match) []model.Channel
+}
+
+func prewarmMatchesCmd(catalog model.Resolver, matches []model.Match) tea.Cmd {
+	return func() tea.Msg {
+		if pw, ok := catalog.(prewarmResolver); ok && len(matches) > 0 {
+			ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+			defer cancel()
+			pw.PrewarmMatches(ctx, matches)
+		}
+		return nil
+	}
+}
+
+func isTopLeague(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(key)) {
+	case "uefa.champions", "champions", "eng.1", "premier", "esp.1", "laliga", "col.1", "colombia", "ita.1", "seriea", "ger.1", "bundesliga", "conmebol.libertadores", "libertadores":
+		return true
+	default:
+		return false
+	}
 }
 
 func fetchWebChannelsCmd(catalog model.Resolver, match model.Match) tea.Cmd {
@@ -164,7 +214,7 @@ func (m Model) nextSyncInterval() time.Duration {
 	return 30 * time.Second
 }
 
-func fetchMatchesCmd(client model.Client, leagueKey string) tea.Cmd {
+func fetchMatchesCmd(client model.Client, leagueKey string, gen uint64) tea.Cmd {
 	return func() tea.Msg {
 		matches, err := client.FetchMatches(context.Background(), leagueKey)
 		return matchesLoadedMsg{
@@ -172,11 +222,12 @@ func fetchMatchesCmd(client model.Client, leagueKey string) tea.Cmd {
 			matches:   matches,
 			err:       err,
 			isSilent:  false,
+			gen:       gen,
 		}
 	}
 }
 
-func forceRefreshMatchesCmd(client model.Client, leagueKey string, isSilent bool) tea.Cmd {
+func forceRefreshMatchesCmd(client model.Client, leagueKey string, isSilent bool, gen uint64) tea.Cmd {
 	return func() tea.Msg {
 		ctx := model.WithForceRefresh(context.Background())
 		matches, err := client.FetchMatches(ctx, leagueKey)
@@ -185,13 +236,17 @@ func forceRefreshMatchesCmd(client model.Client, leagueKey string, isSilent bool
 			matches:   matches,
 			err:       err,
 			isSilent:  isSilent,
+			gen:       gen,
 		}
 	}
 }
 
 func fetchMatchStatsCmd(client model.Client, leagueKey, eventID string) tea.Cmd {
 	return func() tea.Msg {
-		details, _ := client.FetchMatchDetails(context.Background(), leagueKey, eventID)
+		details, err := client.FetchMatchDetails(context.Background(), leagueKey, eventID)
+		if err != nil {
+			return matchStatsLoadedMsg{matchID: eventID, err: err}
+		}
 		if details != nil {
 			return matchStatsLoadedMsg{
 				matchID:    eventID,
@@ -208,7 +263,10 @@ func fetchMatchStatsCmd(client model.Client, leagueKey, eventID string) tea.Cmd 
 func forceFetchMatchStatsCmd(client model.Client, leagueKey, eventID string) tea.Cmd {
 	return func() tea.Msg {
 		ctx := model.WithForceRefresh(context.Background())
-		details, _ := client.FetchMatchDetails(ctx, leagueKey, eventID)
+		details, err := client.FetchMatchDetails(ctx, leagueKey, eventID)
+		if err != nil {
+			return matchStatsLoadedMsg{matchID: eventID, err: err}
+		}
 		if details != nil {
 			return matchStatsLoadedMsg{
 				matchID:    eventID,
@@ -222,24 +280,26 @@ func forceFetchMatchStatsCmd(client model.Client, leagueKey, eventID string) tea
 	}
 }
 
-func fetchStandingsCmd(client model.Client, leagueKey string) tea.Cmd {
+func fetchStandingsCmd(client model.Client, leagueKey string, gen uint64) tea.Cmd {
 	return func() tea.Msg {
 		st, err := client.FetchStandings(context.Background(), leagueKey)
 		return standingsLoadedMsg{
 			leagueKey: leagueKey,
 			standings: st,
 			err:       err,
+			gen:       gen,
 		}
 	}
 }
 
-func fetchStatisticsCmd(client model.Client, leagueKey string) tea.Cmd {
+func fetchStatisticsCmd(client model.Client, leagueKey string, gen uint64) tea.Cmd {
 	return func() tea.Msg {
 		stat, err := client.FetchStatistics(context.Background(), leagueKey)
 		return statisticsLoadedMsg{
 			leagueKey:  leagueKey,
 			statistics: stat,
 			err:        err,
+			gen:        gen,
 		}
 	}
 }
@@ -300,6 +360,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, pulseTickCmd()
 
 	case standingsLoadedMsg:
+		if msg.gen != m.loadGen {
+			return m, nil
+		}
 		curr := m.CurrentLeague()
 		if msg.leagueKey == curr.Key {
 			m.standings = msg.standings
@@ -311,6 +374,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case statisticsLoadedMsg:
+		if msg.gen != m.loadGen {
+			return m, nil
+		}
 		curr := m.CurrentLeague()
 		if msg.leagueKey == curr.Key {
 			m.statistics = msg.statistics
@@ -325,7 +391,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds := []tea.Cmd{autoSyncTickCmd(m.nextSyncInterval())}
 		if m.state == StateBrowsing || m.state == StateChannelSelect || m.state == StatePlaying {
 			league := m.CurrentLeague()
-			cmds = append(cmds, forceRefreshMatchesCmd(m.client, league.Key, true))
+			cmds = append(cmds, forceRefreshMatchesCmd(m.client, league.Key, true, m.loadGen))
 
 			if m.state == StateChannelSelect {
 				if selMatch, ok := m.CurrentSelectedMatch(); ok && selMatch.ID != "" && selMatch.Status.State == "in" {
@@ -336,6 +402,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 
 	case matchesLoadedMsg:
+		if msg.gen != m.loadGen {
+			return m, nil
+		}
 		curr := m.CurrentLeague()
 		if msg.leagueKey == curr.Key {
 			if msg.err != nil {
@@ -447,11 +516,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.resumenCursor = 0
 				}
 				m.errorMsg = ""
+				if isTopLeague(msg.leagueKey) && len(activeMatches) > 0 {
+					return m, prewarmMatchesCmd(m.catalog, activeMatches)
+				}
 			}
 		}
 		return m, nil
 
 	case matchStatsLoadedMsg:
+		if msg.err != nil {
+			// Keep whatever is already on screen and leave the details pending so
+			// the user (or the live auto-sync) can retry.
+			return m, nil
+		}
 		if m.detailsLoaded == nil {
 			m.detailsLoaded = make(map[string]bool)
 		}
@@ -460,8 +537,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		for i := range m.matches {
 			if m.matches[i].ID == msg.matchID {
-				m.matches[i].Stats = msg.stats
-				m.matches[i].Lineups = msg.lineups
+				if msg.stats != nil {
+					m.matches[i].Stats = msg.stats
+				}
+				if msg.lineups != nil {
+					m.matches[i].Lineups = msg.lineups
+				}
 				if msg.referee != "" {
 					m.matches[i].Referee = msg.referee
 				}
@@ -473,8 +554,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		for i := range m.pastMatches {
 			if m.pastMatches[i].ID == msg.matchID {
-				m.pastMatches[i].Stats = msg.stats
-				m.pastMatches[i].Lineups = msg.lineups
+				if msg.stats != nil {
+					m.pastMatches[i].Stats = msg.stats
+				}
+				if msg.lineups != nil {
+					m.pastMatches[i].Lineups = msg.lineups
+				}
 				if msg.referee != "" {
 					m.pastMatches[i].Referee = msg.referee
 				}
@@ -486,20 +571,59 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case webChannelsLoadedMsg:
-		if (m.state == StateChannelSelect || m.state == StatePlaying) && msg.matchID != "" && msg.matchID == m.selectedMatchID && len(msg.channels) > 0 {
-			seen := make(map[string]bool)
-			for _, ch := range m.channels {
-				seen[ch.URL] = true
-			}
-			for _, ch := range msg.channels {
-				if !seen[ch.URL] {
-					seen[ch.URL] = true
-					m.channels = append(m.channels, ch)
+	case channelsResolvedMsg:
+		if (m.state != StateChannelSelect && m.state != StatePlaying) || msg.matchID == "" || msg.matchID != m.selectedMatchID || msg.gen != m.loadGen {
+			return m, nil
+		}
+		// If we already resolved channels from catalog, turn off the loading indicator.
+		// If catalog resolved 0 channels and a web resolver is running in parallel, keep
+		// channelsLoading true so the user sees the spinner instead of a false "No signals" banner.
+		_, hasWeb := m.catalog.(webStreamsResolver)
+		if len(msg.channels) > 0 || !hasWeb {
+			m.channelsLoading = false
+		}
+		seen := make(map[string]bool, len(msg.channels)+len(m.channels))
+		merged := make([]model.Channel, 0, len(msg.channels)+len(m.channels))
+		addChannels := func(chans []model.Channel) {
+			for _, ch := range chans {
+				key := ch.URL
+				if key == "" {
+					key = ch.Name
 				}
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+				merged = append(merged, ch)
 			}
-			for i := range m.channels {
-				m.channels[i].Recommended = (i == 0)
+		}
+		// Catalog channels keep priority over web enrichment regardless of which
+		// async result arrives first.
+		addChannels(msg.channels)
+		addChannels(m.channels)
+		m.channels = merged
+		for i := range m.channels {
+			m.channels[i].Recommended = (i == 0)
+		}
+		return m, nil
+
+	case webChannelsLoadedMsg:
+		if (m.state == StateChannelSelect || m.state == StatePlaying) && msg.matchID != "" && msg.matchID == m.selectedMatchID {
+			m.channelsLoading = false
+			if len(msg.channels) > 0 {
+				seen := make(map[string]bool)
+				for _, ch := range m.channels {
+					seen[ch.URL] = true
+				}
+				for _, ch := range msg.channels {
+					if !seen[ch.URL] {
+						seen[ch.URL] = true
+						m.channels = append(m.channels, ch)
+					}
+				}
+				for i := range m.channels {
+					m.channels[i].Recommended = (i == 0)
+				}
 			}
 		}
 		return m, nil
@@ -507,7 +631,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case playbackStartedMsg:
 		if msg.playbackID == m.playbackID {
 			m.connecting = false
-			m.statusMsg = "✓ Reproduciendo: " + msg.channel.Name
+			m.statusMsg = "✓ Reproduciendo: " + msg.channel.Name + " • x: parar señal"
 			m.errorMsg = ""
 			return m, waitForPlaybackCmd(m.player, msg.playbackID)
 		}
@@ -542,10 +666,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		key := msg.String()
 		switch key {
-		case "ctrl+c", "q":
+		case "ctrl+c":
 			if m.player != nil {
 				_ = m.player.Stop()
 			}
+			return m, tea.Quit
+		case "q":
 			return m, tea.Quit
 		}
 
@@ -557,6 +683,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case StateMainMenu:
 			switch key {
+			case "x":
+				if m.player != nil {
+					_ = m.player.Stop()
+				}
+				m.playbackID++
+				m.connecting = false
+				m.statusMsg = "⏹ Señal detenida"
+				return m, nil
 			case "u":
 				if m.updateAvailable != "" {
 					exe, err := os.Executable()
@@ -713,18 +847,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.selectedMatchID = ""
 					m.detailsLoaded = make(map[string]bool)
 					m.standings = nil
+					m.standingsErr = nil
+					m.selectedGroup = 0
 					m.statistics = nil
+					m.statisticsErr = nil
 					m.channels = nil
+					m.channelsLoading = false
 					m.channelCursor = 0
 					m.modalTab = 0
 					m.errorMsg = ""
+					m.loadGen++
+					gen := m.loadGen
 					league := m.CurrentLeague()
 					m.loadingMsg = "Consultando partidos de hoy (" + league.Name + ")..."
 					return m, tea.Batch(
 						m.spinner.Tick,
-						fetchMatchesCmd(m.client, league.Key),
-						fetchStandingsCmd(m.client, league.Key),
-						fetchStatisticsCmd(m.client, league.Key),
+						fetchMatchesCmd(m.client, league.Key, gen),
+						fetchStandingsCmd(m.client, league.Key, gen),
+						fetchStatisticsCmd(m.client, league.Key, gen),
 					)
 				}
 			}
@@ -740,33 +880,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "3":
 				m.leagueTab = TabPosiciones
 				if m.standings == nil && m.standingsErr == nil {
-					return m, fetchStandingsCmd(m.client, m.CurrentLeague().Key)
+					return m, fetchStandingsCmd(m.client, m.CurrentLeague().Key, m.loadGen)
 				}
 				return m, nil
 			case "4":
 				m.leagueTab = TabGoleadores
 				if m.statistics == nil && m.statisticsErr == nil {
-					return m, fetchStatisticsCmd(m.client, m.CurrentLeague().Key)
+					return m, fetchStatisticsCmd(m.client, m.CurrentLeague().Key, m.loadGen)
 				}
 				return m, nil
 			case "right", "l", "tab":
 				m.leagueTab = (m.leagueTab + 1) % 4
 				league := m.CurrentLeague()
 				if m.leagueTab == TabPosiciones && m.standings == nil && m.standingsErr == nil {
-					return m, fetchStandingsCmd(m.client, league.Key)
+					return m, fetchStandingsCmd(m.client, league.Key, m.loadGen)
 				}
 				if m.leagueTab == TabGoleadores && m.statistics == nil && m.statisticsErr == nil {
-					return m, fetchStatisticsCmd(m.client, league.Key)
+					return m, fetchStatisticsCmd(m.client, league.Key, m.loadGen)
 				}
 				return m, nil
 			case "left", "h", "shift+tab":
 				m.leagueTab = (m.leagueTab - 1 + 4) % 4
 				league := m.CurrentLeague()
 				if m.leagueTab == TabPosiciones && m.standings == nil && m.standingsErr == nil {
-					return m, fetchStandingsCmd(m.client, league.Key)
+					return m, fetchStandingsCmd(m.client, league.Key, m.loadGen)
 				}
 				if m.leagueTab == TabGoleadores && m.statistics == nil && m.statisticsErr == nil {
-					return m, fetchStatisticsCmd(m.client, league.Key)
+					return m, fetchStatisticsCmd(m.client, league.Key, m.loadGen)
 				}
 				return m, nil
 			case "[", "p":
@@ -810,15 +950,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if len(pms) > 0 && m.resumenCursor < len(pms) {
 						selectedMatch := pms[m.resumenCursor]
 						m.selectedMatchID = selectedMatch.ID
-						m.channels = m.catalog.GetChannels(selectedMatch)
+						var preChs []model.Channel
+						if peeker, ok := m.catalog.(peekCachedResolver); ok {
+							preChs = peeker.PeekCachedChannels(selectedMatch)
+						}
+						if len(preChs) > 0 {
+							m.channels = preChs
+							m.channelsLoading = false
+						} else {
+							m.channels = nil
+							m.channelsLoading = true
+						}
 						m.channelCursor = 0
 						m.modalTab = 0
 						m.state = StateChannelSelect
-						var cmds []tea.Cmd
+						cmds := []tea.Cmd{resolveChannelsCmd(m.catalog, selectedMatch, m.loadGen)}
 						if (selectedMatch.Stats == nil || selectedMatch.Lineups == nil) && selectedMatch.ID != "" && !m.detailsLoaded[selectedMatch.ID] {
 							cmds = append(cmds, fetchMatchStatsCmd(m.client, m.CurrentLeague().Key, selectedMatch.ID))
 						}
-						if _, ok := m.catalog.(webStreamsResolver); ok {
+						if _, ok := m.catalog.(webStreamsResolver); ok && len(preChs) == 0 {
 							cmds = append(cmds, fetchWebChannelsCmd(m.catalog, selectedMatch))
 						}
 						if len(cmds) == 0 {
@@ -833,15 +983,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if len(m.matches) > 0 && m.matchCursor < len(m.matches) {
 						selectedMatch := m.matches[m.matchCursor]
 						m.selectedMatchID = selectedMatch.ID
-						m.channels = m.catalog.GetChannels(selectedMatch)
+						var preChs []model.Channel
+						if peeker, ok := m.catalog.(peekCachedResolver); ok {
+							preChs = peeker.PeekCachedChannels(selectedMatch)
+						}
+						if len(preChs) > 0 {
+							m.channels = preChs
+							m.channelsLoading = false
+						} else {
+							m.channels = nil
+							m.channelsLoading = true
+						}
 						m.channelCursor = 0
 						m.modalTab = 0
 						m.state = StateChannelSelect
-						var cmds []tea.Cmd
+						cmds := []tea.Cmd{resolveChannelsCmd(m.catalog, selectedMatch, m.loadGen)}
 						if (selectedMatch.Stats == nil || selectedMatch.Lineups == nil) && selectedMatch.ID != "" && !m.detailsLoaded[selectedMatch.ID] {
 							cmds = append(cmds, fetchMatchStatsCmd(m.client, m.CurrentLeague().Key, selectedMatch.ID))
 						}
-						if _, ok := m.catalog.(webStreamsResolver); ok {
+						if _, ok := m.catalog.(webStreamsResolver); ok && len(preChs) == 0 {
 							cmds = append(cmds, fetchWebChannelsCmd(m.catalog, selectedMatch))
 						}
 						if len(cmds) == 0 {
@@ -853,14 +1013,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						return m, tea.Batch(cmds...)
 					}
 				}
-			case "esc", "backspace":
+			case "x":
 				if m.player != nil {
 					_ = m.player.Stop()
 				}
 				m.playbackID++
 				m.connecting = false
+				m.statusMsg = "⏹ Señal detenida"
+				return m, nil
+			case "esc", "backspace":
+				if m.connecting {
+					if m.player != nil {
+						_ = m.player.Stop()
+					}
+					m.playbackID++
+					m.connecting = false
+				}
 				m.selectedMatchID = ""
 				m.state = StateMainMenu
+				m.loadGen++
 				m.matches = nil
 				m.pastMatches = nil
 				m.matchCursor = 0
@@ -868,9 +1039,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.standings = nil
 				m.statistics = nil
 				m.channels = nil
+				m.channelsLoading = false
 				m.channelCursor = 0
 				m.modalTab = 0
-				m.statusMsg = ""
+				if !strings.Contains(m.statusMsg, "Reproduciendo") {
+					m.statusMsg = ""
+				}
 				m.errorMsg = ""
 				return m, nil
 			case "r":
@@ -880,11 +1054,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				league := m.CurrentLeague()
 				m.loadingMsg = "Recargando datos (" + league.Name + ")..."
 				m.errorMsg = ""
+				m.loadGen++
+				gen := m.loadGen
 				return m, tea.Batch(
 					m.spinner.Tick,
-					forceRefreshMatchesCmd(m.client, league.Key, false),
-					fetchStandingsCmd(m.client, league.Key),
-					fetchStatisticsCmd(m.client, league.Key),
+					forceRefreshMatchesCmd(m.client, league.Key, false, gen),
+					fetchStandingsCmd(m.client, league.Key, gen),
+					fetchStatisticsCmd(m.client, league.Key, gen),
 				)
 			}
 
@@ -945,10 +1121,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						playStreamCmd(m.player, req, m.playbackID),
 					)
 				}
+			case "r":
+				selectedMatch, ok := m.CurrentSelectedMatch()
+				if !ok || selectedMatch.ID == "" {
+					return m, nil
+				}
+				return m, tea.Batch(
+					m.spinner.Tick,
+					forceFetchMatchStatsCmd(m.client, m.CurrentLeague().Key, selectedMatch.ID),
+				)
+			case "x":
+				if m.player != nil {
+					_ = m.player.Stop()
+				}
+				m.playbackID++
+				m.connecting = false
+				m.statusMsg = "⏹ Señal detenida"
+				return m, nil
 			case "esc", "backspace":
 				m.state = StateBrowsing
 				m.selectedMatchID = ""
 				m.channels = nil
+				m.channelsLoading = false
 				m.channelCursor = 0
 				m.modalTab = 0
 				return m, nil
@@ -956,14 +1150,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case StateLoading, StateError:
 			switch key {
-			case "esc", "backspace", "h":
+			case "x":
 				if m.player != nil {
 					_ = m.player.Stop()
 				}
 				m.playbackID++
 				m.connecting = false
+				m.statusMsg = "⏹ Señal detenida"
+				return m, nil
+			case "esc", "backspace", "h":
+				if m.connecting && m.player != nil {
+					_ = m.player.Stop()
+					m.playbackID++
+					m.connecting = false
+				}
 				m.selectedMatchID = ""
 				m.state = StateMainMenu
+				m.loadGen++
 				m.matches = nil
 				m.pastMatches = nil
 				m.matchCursor = 0
@@ -971,9 +1174,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.standings = nil
 				m.statistics = nil
 				m.channels = nil
+				m.channelsLoading = false
 				m.channelCursor = 0
 				m.modalTab = 0
-				m.statusMsg = ""
+				if !strings.Contains(m.statusMsg, "Reproduciendo") {
+					m.statusMsg = ""
+				}
 				m.errorMsg = ""
 				return m, nil
 			case "r":
@@ -981,11 +1187,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				league := m.CurrentLeague()
 				m.loadingMsg = "Recargando datos (" + league.Name + ")..."
 				m.errorMsg = ""
+				m.loadGen++
+				gen := m.loadGen
 				return m, tea.Batch(
 					m.spinner.Tick,
-					forceRefreshMatchesCmd(m.client, league.Key, false),
-					fetchStandingsCmd(m.client, league.Key),
-					fetchStatisticsCmd(m.client, league.Key),
+					forceRefreshMatchesCmd(m.client, league.Key, false, gen),
+					fetchStandingsCmd(m.client, league.Key, gen),
+					fetchStatisticsCmd(m.client, league.Key, gen),
 				)
 			}
 		}

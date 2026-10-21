@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/e12jassir/kickoff-cli/internal/extractor"
+	"github.com/e12jassir/kickoff-cli/internal/fsutil"
 	"github.com/e12jassir/kickoff-cli/internal/locale"
 	"github.com/e12jassir/kickoff-cli/internal/model"
 	"github.com/e12jassir/kickoff-cli/internal/parrilla"
@@ -35,12 +36,18 @@ const (
 	// stays on air for two hours from kickoff. It is used only to prefer the
 	// correct parrilla entry for a fixture, never to promote a candidate.
 	parrillaMatchWindowMinutes = 120
+
+	// parrillaFailureTTL bounds how long a failed daily parrilla fetch is cached.
+	// A success stays valid for its source day (the cache key), but a failure
+	// must expire quickly so an outage does not leave the grid empty until
+	// midnight.
+	parrillaFailureTTL = 10 * time.Minute
 )
 
-// Optional US stream endpoints (configurable via environment variables).
-var (
-	StreamCBSSportsNetwork = os.Getenv("KICKOFF_STREAM_CBSSN")
-	StreamCBSGolazo        = os.Getenv("KICKOFF_STREAM_GOLAZO")
+// Environment variables carrying the optional US stream endpoints.
+const (
+	envStreamCBSSN  = "KICKOFF_STREAM_CBSSN"
+	envStreamGolazo = "KICKOFF_STREAM_GOLAZO"
 )
 
 type ExternalConfig struct {
@@ -122,6 +129,31 @@ func WithExtractor(ext extractor.Extractor) Option {
 	}
 }
 
+// WithUSStreams sets the optional US stream endpoints. It overrides the
+// KICKOFF_STREAM_* environment variables read by New.
+func WithUSStreams(cbssn, golazo string) Option {
+	return func(c *Catalog) {
+		c.streamCBSSN = cbssn
+		c.streamGolazo = golazo
+	}
+}
+
+// WithNow overrides the clock used for cache expiry decisions (tests only).
+func WithNow(nowFunc func() time.Time) Option {
+	return func(c *Catalog) {
+		c.now = nowFunc
+	}
+}
+
+// WithCacheDir overrides the cache directory for web streams disk persistence.
+func WithCacheDir(dir string) Option {
+	return func(c *Catalog) {
+		if dir != "" {
+			c.cacheDir = dir
+		}
+	}
+}
+
 // Catalog implements model.Resolver with dynamic broadcast matching, TV guide crawling,
 // and user-configured stream mapping.
 type Catalog struct {
@@ -134,23 +166,41 @@ type Catalog struct {
 	configPath      string
 	tvGuide         *tvguide.Service
 	extractor       extractor.Extractor
+	now             func() time.Time
+
+	// Optional US stream endpoints, resolved from KICKOFF_STREAM_* by New and
+	// overridable through WithUSStreams. Reading them in the constructor keeps
+	// configuration out of package initialization.
+	streamCBSSN  string
+	streamGolazo string
 
 	// parrilla is the Gol Caracol daily schedule fetcher: the authoritative
 	// per-match source of which channel airs each fixture in Colombia (T1).
 	// parrillaMu serializes cache misses so a given local date is fetched at most
 	// once even under concurrent match resolution, and parrillaCache holds the
-	// parsed snapshot per date (including negative, failed results).
+	// parsed snapshot per date, including failed attempts (see parrillaCacheEntry).
 	parrillaFetcher parrilla.Fetcher
-	parrillaCache   map[string]parrilla.Snapshot
+	parrillaCache   map[string]parrillaCacheEntry
 	parrillaMu      sync.Mutex
 
 	webCache   map[string]webCacheEntry
 	webCacheMu sync.RWMutex
+	cacheDir   string
+	saveDiskMu sync.Mutex
+}
+
+// parrillaCacheEntry is one cached daily snapshot. ok distinguishes a real
+// schedule from a failed fetch, and fetchedAt bounds how long a failure is
+// trusted so a transient outage can heal without restarting the process.
+type parrillaCacheEntry struct {
+	snap      parrilla.Snapshot
+	ok        bool
+	fetchedAt time.Time
 }
 
 type webCacheEntry struct {
-	channels []model.Channel
-	cachedAt time.Time
+	Channels []model.Channel `json:"channels"`
+	CachedAt time.Time       `json:"cached_at"`
 }
 
 type customMatchRule struct {
@@ -170,25 +220,39 @@ func New(opts ...Option) *Catalog {
 		streamAlive:     make(map[string]bool),
 		leagueOverrides: make(map[string][]model.Channel),
 		userStreams:     make(map[string]string),
-		tvGuide:         tvguide.NewService(),
+		tvGuide:         tvguide.NewService(tvguide.WithAutoRefresh(true)),
 		parrillaFetcher: parrilla.NewGolCaracol(),
-		parrillaCache:   make(map[string]parrilla.Snapshot),
+		parrillaCache:   make(map[string]parrillaCacheEntry),
 		extractor:       extractor.NewService(),
 		webCache:        make(map[string]webCacheEntry),
+		now:             time.Now,
+		streamCBSSN:     os.Getenv(envStreamCBSSN),
+		streamGolazo:    os.Getenv(envStreamGolazo),
 	}
 	for _, opt := range opts {
 		opt(c)
 	}
-	c.loadExternalConfig()
-	// Capture the env-configured US stream globals before the probe goroutine starts,
-	// so the goroutine never reads package-level mutable state concurrently with
-	// runtime overrides (e.g. tests that set StreamCBSSportsNetwork/StreamCBSGolazo).
-	envStreams := make([]string, 0, 2)
-	if StreamCBSSportsNetwork != "" {
-		envStreams = append(envStreams, StreamCBSSportsNetwork)
+	if c.cacheDir == "" {
+		cacheBase, err := os.UserCacheDir()
+		if err != nil || cacheBase == "" {
+			if home, err := os.UserHomeDir(); err == nil {
+				cacheBase = filepath.Join(home, ".cache")
+			} else {
+				cacheBase = os.TempDir()
+			}
+		}
+		c.cacheDir = filepath.Join(cacheBase, "kickoff")
 	}
-	if StreamCBSGolazo != "" {
-		envStreams = append(envStreams, StreamCBSGolazo)
+	c.loadDiskWebCache()
+	c.loadExternalConfig()
+	// Capture the configured US stream endpoints before the probe goroutine
+	// starts, so the goroutine never reads the catalog's fields after New returns.
+	envStreams := make([]string, 0, 2)
+	if c.streamCBSSN != "" {
+		envStreams = append(envStreams, c.streamCBSSN)
+	}
+	if c.streamGolazo != "" {
+		envStreams = append(envStreams, c.streamGolazo)
 	}
 	go c.probeAllStreamsBackground(envStreams)
 	if c.extractor != nil {
@@ -347,6 +411,9 @@ func (c *Catalog) loadExternalConfig() {
 
 	var ext ExternalConfig
 	if err := json.Unmarshal(data, &ext); err != nil {
+		// A malformed config silently degrades every channel lookup, which looks
+		// like "nothing configured". Warn once, before the TUI takes the terminal.
+		fmt.Fprintf(os.Stderr, "kickoff: invalid %s: %v\n", cfgPath, err)
 		return
 	}
 
@@ -652,11 +719,11 @@ func (c *Catalog) resolveFromOfficialBroadcasts(broadcasts []string) []model.Cha
 			continue
 		}
 		if containsAny(bl, "cbssn", "cbs sports network", "cbs sports") {
-			c.appendSingleFromURL(&result, StreamCBSSportsNetwork, "CBS Sports Network", len(result) == 0)
+			c.appendSingleFromURL(&result, c.streamCBSSN, "CBS Sports Network", len(result) == 0)
 			continue
 		}
 		if containsAny(bl, "paramount", "golazo", "cbs sports golazo") {
-			c.appendSingleFromURL(&result, StreamCBSGolazo, "CBS Sports Golazo Network", len(result) == 0)
+			c.appendSingleFromURL(&result, c.streamGolazo, "CBS Sports Golazo Network", len(result) == 0)
 			continue
 		}
 	}
@@ -868,8 +935,8 @@ func (c *Catalog) GetChannels(match model.Match) []model.Channel {
 		entry, cached := c.webCache[cacheKey]
 		c.webCacheMu.RUnlock()
 
-		if cached && time.Since(entry.cachedAt) < 2*time.Minute {
-			candidates = append(candidates, entry.channels...)
+		if cached && c.now().Sub(entry.CachedAt) < 30*time.Minute {
+			candidates = append(candidates, entry.Channels...)
 		} else {
 			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 			defer cancel()
@@ -913,12 +980,15 @@ func (c *Catalog) ResolveWebChannels(ctx context.Context, match model.Match) []m
 	entry, cached := c.webCache[cacheKey]
 	c.webCacheMu.RUnlock()
 
-	if cached && time.Since(entry.cachedAt) < 2*time.Minute && len(entry.channels) > 0 {
-		return entry.channels
+	if cached && c.now().Sub(entry.CachedAt) < 30*time.Minute && len(entry.Channels) > 0 {
+		return entry.Channels
 	}
 
 	streams, err := ext.ResolveMatchStreams(ctx, match)
 	if err != nil || len(streams) == 0 {
+		if cached && len(entry.Channels) > 0 {
+			return entry.Channels
+		}
 		return nil
 	}
 
@@ -950,13 +1020,161 @@ func (c *Catalog) ResolveWebChannels(ctx context.Context, match model.Match) []m
 	if len(webChs) > 0 {
 		c.webCacheMu.Lock()
 		c.webCache[cacheKey] = webCacheEntry{
-			channels: webChs,
-			cachedAt: time.Now(),
+			Channels: webChs,
+			CachedAt: time.Now(),
 		}
 		c.webCacheMu.Unlock()
+		go c.saveDiskWebCache()
 	}
 
 	return webChs
+}
+
+// PeekCachedChannels returns currently cached channels for a match in memory
+// without performing any network I/O, safely callable from the event loop in 0ms.
+func (c *Catalog) PeekCachedChannels(match model.Match) []model.Channel {
+	title := match.Title
+	if title == "" {
+		title = fmt.Sprintf("%s vs %s", match.HomeTeam.DisplayName, match.AwayTeam.DisplayName)
+	}
+	cacheKey := match.ID
+	if cacheKey == "" {
+		cacheKey = fmt.Sprintf("%s:%s", normalizeLeagueKey(match.LeagueKey), title)
+	}
+
+	c.webCacheMu.RLock()
+	entry, cached := c.webCache[cacheKey]
+	c.webCacheMu.RUnlock()
+
+	if cached && c.now().Sub(entry.CachedAt) < 30*time.Minute && len(entry.Channels) > 0 {
+		return entry.Channels
+	}
+	return nil
+}
+
+// PrewarmMatches pre-resolves web streams for matches in the background with bounded
+// concurrency so that user interactions resolve in 0ms.
+func (c *Catalog) PrewarmMatches(ctx context.Context, matches []model.Match) {
+	c.mu.RLock()
+	ext := c.extractor
+	c.mu.RUnlock()
+	if ext == nil || len(matches) == 0 {
+		return
+	}
+
+	// Warm the agenda once up-front so worker goroutines don't race on network fetching
+	_, _ = ext.FetchAgenda(ctx)
+
+	// Prioritize live matches ("in") and active fixtures first
+	prioritized := make([]model.Match, 0, len(matches))
+	for _, m := range matches {
+		if m.Status.Completed || strings.ToLower(m.Status.State) == "post" {
+			continue
+		}
+		if strings.ToLower(m.Status.State) == "in" {
+			prioritized = append([]model.Match{m}, prioritized...)
+		} else {
+			prioritized = append(prioritized, m)
+		}
+	}
+
+	sem := make(chan struct{}, 4)
+	var wg sync.WaitGroup
+	for _, m := range prioritized {
+		title := m.Title
+		if title == "" {
+			title = fmt.Sprintf("%s vs %s", m.HomeTeam.DisplayName, m.AwayTeam.DisplayName)
+		}
+		cacheKey := m.ID
+		if cacheKey == "" {
+			cacheKey = fmt.Sprintf("%s:%s", normalizeLeagueKey(m.LeagueKey), title)
+		}
+
+		c.webCacheMu.RLock()
+		entry, cached := c.webCache[cacheKey]
+		c.webCacheMu.RUnlock()
+		if cached && c.now().Sub(entry.CachedAt) < 30*time.Minute && len(entry.Channels) > 0 {
+			continue
+		}
+
+		select {
+		case sem <- struct{}{}:
+		case <-ctx.Done():
+			return
+		}
+
+		wg.Add(1)
+		go func(targetMatch model.Match) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			pCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+			defer cancel()
+			_ = c.ResolveWebChannels(pCtx, targetMatch)
+		}(m)
+	}
+	wg.Wait()
+	go c.saveDiskWebCache()
+}
+
+func (c *Catalog) webStreamsDiskPath() string {
+	todayStr := c.now().In(locale.BogotaLocation()).Format("2006-01-02")
+	return filepath.Join(c.cacheDir, fmt.Sprintf("web_streams_%s.json", todayStr))
+}
+
+func (c *Catalog) loadDiskWebCache() {
+	if c.cacheDir == "" {
+		return
+	}
+	path := c.webStreamsDiskPath()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	var diskCache map[string]webCacheEntry
+	if err := json.Unmarshal(data, &diskCache); err != nil {
+		return
+	}
+
+	c.webCacheMu.Lock()
+	defer c.webCacheMu.Unlock()
+	for k, v := range diskCache {
+		if c.now().Sub(v.CachedAt) < 30*time.Minute && len(v.Channels) > 0 {
+			c.webCache[k] = v
+		}
+	}
+}
+
+func (c *Catalog) saveDiskWebCache() {
+	if c.cacheDir == "" {
+		return
+	}
+
+	c.saveDiskMu.Lock()
+	defer c.saveDiskMu.Unlock()
+
+	c.webCacheMu.RLock()
+	if len(c.webCache) == 0 {
+		c.webCacheMu.RUnlock()
+		return
+	}
+	toSave := make(map[string]webCacheEntry, len(c.webCache))
+	for k, v := range c.webCache {
+		if c.now().Sub(v.CachedAt) < 30*time.Minute && len(v.Channels) > 0 {
+			toSave[k] = v
+		}
+	}
+	c.webCacheMu.RUnlock()
+
+	if len(toSave) == 0 {
+		return
+	}
+
+	data, err := json.Marshal(toSave)
+	if err != nil {
+		return
+	}
+
+	_ = fsutil.AtomicWriteFile(c.webStreamsDiskPath(), data, 0o644)
 }
 
 func formatWebChannelName(raw string) string {
@@ -974,12 +1192,62 @@ func formatWebChannelName(raw string) string {
 	return fmt.Sprintf("[Web] %s", name)
 }
 
+// parrillaSignal identifies a canonical stream key together with the label used
+// when the signal is emitted as a channel.
+type parrillaSignal struct {
+	key   string
+	label string
+}
+
+// parrillaCompanionSignals mirrors the compound national broadcaster expansion
+// used for ESPN metadata (tier 2): a fixture published on one of these feeds is
+// also available on the companion feeds listed here.
+func parrillaCompanionSignals(primary string) []parrillaSignal {
+	switch primary {
+	case "gol_caracol":
+		return []parrillaSignal{
+			{key: "caracol", label: "Caracol TV HD"},
+			{key: "caracol_hd2", label: "Caracol HD2"},
+		}
+	case "caracol":
+		return []parrillaSignal{{key: "caracol_hd2", label: "Caracol HD2"}}
+	case "rcn":
+		return []parrillaSignal{{key: "rcn_hd2", label: "RCN HD2"}}
+	case "win_sports_mas":
+		return []parrillaSignal{
+			{key: "win_plus", label: "Win+ Fútbol"},
+			{key: "win", label: "Win Sports HD"},
+		}
+	case "win_plus":
+		return []parrillaSignal{{key: "win", label: "Win Sports HD"}}
+	case "win":
+		return []parrillaSignal{{key: "win_plus", label: "Win+ Fútbol"}}
+	}
+	return nil
+}
+
+// resolveSignalURL resolves a canonical signal from the user's stream map first
+// and falls back to the imported M3U playlist, the same order tiers 2 and 4 use.
+func (c *Catalog) resolveSignalURL(key, label string) (string, bool) {
+	if u, ok := c.StreamEndpoint(key); ok {
+		return u, true
+	}
+	if m3u, ok := MatchM3UChannel(label, c.m3uSnapshot()); ok {
+		return m3u.URL, true
+	}
+	return "", false
+}
+
 // resolveFromParrilla resolves a match through the Gol Caracol daily parrilla.
 //
 // It matches entries with the same BOTH-teams rule the tvguide package uses
 // (tvguide.MatchScore), preferring the entry whose published start time falls in
-// the match window, and emits only channels that map to a configured stream URL.
-// When the schedule is unreachable it returns nothing so lower tiers can run.
+// the match window. Each published channel is canonicalized to a stream key and
+// resolved from the user's stream map, falling back to the imported M3U playlist.
+// A resolved signal is emitted as a 720p/min plus 1080p/max pair, and compound
+// national broadcasters also emit their companion feeds. When no listed channel
+// resolves to a URL, or the schedule is unreachable, it returns nothing so lower
+// tiers can run.
 func (c *Catalog) resolveFromParrilla(match model.Match) []model.Channel {
 	snap, ok := c.parrillaSnapshot(parrillaDay(match))
 	if !ok {
@@ -999,22 +1267,33 @@ func (c *Catalog) resolveFromParrilla(match model.Match) []model.Channel {
 		if !known {
 			continue
 		}
-		url, configured := c.StreamEndpoint(key)
-		if !configured {
-			continue
+		label, known := parrilla.CanonicalDisplay(name)
+		if !known {
+			label = name
 		}
-		if ch, valid := makeSingleChannel(name, url, "1080p", "max", len(candidates) == 0); valid {
-			candidates = append(candidates, ch)
+		if url, resolved := c.resolveSignalURL(key, label); resolved {
+			candidates = append(candidates, makeDualProfile(label, url, len(candidates) == 0)...)
+		}
+		for _, companion := range parrillaCompanionSignals(key) {
+			url, resolved := c.resolveSignalURL(companion.key, companion.label)
+			if !resolved {
+				continue
+			}
+			if ch, valid := makeSingleChannel(companion.label, url, "1080p", "max", len(candidates) == 0); valid {
+				candidates = append(candidates, ch)
+			}
 		}
 	}
 	return c.filterAndDeduplicate(candidates)
 }
 
-// parrillaDay returns the local calendar date whose Gol Caracol schedule applies
-// to a match: its kickoff day in the display timezone, or today when the kickoff
-// is unknown. The times published in the parrilla are Colombian local times.
+// parrillaDay returns the Colombian calendar date whose Gol Caracol schedule
+// applies to a match: its kickoff day in the source timezone, or today in the
+// source timezone when the kickoff is unknown. The times published in the
+// parrilla are Colombian local times, so the display timezone must never decide
+// which daily schedule is requested.
 func parrillaDay(match model.Match) time.Time {
-	loc := locale.Location()
+	loc := locale.BogotaLocation()
 	if match.StartTime.IsZero() {
 		return time.Now().In(loc)
 	}
@@ -1022,17 +1301,18 @@ func parrillaDay(match model.Match) time.Time {
 }
 
 // parrillaSnapshot returns the cached parrilla snapshot for a date, fetching it at
-// most once per local calendar day. A failed fetch is cached too (negative
-// cache), so a broken source is retried on the next day instead of on every match.
+// most once per source calendar day. A successful snapshot is cached for its whole
+// day; a failed fetch is cached only for parrillaFailureTTL, so a transient outage
+// is retried during the same day instead of hiding the grid until midnight.
 func (c *Catalog) parrillaSnapshot(date time.Time) (parrilla.Snapshot, bool) {
-	key := date.In(locale.Location()).Format("2006-01-02")
+	key := date.In(locale.BogotaLocation()).Format("2006-01-02")
 
 	c.mu.RLock()
 	fetcher := c.parrillaFetcher
-	cached, ok := c.parrillaCache[key]
+	entry, ok := c.parrillaCache[key]
 	c.mu.RUnlock()
-	if ok {
-		return cached, true
+	if ok && c.parrillaEntryFresh(entry) {
+		return entry.snap, true
 	}
 	if fetcher == nil {
 		return parrilla.Snapshot{}, false
@@ -1046,10 +1326,10 @@ func (c *Catalog) parrillaSnapshot(date time.Time) (parrilla.Snapshot, bool) {
 
 	c.mu.RLock()
 	fetcher = c.parrillaFetcher
-	cached, ok = c.parrillaCache[key]
+	entry, ok = c.parrillaCache[key]
 	c.mu.RUnlock()
-	if ok {
-		return cached, true
+	if ok && c.parrillaEntryFresh(entry) {
+		return entry.snap, true
 	}
 	if fetcher == nil {
 		return parrilla.Snapshot{}, false
@@ -1058,19 +1338,30 @@ func (c *Catalog) parrillaSnapshot(date time.Time) (parrilla.Snapshot, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), parrillaFetchTimeout)
 	defer cancel()
 	snap, err := fetcher.Fetch(ctx, date)
-	if err != nil {
+	fetchOK := err == nil
+	if !fetchOK {
 		// Degrade gracefully: cache the empty result and let lower tiers run.
 		snap = parrilla.Snapshot{Date: key}
 	}
 
 	c.mu.Lock()
 	if c.parrillaCache == nil {
-		c.parrillaCache = make(map[string]parrilla.Snapshot)
+		c.parrillaCache = make(map[string]parrillaCacheEntry)
 	}
-	c.parrillaCache[key] = snap
+	c.parrillaCache[key] = parrillaCacheEntry{snap: snap, ok: fetchOK, fetchedAt: c.now()}
 	c.mu.Unlock()
 
 	return snap, true
+}
+
+// parrillaEntryFresh reports whether a cached entry may still be served.
+// Successful entries live for their whole source day (the cache key), while
+// failures expire after parrillaFailureTTL to allow an in-day retry.
+func (c *Catalog) parrillaEntryFresh(entry parrillaCacheEntry) bool {
+	if entry.ok {
+		return true
+	}
+	return c.now().Sub(entry.fetchedAt) < parrillaFailureTTL
 }
 
 // matchParrillaEntry finds the parrilla entry for a match. Team matching reuses
@@ -1112,12 +1403,15 @@ func matchParrillaEntry(snap parrilla.Snapshot, match model.Match) (parrilla.Ent
 	return parrilla.Entry{}, false
 }
 
-// localClockMinutes converts a timestamp into minutes since local midnight.
+// localClockMinutes converts a source schedule timestamp into minutes since
+// midnight in the source timezone. Guide and parrilla times are published as
+// Colombian wall-clock values, so the match kickoff must be read in the same
+// zone before the two windows are compared.
 func localClockMinutes(t time.Time) (int, bool) {
 	if t.IsZero() {
 		return 0, false
 	}
-	lt := t.In(locale.Location())
+	lt := t.In(locale.BogotaLocation())
 	return lt.Hour()*60 + lt.Minute(), true
 }
 

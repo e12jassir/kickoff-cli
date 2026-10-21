@@ -533,8 +533,9 @@ func TestClient_FetchMatches_WithEvents(t *testing.T) {
 	if events[1].PlayerName != "V. Junior" || events[1].Clock != "40'" || !events[1].IsPenalty || events[1].Type != "penalty" {
 		t.Errorf("unexpected event 1: %+v", events[1])
 	}
-	// 3. Own goal Jugador fallback
-	if events[2].PlayerName != "Jugador" || events[2].Clock != "60'" || !events[2].IsOwnGoal || events[2].Type != "owngoal" {
+	// 3. Own goal without reported athlete: the parser keeps the name empty
+	// and leaves presentation fallbacks to the view.
+	if events[2].PlayerName != "" || events[2].Clock != "60'" || !events[2].IsOwnGoal || events[2].Type != "owngoal" {
 		t.Errorf("unexpected event 2: %+v", events[2])
 	}
 	// 4. Yellow Gavi
@@ -990,46 +991,40 @@ func TestClient_FetchStatistics_Parsing(t *testing.T) {
 	}
 }
 
-func TestAtomicWriteFile(t *testing.T) {
-	tempDir := t.TempDir()
-	targetPath := filepath.Join(tempDir, "sub", "test.txt")
+// TestClient_FetchStatistics_MissingAthleteName guards that the statistics
+// parser does not invent presentation text when ESPN reports no athlete.
+func TestClient_FetchStatistics_MissingAthleteName(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{
+			"stats": [
+				{
+					"name": "goals",
+					"displayName": "Goals",
+					"leaders": [
+						{"displayValue": "10", "value": 10, "team": {"displayName": "Manchester City"}}
+					]
+				}
+			]
+		}`)
+	}))
+	defer server.Close()
 
-	data1 := []byte("first content")
-	if err := atomicWriteFile(targetPath, data1, 0o644); err != nil {
-		t.Fatalf("atomicWriteFile failed: %v", err)
-	}
+	client := NewClient(
+		WithBaseURL(server.URL),
+		WithCacheDir(t.TempDir()),
+		WithRetryBackoff(func() time.Duration { return 0 }),
+	)
 
-	read1, err := os.ReadFile(targetPath)
+	stats, err := client.FetchStatistics(context.Background(), "premier")
 	if err != nil {
-		t.Fatalf("failed to read target file: %v", err)
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if string(read1) != string(data1) {
-		t.Errorf("expected %q, got %q", string(data1), string(read1))
+	if len(stats.Scorers) != 1 {
+		t.Fatalf("expected 1 scorer, got %d", len(stats.Scorers))
 	}
-
-	// Atomic overwrite
-	data2 := []byte("overwritten content")
-	if err := atomicWriteFile(targetPath, data2, 0o644); err != nil {
-		t.Fatalf("atomicWriteFile overwrite failed: %v", err)
-	}
-
-	read2, err := os.ReadFile(targetPath)
-	if err != nil {
-		t.Fatalf("failed to read overwritten file: %v", err)
-	}
-	if string(read2) != string(data2) {
-		t.Errorf("expected %q, got %q", string(data2), string(read2))
-	}
-
-	// Verify no temporary files remain in sub directory
-	entries, err := os.ReadDir(filepath.Join(tempDir, "sub"))
-	if err != nil {
-		t.Fatalf("failed to read dir: %v", err)
-	}
-	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), ".tmp-") {
-			t.Errorf("unexpected temporary file found: %s", entry.Name())
-		}
+	if got := stats.Scorers[0].PlayerName; got != "" {
+		t.Errorf("expected empty player name when no athlete is reported, got %q", got)
 	}
 }
 
@@ -1171,6 +1166,34 @@ func TestClient_CalculateBackoff(t *testing.T) {
 	)
 	if zeroClient.calculateBackoff(1, nil) != 0 {
 		t.Errorf("expected 0 backoff when retryBackoff returns 0")
+	}
+}
+
+func TestClient_CalculateBackoff_CapsRetryAfter(t *testing.T) {
+	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	client := NewClient(
+		WithNow(func() time.Time { return now }),
+		WithRetryBackoff(func() time.Duration { return 100 * time.Millisecond }),
+	)
+
+	// A hostile or misconfigured server can ask for hours. Waiting that long
+	// blocks the TUI, so the honored delay is capped.
+	seconds := &http.Response{Header: http.Header{"Retry-After": []string{"120"}}}
+	if d := client.calculateBackoff(0, seconds); d != 10*time.Second {
+		t.Errorf("expected Retry-After seconds capped at 10s, got %v", d)
+	}
+
+	date := &http.Response{Header: http.Header{
+		"Retry-After": []string{now.Add(time.Hour).Format(http.TimeFormat)},
+	}}
+	if d := client.calculateBackoff(0, date); d != 10*time.Second {
+		t.Errorf("expected Retry-After date capped at 10s, got %v", d)
+	}
+
+	// Values below the cap keep their exact value.
+	short := &http.Response{Header: http.Header{"Retry-After": []string{"3"}}}
+	if d := client.calculateBackoff(0, short); d != 3*time.Second {
+		t.Errorf("expected 3s preserved below the cap, got %v", d)
 	}
 }
 
@@ -1503,6 +1526,236 @@ func TestClient_FetchRecentPastScoreboardEvents_14DaysWindow(t *testing.T) {
 	}
 }
 
+// probeConcurrencySampler records how many probe requests are in flight at the
+// same time on an httptest.Server handler.
+type probeConcurrencySampler struct {
+	// delay keeps each request in flight long enough for concurrent probes to
+	// overlap reliably, even on fast machines.
+	delay    time.Duration
+	inFlight atomic.Int32
+	max      atomic.Int32
+	requests atomic.Int32
+}
+
+func (s *probeConcurrencySampler) handler(w http.ResponseWriter, r *http.Request) {
+	current := s.inFlight.Add(1)
+	defer s.inFlight.Add(-1)
+	s.requests.Add(1)
+	for {
+		observed := s.max.Load()
+		if current <= observed || s.max.CompareAndSwap(observed, current) {
+			break
+		}
+	}
+
+	time.Sleep(s.delay)
+
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprint(w, `{"events": []}`)
+}
+
+func (s *probeConcurrencySampler) reset() {
+	s.max.Store(0)
+	s.requests.Store(0)
+}
+
+// TestClient_ScoreboardProbes_BoundConcurrentRequests guards the cold-cache
+// startup burst: the historical sweep must never keep more than 4 probe
+// requests in flight, even when several leagues are fetched at the same time.
+func TestClient_ScoreboardProbes_BoundConcurrentRequests(t *testing.T) {
+	sampler := &probeConcurrencySampler{delay: 15 * time.Millisecond}
+	server := httptest.NewServer(http.HandlerFunc(sampler.handler))
+	defer server.Close()
+
+	client := NewClient(
+		WithBaseURL(server.URL),
+		WithCacheDir(t.TempDir()),
+		WithRetryBackoff(func() time.Duration { return 0 }),
+	)
+	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+
+	t.Run("past sweep", func(t *testing.T) {
+		sampler.reset()
+		client.fetchRecentPastScoreboardEvents(context.Background(), "laliga", now)
+		assertBoundedProbeConcurrency(t, sampler)
+		if got := sampler.requests.Load(); got != 14 {
+			t.Fatalf("expected 14 past probes, got %d", got)
+		}
+	})
+
+	t.Run("upcoming sweep", func(t *testing.T) {
+		sampler.reset()
+		client.fetchUpcomingScoreboardEvents(context.Background(), "laliga", now)
+		assertBoundedProbeConcurrency(t, sampler)
+		if got := sampler.requests.Load(); got != 14 {
+			t.Fatalf("expected 14 upcoming probes, got %d", got)
+		}
+	})
+
+	t.Run("two leagues at once", func(t *testing.T) {
+		sampler.reset()
+		var wg sync.WaitGroup
+		for _, leagueCode := range []string{"esp.1", "eng.1"} {
+			wg.Add(1)
+			go func(code string) {
+				defer wg.Done()
+				client.fetchRecentPastScoreboardEvents(context.Background(), code, now)
+			}(leagueCode)
+		}
+		wg.Wait()
+		assertBoundedProbeConcurrency(t, sampler)
+		if got := sampler.requests.Load(); got != 28 {
+			t.Fatalf("expected 28 probes for two leagues, got %d", got)
+		}
+	})
+}
+
+// assertBoundedProbeConcurrency checks the hard limit of 4 in-flight probes and
+// also that the sweep actually overlaps requests instead of running serially.
+func assertBoundedProbeConcurrency(t *testing.T, sampler *probeConcurrencySampler) {
+	t.Helper()
+	observed := sampler.max.Load()
+	t.Logf("max in-flight probe requests observed: %d (limit 4)", observed)
+	if observed > 4 {
+		t.Fatalf("observed %d concurrent probe requests, want at most 4", observed)
+	}
+	if observed < 2 {
+		t.Fatalf("observed %d concurrent probe requests, want the sweep to overlap at least 2", observed)
+	}
+}
+
+// TestClient_UpcomingProbe_SkipsCurrentDay guards against probing the current
+// day twice: the default scoreboard already covers it, so the upcoming sweep
+// must start at offset 1.
+func TestClient_UpcomingProbe_SkipsCurrentDay(t *testing.T) {
+	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	currentDay := now.In(locale.Location()).Format("20060102")
+	nextDay := now.In(locale.Location()).AddDate(0, 0, 1).Format("20060102")
+
+	var mu sync.Mutex
+	defaultRequests := 0
+	datedRequests := make(map[string]int)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		mu.Lock()
+		dates := r.URL.Query().Get("dates")
+		if dates == "" {
+			defaultRequests++
+		} else {
+			datedRequests[dates]++
+		}
+		mu.Unlock()
+
+		if dates == "" {
+			// Only a finished match from a previous day: this forces FetchMatches
+			// to look for the next matchday through the upcoming sweep.
+			fmt.Fprintf(w, `{
+				"events": [
+					{
+						"id": "past1",
+						"date": "2026-10-18T23:00Z",
+						"competitions": [
+							{
+								"id": "c1",
+								"competitors": [
+									{"id": "1", "homeAway": "home", "team": {"displayName": "Team A"}},
+									{"id": "2", "homeAway": "away", "team": {"displayName": "Team B"}}
+								]
+							}
+						],
+						"status": {"type": {"state": "post", "completed": true}}
+					}
+				]
+			}`)
+			return
+		}
+
+		fmt.Fprint(w, `{"events": []}`)
+	}))
+	defer server.Close()
+
+	client := NewClient(
+		WithBaseURL(server.URL),
+		WithCacheDir(t.TempDir()),
+		WithNow(func() time.Time { return now }),
+		WithRetryBackoff(func() time.Duration { return 0 }),
+	)
+
+	if _, err := client.FetchMatches(context.Background(), "laliga"); err != nil {
+		t.Fatalf("FetchMatches failed: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if defaultRequests != 1 {
+		t.Fatalf("expected the default scoreboard to be requested once, got %d", defaultRequests)
+	}
+	if got := datedRequests[currentDay]; got != 0 {
+		t.Fatalf("current day %s was probed %d extra time(s); the default scoreboard already covers it", currentDay, got)
+	}
+	if got := datedRequests[nextDay]; got != 1 {
+		t.Fatalf("expected the upcoming sweep to probe %s exactly once, got %d", nextDay, got)
+	}
+
+	pastProbes, upcomingProbes := 0, 0
+	for _, count := range datedRequests {
+		if count != 1 {
+			t.Fatalf("expected every probed day to be requested exactly once, got a duplicate: %+v", datedRequests)
+		}
+	}
+	for date := range datedRequests {
+		parsed, err := time.Parse("20060102", date)
+		if err != nil {
+			t.Fatalf("unexpected dates value %q: %v", date, err)
+		}
+		if parsed.Before(now.Truncate(24 * time.Hour)) {
+			pastProbes++
+		} else {
+			upcomingProbes++
+		}
+	}
+	if pastProbes != 14 || upcomingProbes != 14 {
+		t.Fatalf("expected 14 past + 14 upcoming probes, got %d past + %d upcoming", pastProbes, upcomingProbes)
+	}
+}
+
+// TestClient_ScoreboardProbes_RespectContextCancellation guards the limiter
+// against deadlocks: a cancelled context must release waiting probes and return
+// instead of blocking on the remaining offsets.
+func TestClient_ScoreboardProbes_RespectContextCancellation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Hold every probe in flight until the caller cancels it.
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	client := NewClient(
+		WithBaseURL(server.URL),
+		WithCacheDir(t.TempDir()),
+		WithRetryBackoff(func() time.Duration { return 0 }),
+	)
+	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		client.fetchRecentPastScoreboardEvents(ctx, "laliga", now)
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("probe sweep did not return after context cancellation")
+	}
+}
+
 // roundTripFunc adapts a function into an http.RoundTripper so tests can
 // intercept requests without touching the network.
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -1572,6 +1825,98 @@ func TestClient_FetchMatches_BroadcastsFromRecordedFixture(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestClient_FetchMatches_StatusCode guards that the language-invariant ESPN
+// status type name reaches model.MatchStatus.Code, so presentation layers do
+// not have to infer halftime or full time from localized feed text.
+func TestClient_FetchMatches_StatusCode(t *testing.T) {
+	t.Run("recorded fixture full time", func(t *testing.T) {
+		fixture := readScoreboardFixture(t)
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(fixture)
+		}))
+		defer server.Close()
+
+		fixedNow := time.Date(2026, 10, 17, 12, 0, 0, 0, time.FixedZone("America/Bogota", -5*3600))
+		client := NewClient(
+			WithBaseURL(server.URL),
+			WithCacheDir(t.TempDir()),
+			WithNow(func() time.Time { return fixedNow }),
+			WithRetryBackoff(func() time.Duration { return 0 }),
+		)
+
+		matches, err := client.FetchMatches(context.Background(), "premier")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(matches) != 2 {
+			t.Fatalf("expected 2 matches from fixture, got %d", len(matches))
+		}
+		for _, m := range matches {
+			if m.Status.Code != "STATUS_FULL_TIME" {
+				t.Errorf("match %s: expected status code STATUS_FULL_TIME, got %q", m.ID, m.Status.Code)
+			}
+		}
+	})
+
+	t.Run("halftime with Spanish feed text", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{
+				"events": [
+					{
+						"id": "2001",
+						"date": "2026-10-13T19:00Z",
+						"competitions": [
+							{
+								"id": "2001",
+								"competitors": [
+									{"id": "10", "homeAway": "home", "score": "0", "team": {"id": "10", "name": "Barcelona", "displayName": "FC Barcelona"}},
+									{"id": "20", "homeAway": "away", "score": "0", "team": {"id": "20", "name": "Real Madrid", "displayName": "Real Madrid"}}
+								],
+								"status": {
+									"type": {
+										"name": "STATUS_HALFTIME",
+										"state": "in",
+										"completed": false,
+										"description": "Entretiempo",
+										"detail": "Entretiempo"
+									}
+								}
+							}
+						]
+					}
+				]
+			}`)
+		}))
+		defer server.Close()
+
+		fixedNow := time.Date(2026, 10, 13, 12, 0, 0, 0, time.FixedZone("America/Bogota", -5*3600))
+		client := NewClient(
+			WithBaseURL(server.URL),
+			WithCacheDir(t.TempDir()),
+			WithNow(func() time.Time { return fixedNow }),
+			WithRetryBackoff(func() time.Duration { return 0 }),
+		)
+
+		matches, err := client.FetchMatches(context.Background(), "laliga")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(matches) != 1 {
+			t.Fatalf("expected 1 match, got %d", len(matches))
+		}
+		status := matches[0].Status
+		if status.Code != "STATUS_HALFTIME" {
+			t.Errorf("expected status code STATUS_HALFTIME, got %q", status.Code)
+		}
+		if status.Detail != "Entretiempo" {
+			t.Errorf("expected detail to stay untouched, got %q", status.Detail)
+		}
+	})
 }
 
 // TestClient_ScoreboardQueryParams_PreserveBroadcasts is the regression guard
