@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/e12jassir/kickoff-cli/internal/extractor"
+	"github.com/e12jassir/kickoff-cli/internal/fsutil"
 	"github.com/e12jassir/kickoff-cli/internal/locale"
 	"github.com/e12jassir/kickoff-cli/internal/model"
 	"github.com/e12jassir/kickoff-cli/internal/parrilla"
@@ -144,6 +145,15 @@ func WithNow(nowFunc func() time.Time) Option {
 	}
 }
 
+// WithCacheDir overrides the cache directory for web streams disk persistence.
+func WithCacheDir(dir string) Option {
+	return func(c *Catalog) {
+		if dir != "" {
+			c.cacheDir = dir
+		}
+	}
+}
+
 // Catalog implements model.Resolver with dynamic broadcast matching, TV guide crawling,
 // and user-configured stream mapping.
 type Catalog struct {
@@ -175,6 +185,8 @@ type Catalog struct {
 
 	webCache   map[string]webCacheEntry
 	webCacheMu sync.RWMutex
+	cacheDir   string
+	saveDiskMu sync.Mutex
 }
 
 // parrillaCacheEntry is one cached daily snapshot. ok distinguishes a real
@@ -187,8 +199,8 @@ type parrillaCacheEntry struct {
 }
 
 type webCacheEntry struct {
-	channels []model.Channel
-	cachedAt time.Time
+	Channels []model.Channel `json:"channels"`
+	CachedAt time.Time       `json:"cached_at"`
 }
 
 type customMatchRule struct {
@@ -220,6 +232,18 @@ func New(opts ...Option) *Catalog {
 	for _, opt := range opts {
 		opt(c)
 	}
+	if c.cacheDir == "" {
+		cacheBase, err := os.UserCacheDir()
+		if err != nil || cacheBase == "" {
+			if home, err := os.UserHomeDir(); err == nil {
+				cacheBase = filepath.Join(home, ".cache")
+			} else {
+				cacheBase = os.TempDir()
+			}
+		}
+		c.cacheDir = filepath.Join(cacheBase, "kickoff")
+	}
+	c.loadDiskWebCache()
 	c.loadExternalConfig()
 	// Capture the configured US stream endpoints before the probe goroutine
 	// starts, so the goroutine never reads the catalog's fields after New returns.
@@ -911,8 +935,8 @@ func (c *Catalog) GetChannels(match model.Match) []model.Channel {
 		entry, cached := c.webCache[cacheKey]
 		c.webCacheMu.RUnlock()
 
-		if cached && time.Since(entry.cachedAt) < 30*time.Minute {
-			candidates = append(candidates, entry.channels...)
+		if cached && c.now().Sub(entry.CachedAt) < 30*time.Minute {
+			candidates = append(candidates, entry.Channels...)
 		} else {
 			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 			defer cancel()
@@ -956,14 +980,14 @@ func (c *Catalog) ResolveWebChannels(ctx context.Context, match model.Match) []m
 	entry, cached := c.webCache[cacheKey]
 	c.webCacheMu.RUnlock()
 
-	if cached && time.Since(entry.cachedAt) < 30*time.Minute && len(entry.channels) > 0 {
-		return entry.channels
+	if cached && c.now().Sub(entry.CachedAt) < 30*time.Minute && len(entry.Channels) > 0 {
+		return entry.Channels
 	}
 
 	streams, err := ext.ResolveMatchStreams(ctx, match)
 	if err != nil || len(streams) == 0 {
-		if cached && len(entry.channels) > 0 {
-			return entry.channels
+		if cached && len(entry.Channels) > 0 {
+			return entry.Channels
 		}
 		return nil
 	}
@@ -996,10 +1020,11 @@ func (c *Catalog) ResolveWebChannels(ctx context.Context, match model.Match) []m
 	if len(webChs) > 0 {
 		c.webCacheMu.Lock()
 		c.webCache[cacheKey] = webCacheEntry{
-			channels: webChs,
-			cachedAt: time.Now(),
+			Channels: webChs,
+			CachedAt: time.Now(),
 		}
 		c.webCacheMu.Unlock()
+		go c.saveDiskWebCache()
 	}
 
 	return webChs
@@ -1021,8 +1046,8 @@ func (c *Catalog) PeekCachedChannels(match model.Match) []model.Channel {
 	entry, cached := c.webCache[cacheKey]
 	c.webCacheMu.RUnlock()
 
-	if cached && time.Since(entry.cachedAt) < 30*time.Minute && len(entry.channels) > 0 {
-		return entry.channels
+	if cached && c.now().Sub(entry.CachedAt) < 30*time.Minute && len(entry.Channels) > 0 {
+		return entry.Channels
 	}
 	return nil
 }
@@ -1054,6 +1079,7 @@ func (c *Catalog) PrewarmMatches(ctx context.Context, matches []model.Match) {
 	}
 
 	sem := make(chan struct{}, 4)
+	var wg sync.WaitGroup
 	for _, m := range prioritized {
 		title := m.Title
 		if title == "" {
@@ -1067,7 +1093,7 @@ func (c *Catalog) PrewarmMatches(ctx context.Context, matches []model.Match) {
 		c.webCacheMu.RLock()
 		entry, cached := c.webCache[cacheKey]
 		c.webCacheMu.RUnlock()
-		if cached && time.Since(entry.cachedAt) < 30*time.Minute && len(entry.channels) > 0 {
+		if cached && c.now().Sub(entry.CachedAt) < 30*time.Minute && len(entry.Channels) > 0 {
 			continue
 		}
 
@@ -1077,13 +1103,78 @@ func (c *Catalog) PrewarmMatches(ctx context.Context, matches []model.Match) {
 			return
 		}
 
+		wg.Add(1)
 		go func(targetMatch model.Match) {
+			defer wg.Done()
 			defer func() { <-sem }()
 			pCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 			defer cancel()
 			_ = c.ResolveWebChannels(pCtx, targetMatch)
 		}(m)
 	}
+	wg.Wait()
+	go c.saveDiskWebCache()
+}
+
+func (c *Catalog) webStreamsDiskPath() string {
+	todayStr := c.now().In(locale.BogotaLocation()).Format("2006-01-02")
+	return filepath.Join(c.cacheDir, fmt.Sprintf("web_streams_%s.json", todayStr))
+}
+
+func (c *Catalog) loadDiskWebCache() {
+	if c.cacheDir == "" {
+		return
+	}
+	path := c.webStreamsDiskPath()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	var diskCache map[string]webCacheEntry
+	if err := json.Unmarshal(data, &diskCache); err != nil {
+		return
+	}
+
+	c.webCacheMu.Lock()
+	defer c.webCacheMu.Unlock()
+	for k, v := range diskCache {
+		if c.now().Sub(v.CachedAt) < 30*time.Minute && len(v.Channels) > 0 {
+			c.webCache[k] = v
+		}
+	}
+}
+
+func (c *Catalog) saveDiskWebCache() {
+	if c.cacheDir == "" {
+		return
+	}
+
+	c.saveDiskMu.Lock()
+	defer c.saveDiskMu.Unlock()
+
+	c.webCacheMu.RLock()
+	if len(c.webCache) == 0 {
+		c.webCacheMu.RUnlock()
+		return
+	}
+	toSave := make(map[string]webCacheEntry, len(c.webCache))
+	for k, v := range c.webCache {
+		if c.now().Sub(v.CachedAt) < 30*time.Minute && len(v.Channels) > 0 {
+			toSave[k] = v
+		}
+	}
+	c.webCacheMu.RUnlock()
+
+	if len(toSave) == 0 {
+		return
+	}
+
+	data, err := json.Marshal(toSave)
+	if err != nil {
+		return
+	}
+
+	_ = fsutil.AtomicWriteFile(c.webStreamsDiskPath(), data, 0o644)
 }
 
 func formatWebChannelName(raw string) string {

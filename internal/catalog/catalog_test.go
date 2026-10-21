@@ -50,8 +50,10 @@ var mockTestStreams = map[string]string{
 }
 
 func newTestCatalog(opts ...Option) *Catalog {
+	tempCache, _ := os.MkdirTemp("", "kickoff-test-cache-*")
 	allOpts := append([]Option{
 		WithConfigFile(filepath.Join(os.TempDir(), "nonexistent_kickoff_channels.json")),
+		WithCacheDir(tempCache),
 		WithStreams(mockTestStreams),
 		WithParrilla(offlineParrilla{}),
 		WithExtractor(nil),
@@ -64,7 +66,9 @@ func newTestCatalog(opts ...Option) *Catalog {
 // real cache nor starts a background crawl. Tests that need a specific config
 // file or fake dependency use this instead of calling New directly.
 func newOfflineTestCatalog(opts ...Option) *Catalog {
+	tempCache, _ := os.MkdirTemp("", "kickoff-test-cache-*")
 	allOpts := append([]Option{
+		WithCacheDir(tempCache),
 		WithTVGuide(tvguide.NewService(tvguide.WithAutoRefresh(false))),
 	}, opts...)
 	return New(allOpts...)
@@ -1666,5 +1670,73 @@ func TestCatalog_PrewarmMatches(t *testing.T) {
 	chs := cat.GetChannels(matches[0])
 	if len(chs) != 1 || chs[0].DisplayName != "[Web] ESPN HD" {
 		t.Fatalf("expected prewarmed channel, got %+v", chs)
+	}
+}
+
+func TestCatalog_WebCacheDiskPersistence(t *testing.T) {
+	tempDir := t.TempDir()
+
+	match := model.Match{
+		ID:        "m-disk-1",
+		Title:     "PSG vs Barcelona",
+		LeagueKey: "uefa.champions",
+		Status:    model.MatchStatus{State: "in"},
+	}
+
+	fakeExt := &mockExtractor{
+		resolveFunc: func(ctx context.Context, match model.Match) ([]extractor.ExtractedStream, error) {
+			return []extractor.ExtractedStream{
+				{ChannelName: "ESPN HD", StreamURL: "https://example.com/live/espn.m3u8", Alive: true},
+			}, nil
+		},
+	}
+
+	// 1. First Catalog instance: resolves streams and persists to disk
+	cat1 := New(
+		WithExtractor(fakeExt),
+		WithCacheDir(tempDir),
+	)
+
+	chs := cat1.ResolveWebChannels(context.Background(), match)
+	if len(chs) == 0 {
+		t.Fatalf("expected resolved channels from cat1")
+	}
+
+	// Allow async disk write to finish
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify disk cache file exists
+	files, err := os.ReadDir(tempDir)
+	if err != nil || len(files) == 0 {
+		t.Fatalf("expected disk cache file in %s, got err=%v, files=%+v", tempDir, err, files)
+	}
+
+	// 2. Second Catalog instance (cold start): should load disk cache on boot
+	cat2 := New(
+		WithExtractor(&mockExtractor{}), // empty extractor: cannot scrape anything new
+		WithCacheDir(tempDir),
+	)
+
+	// PeekCachedChannels should return the channels immediately in 0ms without scraping
+	peeked := cat2.PeekCachedChannels(match)
+	if len(peeked) == 0 {
+		t.Fatalf("expected cat2 to load cached channels from disk on cold start, got empty")
+	}
+	if peeked[0].URL != "https://example.com/live/espn.m3u8" {
+		t.Errorf("unexpected channel URL from cold start: %s", peeked[0].URL)
+	}
+
+	// 3. Third Catalog instance with clock advanced past 30-min TTL:
+	// Disk cache entry must be ignored as expired.
+	pastClock := func() time.Time {
+		return time.Now().Add(35 * time.Minute)
+	}
+	cat3 := New(
+		WithExtractor(&mockExtractor{}),
+		WithCacheDir(tempDir),
+		WithNow(pastClock),
+	)
+	if expiredPeek := cat3.PeekCachedChannels(match); len(expiredPeek) > 0 {
+		t.Errorf("expected expired cache to be ignored, got %+v", expiredPeek)
 	}
 }
