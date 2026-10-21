@@ -101,7 +101,9 @@ func NewController(opts ...Option) *Controller {
 	return c
 }
 
-// CreateSocketDir creates an isolated temporary directory with 0700 permissions.
+// CreateSocketDir creates an isolated temporary directory with 0700 permissions
+// and returns the IPC endpoint the player must listen on: a Unix domain socket
+// path on Unix and a Windows named pipe address on Windows.
 func CreateSocketDir() (string, string, error) {
 	dir, err := os.MkdirTemp("", "kickoff-mpv-*")
 	if err != nil {
@@ -113,8 +115,7 @@ func CreateSocketDir() (string, string, error) {
 		return "", "", fmt.Errorf("failed to enforce permissions on socket dir: %w", err)
 	}
 
-	sockPath := filepath.Join(dir, "mpv.sock")
-	return dir, sockPath, nil
+	return dir, platformIPCPath(dir), nil
 }
 
 // BuildArgs constructs the full MPV command arguments for a playback request.

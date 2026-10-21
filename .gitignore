@@ -6,6 +6,7 @@ coverage.out
 
 # Local strategy docs and agent artifacts
 .atl/
+odd/
 PLAN-*.md
 PROPUESTAS_*.md
 

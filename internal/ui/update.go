@@ -181,6 +181,28 @@ func autoSyncTickCmd(d time.Duration) tea.Cmd {
 	})
 }
 
+// autoSyncCommands builds the work for one auto-sync tick. The matches fetch runs
+// in every state, the main menu included, so goal notifications keep arriving
+// while the user has not opened any match. Stats are only refreshed when a live
+// match is selected in the channel picker, because that is the only view that
+// renders them.
+func (m Model) autoSyncCommands() []tea.Cmd {
+	cmds := []tea.Cmd{autoSyncTickCmd(m.nextSyncInterval())}
+	if m.client == nil {
+		return cmds
+	}
+
+	league := m.CurrentLeague()
+	cmds = append(cmds, forceRefreshMatchesCmd(m.client, league.Key, true, m.loadGen))
+
+	if m.state == StateChannelSelect {
+		if selMatch, ok := m.CurrentSelectedMatch(); ok && selMatch.ID != "" && selMatch.Status.State == "in" {
+			cmds = append(cmds, forceFetchMatchStatsCmd(m.client, league.Key, selMatch.ID))
+		}
+	}
+	return cmds
+}
+
 // nextSyncInterval dynamically computes the polling frequency based on match states.
 func (m Model) nextSyncInterval() time.Duration {
 	if m.state != StateBrowsing && m.state != StateChannelSelect && m.state != StatePlaying {
@@ -388,18 +410,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case autoSyncTickMsg:
-		cmds := []tea.Cmd{autoSyncTickCmd(m.nextSyncInterval())}
-		if m.state == StateBrowsing || m.state == StateChannelSelect || m.state == StatePlaying {
-			league := m.CurrentLeague()
-			cmds = append(cmds, forceRefreshMatchesCmd(m.client, league.Key, true, m.loadGen))
-
-			if m.state == StateChannelSelect {
-				if selMatch, ok := m.CurrentSelectedMatch(); ok && selMatch.ID != "" && selMatch.Status.State == "in" {
-					cmds = append(cmds, forceFetchMatchStatsCmd(m.client, league.Key, selMatch.ID))
-				}
-			}
-		}
-		return m, tea.Batch(cmds...)
+		return m, tea.Batch(m.autoSyncCommands()...)
 
 	case matchesLoadedMsg:
 		if msg.gen != m.loadGen {
@@ -516,9 +527,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.resumenCursor = 0
 				}
 				m.errorMsg = ""
+				notifyCmd := m.detectGoalNotifications()
 				if isTopLeague(msg.leagueKey) && len(activeMatches) > 0 {
-					return m, prewarmMatchesCmd(m.catalog, activeMatches)
+					return m, tea.Batch(prewarmMatchesCmd(m.catalog, activeMatches), notifyCmd)
 				}
+				return m, notifyCmd
 			}
 		}
 		return m, nil

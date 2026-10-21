@@ -47,7 +47,7 @@ Pick a competition, pick a match, press <kbd>Enter</kbd>. That's the whole tutor
 
 | | |
 | :-- | :-- |
-| **⚡ Instant**<br/><sub>Native Go binary. Millisecond startup, around 28 MB of RAM.</sub> | **🔴 Live scores**<br/><sub>Running match clock and live indicators, auto-synced every 15 seconds.</sub> |
+| **⚡ Instant**<br/><sub>Native Go binary. Millisecond startup, around 28 MB of RAM.</sub> | **🔴 Live scores**<br/><sub>Running match clock and live indicators, auto-synced every 15 seconds, with desktop goal alerts while the app is open.</sub> |
 | **⏱️ Event timeline**<br/><sub>Goals, penalties, cards and substitutions on a centered vertical timeline.</sub> | **📊 Team stats**<br/><sub>Possession bar, shots, passing accuracy, corners and discipline.</sub> |
 | **📋 Lineups**<br/><sub>Starting XIs, formations, squad numbers and substitute benches.</sub> | **▶️ Playback in mpv**<br/><sub>Launch a channel with one keystroke, using the sources you configure.</sub> |
 | **⌨️ Keyboard-first**<br/><sub>`hjkl` or arrows, number keys for tabs, one key to refresh.</sub> | **🔒 Private**<br/><sub>No account. No telemetry. Nothing but football on your screen.</sub> |

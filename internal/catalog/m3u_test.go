@@ -240,10 +240,7 @@ func TestCatalog_M3UIntegration(t *testing.T) {
 	}
 
 	cfgFile := filepath.Join(tmpDir, "channels.json")
-	cfgData := `{"playlist_path": "` + m3uFile + `"}`
-	if err := os.WriteFile(cfgFile, []byte(cfgData), 0o644); err != nil {
-		t.Fatalf("error writing config file: %v", err)
-	}
+	writeChannelsConfig(t, cfgFile, map[string]string{"playlist_path": m3uFile})
 
 	fileCat := newOfflineTestCatalog(WithConfigFile(cfgFile))
 	colMatch := model.Match{

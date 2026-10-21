@@ -3,7 +3,6 @@
 package bar
 
 import (
-	"fmt"
 	"os/exec"
 
 	"github.com/e12jassir/kickoff-cli/internal/model"
@@ -22,8 +21,7 @@ func (n *darwinNotifier) NotifyGoal(match model.Match, homeScore, awayScore stri
 	}
 
 	title, body := FormatGoalNotification(match, homeScore, awayScore, event)
-	script := fmt.Sprintf(`display notification %q with title %q`, body, title)
-	cmd := exec.Command(bin, "-e", script)
+	cmd := exec.Command(bin, "-e", darwinNotifyScript(title, body))
 	_ = cmd.Run()
 	return nil
 }

@@ -15,13 +15,15 @@ func newOSNotifier() Notifier {
 }
 
 func (n *linuxNotifier) NotifyGoal(match model.Match, homeScore, awayScore string, event *model.MatchEvent) error {
-	bin, err := exec.LookPath("notify-send")
+	title, body := FormatGoalNotification(match, homeScore, awayScore, event)
+	name, args := linuxNotifyCommand(title, body)
+
+	bin, err := exec.LookPath(name)
 	if err != nil {
 		return nil
 	}
 
-	title, body := FormatGoalNotification(match, homeScore, awayScore, event)
-	cmd := exec.Command(bin, "-a", "kickoff", title, body)
+	cmd := exec.Command(bin, args...)
 	_ = cmd.Run()
 	return nil
 }

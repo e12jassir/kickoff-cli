@@ -39,6 +39,12 @@ func enforceSocketDirPermissions(dir string) error {
 	return os.Chmod(dir, 0o700)
 }
 
+// platformIPCPath returns the Unix domain socket path for a playback session
+// rooted in dir. Unix keeps the historical filesystem socket semantics.
+func platformIPCPath(dir string) string {
+	return unixIPCPath(dir)
+}
+
 func (c *Controller) platformWait(ctx context.Context, cmd *exec.Cmd, sockPath, dir string, exitCh <-chan error) error {
 	start := time.Now()
 	timeout := c.pollTimeout

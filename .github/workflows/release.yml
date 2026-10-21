@@ -54,7 +54,17 @@ jobs:
           tar -czf "dist/kickoff_${CLEAN_VER}_macos_arm64.tar.gz" kickoff LICENSE README.md
           rm kickoff
 
-          # 5. Checksums
+          # 5. macOS Intel (AMD64)
+          GOOS=darwin GOARCH=amd64 go build -ldflags="$LDFLAGS" -o kickoff ./cmd/kickoff
+          tar -czf "dist/kickoff_${CLEAN_VER}_macos_amd64.tar.gz" kickoff LICENSE README.md
+          rm kickoff
+
+          # 6. Windows ARM64 (.zip bundle with the same files as the x86_64 bundle)
+          GOOS=windows GOARCH=arm64 go build -ldflags="$LDFLAGS" -o kickoff.exe ./cmd/kickoff
+          zip -j "dist/kickoff_${CLEAN_VER}_windows_arm64.zip" kickoff.exe assets/Instalar-Kickoff.bat assets/install-mpv.bat assets/kickoff.ico assets/fonts/JetBrainsMonoNerdFont-Regular.ttf assets/fonts/OFL.txt assets/fonts/NOTICE.md LICENSE README.md
+          rm kickoff.exe
+
+          # 7. Checksums
           cd dist
           sha256sum * > checksums.txt
           cd ..

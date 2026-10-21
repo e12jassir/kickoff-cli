@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -47,6 +48,22 @@ var mockTestStreams = map[string]string{
 	"rcn_hd2":        "http://example.invalid/rcnhd2.m3u8",
 	"realmadrid":     "https://example.invalid/rmtv/master.m3u8",
 	"teledeporte":    "https://example.invalid/tdp/tdp_main.m3u8",
+}
+
+// writeChannelsConfig writes a channels.json from structured fields. Building
+// the JSON by string concatenation breaks on Windows, where a path contains
+// backslashes that are illegal escape sequences inside a JSON string, so the
+// config silently failed to parse and every channel lookup came back empty.
+func writeChannelsConfig(t *testing.T, path string, fields map[string]string) {
+	t.Helper()
+
+	data, err := json.Marshal(fields)
+	if err != nil {
+		t.Fatalf("failed to marshal channels config: %v", err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("failed to write channels config: %v", err)
+	}
 }
 
 func newTestCatalog(opts ...Option) *Catalog {
@@ -911,10 +928,10 @@ http://example.com/local.m3u8
 	defer ts.Close()
 
 	cfgPath := filepath.Join(t.TempDir(), "channels.json")
-	cfgContent := fmt.Sprintf(`{"playlist_path": "%s", "playlist_url": "%s"}`, localM3U, ts.URL+"/remote.m3u")
-	if err := os.WriteFile(cfgPath, []byte(cfgContent), 0o600); err != nil {
-		t.Fatalf("failed to write config: %v", err)
-	}
+	writeChannelsConfig(t, cfgPath, map[string]string{
+		"playlist_path": localM3U,
+		"playlist_url":  ts.URL + "/remote.m3u",
+	})
 
 	cat := newOfflineTestCatalog(WithConfigFile(cfgPath))
 

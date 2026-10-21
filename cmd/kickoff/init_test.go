@@ -4,15 +4,15 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
 
 func TestRunInit_CreatesChannelsJSON(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	_, cfgDir := isolateConfigHome(t)
 
-	expectedPath := filepath.Join(tmpDir, "kickoff", "channels.json")
+	expectedPath := filepath.Join(cfgDir, "channels.json")
 
 	// 1. Initial creation
 	if err := RunInit(false); err != nil {
@@ -44,10 +44,9 @@ func TestRunInit_CreatesChannelsJSON(t *testing.T) {
 }
 
 func TestRunInit_DoesNotOverwriteWithoutForce(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	_, cfgDir := isolateConfigHome(t)
 
-	expectedPath := filepath.Join(tmpDir, "kickoff", "channels.json")
+	expectedPath := filepath.Join(cfgDir, "channels.json")
 
 	// Initial run
 	if err := RunInit(false); err != nil {
@@ -75,10 +74,9 @@ func TestRunInit_DoesNotOverwriteWithoutForce(t *testing.T) {
 }
 
 func TestRunInit_OverwritesWithForce(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	_, cfgDir := isolateConfigHome(t)
 
-	expectedPath := filepath.Join(tmpDir, "kickoff", "channels.json")
+	expectedPath := filepath.Join(cfgDir, "channels.json")
 
 	// Initial run
 	if err := RunInit(false); err != nil {
@@ -110,11 +108,22 @@ func TestRunInit_OverwritesWithForce(t *testing.T) {
 }
 
 func TestRunInit_HomeFallback(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("os.UserConfigDir is driven by AppData on Windows, so the HOME fallback cannot be exercised there")
+	}
+
 	tmpHome := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("HOME", tmpHome)
 
-	expectedPath := filepath.Join(tmpHome, ".config", "kickoff", "channels.json")
+	configBase, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatalf("could not resolve the user config dir: %v", err)
+	}
+	if !strings.HasPrefix(configBase, tmpHome) {
+		t.Fatalf("test setup did not isolate the config dir: %s", configBase)
+	}
+	expectedPath := filepath.Join(configBase, "kickoff", "channels.json")
 
 	if err := RunInit(false); err != nil {
 		t.Fatalf("RunInit(false) failed with HOME fallback: %v", err)
