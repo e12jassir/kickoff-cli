@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -555,7 +556,10 @@ func TestService_SaveCacheAtomicReplace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cache file missing after rewrite: %v", err)
 	}
-	if os.SameFile(before, after) {
+	// A rename changes file identity on Unix. Windows reuses the identity of the
+	// file it replaces, so the identity assertion is Unix-only; what both
+	// platforms must guarantee is a fully replaced cache and no leftover temp file.
+	if runtime.GOOS != "windows" && os.SameFile(before, after) {
 		t.Errorf("expected saveCache to replace the file atomically, but the inode was reused")
 	}
 
@@ -563,6 +567,7 @@ func TestService_SaveCacheAtomicReplace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to read cache: %v", err)
 	}
+
 	if !strings.Contains(string(data), "ESPN 2 HD") {
 		t.Errorf("expected the rewritten guide in the cache, got %s", data)
 	}

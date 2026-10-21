@@ -3,6 +3,7 @@ package fsutil
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -62,8 +63,16 @@ func TestAtomicWriteFile_CreatesParentAndAppliesPerm(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to stat target: %v", err)
 	}
-	if got := info.Mode().Perm(); got != 0o600 {
-		t.Errorf("expected perm 0600, got %o", got)
+	if info.IsDir() {
+		t.Fatalf("expected a regular file at %s", targetPath)
+	}
+	// Windows synthesizes the reported mode from the read-only attribute, so the
+	// POSIX bits requested here cannot be observed there. Parent creation and
+	// content are still asserted on every platform.
+	if runtime.GOOS != "windows" {
+		if got := info.Mode().Perm(); got != 0o600 {
+			t.Errorf("expected perm 0600, got %o", got)
+		}
 	}
 }
 
