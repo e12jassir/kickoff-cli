@@ -1,3 +1,9 @@
+//go:build !windows
+
+// This suite drives a real mpv stand-in through a Unix domain socket and
+// /bin/sh mock scripts, so it cannot run on Windows. Windows IPC behaviour is
+// covered by the platform-neutral address tests in ipc_address_test.go plus the
+// windows-latest CI leg, which still compile-checks the Windows player code.
 package player
 
 import (
