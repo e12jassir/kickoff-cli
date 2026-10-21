@@ -1,0 +1,8 @@
+# Keep line endings identical on every platform. gofmt reports a CRLF Go file
+# as unformatted, which broke the windows-latest CI leg, and a CRLF shell script
+# breaks its shebang under Git Bash.
+*.go text eol=lf
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+Makefile text eol=lf

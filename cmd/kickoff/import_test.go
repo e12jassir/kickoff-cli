@@ -13,8 +13,7 @@ import (
 )
 
 func TestRunConfigImport_JSONLocalFile(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	tmpDir, cfgDir := isolateConfigHome(t)
 
 	sourceJSON := filepath.Join(tmpDir, "source.json")
 	content := `{
@@ -31,7 +30,7 @@ func TestRunConfigImport_JSONLocalFile(t *testing.T) {
 		t.Fatalf("unexpected error importing JSON: %v", err)
 	}
 
-	target := filepath.Join(tmpDir, "kickoff", "channels.json")
+	target := filepath.Join(cfgDir, "channels.json")
 	data, err := os.ReadFile(target)
 	if err != nil {
 		t.Fatalf("error reading target channels.json: %v", err)
@@ -51,8 +50,7 @@ func TestRunConfigImport_JSONLocalFile(t *testing.T) {
 }
 
 func TestRunConfigImport_JSONHTTPServer(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	_, cfgDir := isolateConfigHome(t)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -68,7 +66,7 @@ func TestRunConfigImport_JSONHTTPServer(t *testing.T) {
 		t.Fatalf("unexpected error importing JSON from HTTP: %v", err)
 	}
 
-	target := filepath.Join(tmpDir, "kickoff", "channels.json")
+	target := filepath.Join(cfgDir, "channels.json")
 	data, err := os.ReadFile(target)
 	if err != nil {
 		t.Fatalf("error reading target channels.json: %v", err)
@@ -85,8 +83,7 @@ func TestRunConfigImport_JSONHTTPServer(t *testing.T) {
 }
 
 func TestRunConfigImport_M3ULocalFile(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	tmpDir, cfgDir := isolateConfigHome(t)
 
 	m3uPath := filepath.Join(tmpDir, "playlist_src.m3u")
 	m3uContent := `#EXTM3U
@@ -104,7 +101,7 @@ http://example.com/winplus.m3u8
 	}
 
 	// Verify playlist.m3u was saved
-	playlistTarget := filepath.Join(tmpDir, "kickoff", "playlist.m3u")
+	playlistTarget := filepath.Join(cfgDir, "playlist.m3u")
 	savedM3U, err := os.ReadFile(playlistTarget)
 	if err != nil {
 		t.Fatalf("playlist.m3u not saved: %v", err)
@@ -114,7 +111,7 @@ http://example.com/winplus.m3u8
 	}
 
 	// Verify channels.json was updated with playlist_path
-	channelsTarget := filepath.Join(tmpDir, "kickoff", "channels.json")
+	channelsTarget := filepath.Join(cfgDir, "channels.json")
 	channelsData, err := os.ReadFile(channelsTarget)
 	if err != nil {
 		t.Fatalf("channels.json not written: %v", err)
@@ -130,8 +127,7 @@ http://example.com/winplus.m3u8
 }
 
 func TestRunConfigImport_M3UHTTPServer(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	_, cfgDir := isolateConfigHome(t)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/x-mpegurl")
@@ -146,17 +142,15 @@ http://example.com/tdp.m3u8
 		t.Fatalf("unexpected error importing M3U from HTTP: %v", err)
 	}
 
-	playlistTarget := filepath.Join(tmpDir, "kickoff", "playlist.m3u")
+	playlistTarget := filepath.Join(cfgDir, "playlist.m3u")
 	if _, err := os.Stat(playlistTarget); err != nil {
 		t.Fatalf("playlist.m3u does not exist: %v", err)
 	}
 }
 
 func TestRunConfigImport_BackupCreation(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	tmpDir, cfgDir := isolateConfigHome(t)
 
-	cfgDir := filepath.Join(tmpDir, "kickoff")
 	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
 		t.Fatalf("failed to create cfgDir: %v", err)
 	}
@@ -198,8 +192,7 @@ func TestRunConfigImport_BackupCreation(t *testing.T) {
 }
 
 func TestRunConfigImport_Errors(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	tmpDir, _ := isolateConfigHome(t)
 
 	// 1. Empty source
 	if err := RunConfigImport(""); err == nil {

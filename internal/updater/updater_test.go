@@ -9,8 +9,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -250,6 +252,11 @@ func TestFindChecksumURL(t *testing.T) {
 }
 
 func TestSelfUpdate_ChecksumMismatchFailsClosed(t *testing.T) {
+	// The updater resolves the asset for the running platform, so the fake
+	// release has to advertise one for whatever OS this test binary was
+	// compiled for instead of hardcoding linux/amd64.
+	assetName := fmt.Sprintf("kickoff_99.9.9_%s_%s.tar.gz", runtime.GOOS, runtime.GOARCH)
+
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/releases/latest":
@@ -257,7 +264,7 @@ func TestSelfUpdate_ChecksumMismatchFailsClosed(t *testing.T) {
 				TagName: "v99.9.9",
 				Assets: []Asset{
 					{
-						Name:               "kickoff_linux_amd64.tar.gz",
+						Name:               assetName,
 						BrowserDownloadURL: "http://" + r.Host + "/asset.tar.gz",
 					},
 					{
@@ -273,7 +280,7 @@ func TestSelfUpdate_ChecksumMismatchFailsClosed(t *testing.T) {
 		case "/checksums.txt":
 			w.WriteHeader(http.StatusOK)
 			// Return a mismatched hash
-			_, _ = w.Write([]byte("1111111111111111111111111111111111111111111111111111111111111111  kickoff_linux_amd64.tar.gz\n"))
+			_, _ = w.Write([]byte("1111111111111111111111111111111111111111111111111111111111111111  " + assetName + "\n"))
 		default:
 			http.NotFound(w, r)
 		}
