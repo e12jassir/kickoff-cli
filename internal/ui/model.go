@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/e12jassir/kickoff-cli/internal/bar"
 	"github.com/e12jassir/kickoff-cli/internal/locale"
 	"github.com/e12jassir/kickoff-cli/internal/model"
 )
@@ -127,6 +128,13 @@ type Model struct {
 	// machine's timezone or the real clock.
 	clock func() time.Time
 	loc   *time.Location
+
+	// goalTracker and notifier raise desktop notifications whenever a background
+	// refresh observes a new goal, even when no match is open. The tracker primes
+	// its baseline on the first observation so opening Kickoff never replays
+	// goals that were already scored.
+	goalTracker *bar.ScoreTracker
+	notifier    bar.Notifier
 }
 
 // NewModel constructs a new UI model with defaults and dependencies.
@@ -192,6 +200,8 @@ func NewModel(client model.Client, catalog model.Resolver, player model.Controll
 		noEmoji:         false,
 		clock:           time.Now,
 		loc:             locale.Location(),
+		goalTracker:     bar.NewScoreTracker(),
+		notifier:        bar.NewNotifier(),
 	}
 }
 
