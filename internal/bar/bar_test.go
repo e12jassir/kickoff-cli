@@ -3,11 +3,16 @@ package bar
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/e12jassir/kickoff-cli/internal/espn"
 	"github.com/e12jassir/kickoff-cli/internal/model"
 )
 
@@ -510,6 +515,53 @@ func TestFetchAndFilter(t *testing.T) {
 	}
 	if len(matchesNotFound) != 0 {
 		t.Errorf("expected 0 matches for Juventus in esp.1, got %d", len(matchesNotFound))
+	}
+}
+
+// TestFetchAndFilter_RespectsHTTPBudget guards S12 from the caller side:
+// FetchAndFilter fans out over model.DefaultLeagues with its own dispatch cap of
+// 6, so the ESPN HTTP budget at the transport is the only thing that can keep
+// the total in flight at 4. Under a client-level probe limiter the league
+// fan-out reached 6+ concurrent requests.
+func TestFetchAndFilter_RespectsHTTPBudget(t *testing.T) {
+	const httpBudget = 4 // espn.maxConcurrentRequests
+
+	var inFlight, maxInFlight, requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		current := inFlight.Add(1)
+		defer inFlight.Add(-1)
+		requests.Add(1)
+		for {
+			observed := maxInFlight.Load()
+			if current <= observed || maxInFlight.CompareAndSwap(observed, current) {
+				break
+			}
+		}
+
+		time.Sleep(5 * time.Millisecond)
+
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"events": []}`)
+	}))
+	defer server.Close()
+
+	client := espn.NewClient(
+		espn.WithBaseURL(server.URL),
+		espn.WithCacheDir(t.TempDir()),
+		espn.WithRetryBackoff(func() time.Duration { return 0 }),
+	)
+
+	if _, err := FetchAndFilter(context.Background(), client, Options{}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	observed := maxInFlight.Load()
+	t.Logf("max in-flight requests observed across %d requests: %d (limit %d)", requests.Load(), observed, httpBudget)
+	if observed > httpBudget {
+		t.Fatalf("observed %d concurrent requests through the league fan-out, want at most %d", observed, httpBudget)
+	}
+	if observed < 2 {
+		t.Fatalf("observed %d concurrent requests, want the fan-out to overlap at least 2", observed)
 	}
 }
 

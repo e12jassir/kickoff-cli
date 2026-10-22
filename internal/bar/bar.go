@@ -661,6 +661,10 @@ func FetchAndFilter(ctx context.Context, client model.Client, opts Options) ([]m
 			collected []model.Match
 		)
 
+		// This semaphore bounds in-process work (goroutines and cache reads),
+		// not the network: the ESPN client's HTTP transport enforces the
+		// process-wide request budget, so the total in flight stays at its cap
+		// even when every league here starts at once.
 		sem := make(chan struct{}, 6)
 		for _, l := range model.DefaultLeagues {
 			wg.Add(1)

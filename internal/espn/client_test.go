@@ -1528,8 +1528,9 @@ func TestClient_FetchRecentPastScoreboardEvents_14DaysWindow(t *testing.T) {
 	}
 }
 
-// probeConcurrencySampler records how many probe requests are in flight at the
-// same time on an httptest.Server handler.
+// probeConcurrencySampler records how many HTTP requests are in flight at the
+// same time on an httptest.Server handler. It is used for probe sweeps and for
+// whole-client request paths, since both draw from the same budget.
 type probeConcurrencySampler struct {
 	// delay keeps each request in flight long enough for concurrent probes to
 	// overlap reliably, even on fast machines.
@@ -1612,17 +1613,185 @@ func TestClient_ScoreboardProbes_BoundConcurrentRequests(t *testing.T) {
 	})
 }
 
-// assertBoundedProbeConcurrency checks the hard limit of 4 in-flight probes and
-// also that the sweep actually overlaps requests instead of running serially.
+// assertBoundedProbeConcurrency checks the hard limit of maxConcurrentRequests
+// in-flight probes and also that the sweep actually overlaps requests instead
+// of running serially.
 func assertBoundedProbeConcurrency(t *testing.T, sampler *probeConcurrencySampler) {
 	t.Helper()
+	assertBoundedConcurrency(t, sampler, maxConcurrentRequests)
+}
+
+// assertBoundedConcurrency checks that the server never saw more than limit
+// requests in flight, and that the traffic overlapped at all so the limit is
+// actually exercised rather than avoided by a serial caller.
+func assertBoundedConcurrency(t *testing.T, sampler *probeConcurrencySampler, limit int32) {
+	t.Helper()
 	observed := sampler.max.Load()
-	t.Logf("max in-flight probe requests observed: %d (limit 4)", observed)
-	if observed > 4 {
-		t.Fatalf("observed %d concurrent probe requests, want at most 4", observed)
+	t.Logf("max in-flight requests observed: %d (limit %d)", observed, limit)
+	if observed > limit {
+		t.Fatalf("observed %d concurrent requests, want at most %d", observed, limit)
 	}
 	if observed < 2 {
-		t.Fatalf("observed %d concurrent probe requests, want the sweep to overlap at least 2", observed)
+		t.Fatalf("observed %d concurrent requests, want the callers to overlap at least 2", observed)
+	}
+}
+
+// passthroughTransport delegates to a base transport so a caller-supplied
+// http.Client reaches the test server, while giving the test a comparable
+// pointer to prove NewClient did not mutate the caller's client.
+type passthroughTransport struct {
+	base http.RoundTripper
+}
+
+func (p *passthroughTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return p.base.RoundTrip(req)
+}
+
+// TestClient_HTTPBudget_BoundsConcurrentRequests guards S12: the HTTP budget is
+// enforced at the transport, so every caller path shares one cap. Before the
+// transport-level budget, only the scoreboard probe fan-out was bounded; the
+// main scoreboard request of each FetchMatches call was not, so parallel
+// FetchMatches calls (exactly what internal/bar's league fan-out does) could
+// exceed the intended cap.
+func TestClient_HTTPBudget_BoundsConcurrentRequests(t *testing.T) {
+	sampler := &probeConcurrencySampler{delay: 10 * time.Millisecond}
+	server := httptest.NewServer(http.HandlerFunc(sampler.handler))
+	defer server.Close()
+
+	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	leagues := []string{
+		"laliga", "premier", "seriea", "bundesliga",
+		"ligue1", "champions", "colombia", "mls",
+	}
+
+	newClient := func(extra ...Option) *Client {
+		opts := []Option{
+			WithBaseURL(server.URL),
+			WithCacheDir(t.TempDir()),
+			WithRetryBackoff(func() time.Duration { return 0 }),
+			WithNow(func() time.Time { return now }),
+		}
+		return NewClient(append(opts, extra...)...)
+	}
+
+	fetchAll := func(client *Client) {
+		var wg sync.WaitGroup
+		for _, leagueKey := range leagues {
+			wg.Add(1)
+			go func(key string) {
+				defer wg.Done()
+				if _, err := client.FetchMatches(context.Background(), key); err != nil {
+					t.Errorf("FetchMatches(%q) failed: %v", key, err)
+				}
+			}(leagueKey)
+		}
+		wg.Wait()
+	}
+
+	t.Run("parallel FetchMatches", func(t *testing.T) {
+		sampler.reset()
+		fetchAll(newClient())
+		assertBoundedConcurrency(t, sampler, maxConcurrentRequests)
+	})
+
+	t.Run("caller-supplied http client", func(t *testing.T) {
+		sampler.reset()
+		originalTransport := &passthroughTransport{base: http.DefaultTransport}
+		custom := &http.Client{Transport: originalTransport}
+
+		fetchAll(newClient(WithHTTPClient(custom)))
+
+		assertBoundedConcurrency(t, sampler, maxConcurrentRequests)
+		if custom.Transport != originalTransport {
+			t.Fatalf("WithHTTPClient mutated the caller's client transport; the budget must be applied to a copy")
+		}
+	})
+}
+
+// TestDerivedProbeDeadline pins the S13 arithmetic: the cold-cache sweep
+// deadline is max(8s, 2s * ceil(days / budget)), clamped at 30s. Values are
+// worked examples, not recomputed from the implementation.
+func TestDerivedProbeDeadline(t *testing.T) {
+	cases := []struct {
+		name        string
+		days        int
+		concurrency int
+		want        time.Duration
+	}{
+		{"14 days on the default budget stays on the floor", 14, 4, 8 * time.Second},
+		{"14 days on a narrow budget scales per batch", 14, 2, 14 * time.Second},
+		{"a wide budget keeps the floor", 14, 8, 8 * time.Second},
+		{"40 days exceed the floor", 40, 4, 20 * time.Second},
+		{"60 days reach the ceiling", 60, 4, 30 * time.Second},
+		{"a very large sweep stays at the ceiling", 200, 4, 30 * time.Second},
+		{"no days keeps the floor", 0, 4, 8 * time.Second},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := derivedProbeDeadline(tc.days, tc.concurrency); got != tc.want {
+				t.Fatalf("derivedProbeDeadline(%d, %d) = %v, want %v", tc.days, tc.concurrency, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestClient_WithProbeBudget guards S13's override: an explicit budget wins over
+// the derived value, is still clamped to the ceiling, and a non-positive value
+// keeps the derived deadline. With probeDays=14 and the 4-request budget the
+// derived value is the 8s floor.
+func TestClient_WithProbeBudget(t *testing.T) {
+	const derived = 8 * time.Second
+
+	cases := []struct {
+		name   string
+		budget time.Duration
+		want   time.Duration
+	}{
+		{"unset derives from the sweep", 0, derived},
+		{"explicit override wins even under the floor", 3 * time.Second, 3 * time.Second},
+		{"explicit override is still capped", 45 * time.Second, 30 * time.Second},
+		{"non-positive override is ignored", -1, derived},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client := NewClient(
+				WithBaseURL("http://espn.invalid"),
+				WithCacheDir(t.TempDir()),
+				WithProbeBudget(tc.budget),
+			)
+			if got := client.probeTimeout(probeDays); got != tc.want {
+				t.Fatalf("probeTimeout(%d) = %v, want %v", probeDays, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestClient_ProbeBudget_TruncatesSlowSweep proves the override reaches the live
+// sweep instead of only the accessor: a deadline shorter than the server's
+// latency cancels the batch instead of letting all 14 probes finish.
+func TestClient_ProbeBudget_TruncatesSlowSweep(t *testing.T) {
+	sampler := &probeConcurrencySampler{delay: 150 * time.Millisecond}
+	server := httptest.NewServer(http.HandlerFunc(sampler.handler))
+	defer server.Close()
+
+	client := NewClient(
+		WithBaseURL(server.URL),
+		WithCacheDir(t.TempDir()),
+		WithRetryBackoff(func() time.Duration { return 0 }),
+		WithProbeBudget(40*time.Millisecond),
+	)
+	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+
+	started := time.Now()
+	client.fetchRecentPastScoreboardEvents(context.Background(), "laliga", now)
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("sweep took %v; a 40ms budget must cut it short", elapsed)
+	}
+
+	if got := sampler.requests.Load(); got >= int32(probeDays) {
+		t.Fatalf("expected the 40ms budget to cut the sweep short, got all %d probes", got)
 	}
 }
 
