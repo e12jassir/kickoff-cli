@@ -1417,6 +1417,141 @@ func TestChannelIdentity_DistinguishesSeparateSignals(t *testing.T) {
 	}
 }
 
+// TestNormalize_SquadQualifierForms pins how the normalizer tokenizes the
+// squad-age spellings the guide publishes. The qualifier gate reads Normalize's
+// output, so these forms are its contract: "sub 20" arrives as a pair, while
+// "U20" and "Sub20" arrive fused. Assuming a different shape would leave the
+// gate silently inert.
+func TestNormalize_SquadQualifierForms(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"Brasil Sub-20", "brasil sub 20"},
+		{"Brasil Sub 20", "brasil sub 20"},
+		{"Brasil U20", "brasil u20"},
+		{"Brasil U-20", "brasil u 20"},
+		{"Brasil Sub20", "brasil sub20"},
+		{"Real Madrid Femenino", "real madrid femenino"},
+	}
+
+	for _, tt := range tests {
+		if got := Normalize(tt.input); got != tt.want {
+			t.Errorf("Normalize(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+// TestMatchScore_SquadQualifierGate proves match scoring is symmetric about the
+// squad qualifier. A candidate may only resolve when both titles carry the SAME
+// qualifier (both absent counts as equal); a qualifier on one side only, or two
+// different qualifiers, describe a different competition and must not match.
+// The gate runs before the full-fixture-title check, so a senior title can never
+// be answered by a youth broadcast that happens to repeat both team names.
+func TestMatchScore_SquadQualifierGate(t *testing.T) {
+	senior := model.Match{
+		HomeTeam: model.Competitor{DisplayName: "Brasil"},
+		AwayTeam: model.Competitor{DisplayName: "Argentina"},
+		Title:    "Brasil vs Argentina",
+	}
+	sub20 := model.Match{
+		HomeTeam: model.Competitor{DisplayName: "Brasil Sub-20"},
+		AwayTeam: model.Competitor{DisplayName: "Argentina Sub-20"},
+		Title:    "Brasil Sub-20 vs Argentina Sub-20",
+	}
+	realMadridSenior := model.Match{
+		HomeTeam: model.Competitor{DisplayName: "Real Madrid"},
+		AwayTeam: model.Competitor{DisplayName: "Barcelona"},
+		Title:    "Real Madrid vs Barcelona",
+	}
+
+	tests := []struct {
+		name       string
+		guideTitle string
+		match      model.Match
+		matched    bool
+		score      int
+	}{
+		{
+			name:       "senior fixture must not match a guide title carrying a sub-20 qualifier",
+			guideTitle: "Brasil Sub-20 vs Argentina Sub-20",
+			match:      senior,
+			matched:    false,
+			score:      0,
+		},
+		{
+			name:       "senior guide must not match a fixture title carrying the qualifier",
+			guideTitle: "Brasil vs Argentina",
+			match:      sub20,
+			matched:    false,
+			score:      0,
+		},
+		{
+			name:       "both sub-20 keeps today's score",
+			guideTitle: "Brasil Sub-20 vs Argentina Sub-20",
+			match:      sub20,
+			matched:    true,
+			score:      10,
+		},
+		{
+			name:       "the same qualifier spelled U20 is canonicalised and keeps the score",
+			guideTitle: "Brasil U20 vs Argentina U20",
+			match:      sub20,
+			matched:    true,
+			score:      5,
+		},
+		{
+			name:       "sub-20 versus sub-17 describes a different competition",
+			guideTitle: "Brasil Sub-20 vs Argentina Sub-20",
+			match: model.Match{
+				HomeTeam: model.Competitor{DisplayName: "Brasil Sub-17"},
+				AwayTeam: model.Competitor{DisplayName: "Argentina Sub-17"},
+				Title:    "Brasil Sub-17 vs Argentina Sub-17",
+			},
+			matched: false,
+			score:   0,
+		},
+		{
+			name:       "a femenino guide must not answer a senior Real Madrid fixture",
+			guideTitle: "Real Madrid Femenino vs Barcelona Femenino",
+			match:      realMadridSenior,
+			matched:    false,
+			score:      0,
+		},
+		{
+			name:       "both senior titles keep today's score unchanged",
+			guideTitle: "Real Madrid vs Barcelona",
+			match:      realMadridSenior,
+			matched:    true,
+			score:      10,
+		},
+		{
+			name:       "clubs carrying short tokens still match normally",
+			guideTitle: "W Connection vs B SAD",
+			match: model.Match{
+				HomeTeam: model.Competitor{DisplayName: "W Connection"},
+				AwayTeam: model.Competitor{DisplayName: "B SAD"},
+			},
+			matched: true,
+			score:   5,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			matched, score := MatchScore(tt.guideTitle, tt.match)
+			if matched != tt.matched {
+				t.Fatalf("MatchScore(%q, %q) matched=%v (score %d), want matched=%v",
+					tt.guideTitle, tt.match.Title, matched, score, tt.matched)
+			}
+			if score != tt.score {
+				t.Fatalf("MatchScore(%q, %q) score=%d, want %d",
+					tt.guideTitle, tt.match.Title, score, tt.score)
+			}
+		})
+	}
+}
+
 // TestNormalize_ConcurrentSafe guards against sharing stateful transformers
 // across goroutines. RemoveAccents is reachable from the TUI update loop and
 // from concurrent fetch goroutines, so it must be safe to call in parallel.

@@ -384,7 +384,10 @@ func programmeOverlapsMatch(entry ProgramEntry, matchStartMins int) (overlaps, h
 // Acceptance is deliberately strict:
 //   - A candidate is eligible only when MatchScore reports BOTH teams
 //     identified or a full fixture-title match (score >= minMatchScore). A
-//     single team name never qualifies.
+//     single team name never qualifies. MatchScore also applies a symmetric
+//     squad-qualifier gate first: the fixture title and the programme title must
+//     carry the same squad qualifier (or none), so a senior fixture never
+//     resolves against a youth, women's or reserve broadcast of the same clubs.
 //   - Timing is a gate, not a score. When the match and programme both carry a
 //     start time, the programme must overlap the match window; a programme that
 //     does not overlap is disqualified. Timing never adds points, so a perfect
