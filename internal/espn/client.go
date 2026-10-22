@@ -38,6 +38,12 @@ const (
 	probeConcurrency = 4
 	// probeDays is the size of the past and upcoming day windows.
 	probeDays = 14
+
+	// cacheSchemaVersion is the on-disk schema revision shared by every
+	// persisted ESPN cache entry. Bumping it invalidates older entries by
+	// design: a read whose stored version differs is treated as a cache miss
+	// and the entry is refetched, with no migration or backfill.
+	cacheSchemaVersion = 1
 )
 
 type rawResponse struct {
@@ -172,21 +178,24 @@ type rawStatisticItem struct {
 }
 
 type cachedSummary struct {
-	CachedAt   time.Time           `json:"cached_at"`
-	Stats      *model.MatchStats   `json:"stats"`
-	Lineups    *model.MatchLineups `json:"lineups"`
-	Referee    string              `json:"referee"`
-	Attendance int                 `json:"attendance"`
+	SchemaVersion int                 `json:"schema_version"`
+	CachedAt      time.Time           `json:"cached_at"`
+	Stats         *model.MatchStats   `json:"stats"`
+	Lineups       *model.MatchLineups `json:"lineups"`
+	Referee       string              `json:"referee"`
+	Attendance    int                 `json:"attendance"`
 }
 
 type cachedStandings struct {
-	CachedAt  time.Time              `json:"cached_at"`
-	Standings *model.LeagueStandings `json:"standings"`
+	SchemaVersion int                    `json:"schema_version"`
+	CachedAt      time.Time              `json:"cached_at"`
+	Standings     *model.LeagueStandings `json:"standings"`
 }
 
 type cachedStatistics struct {
-	CachedAt   time.Time               `json:"cached_at"`
-	Statistics *model.LeagueStatistics `json:"statistics"`
+	SchemaVersion int                     `json:"schema_version"`
+	CachedAt      time.Time               `json:"cached_at"`
+	Statistics    *model.LeagueStatistics `json:"statistics"`
 }
 
 type rawVenue struct {
@@ -220,13 +229,15 @@ type rawStatusType struct {
 }
 
 type cachedData struct {
-	CachedAt time.Time     `json:"cached_at"`
-	Matches  []model.Match `json:"matches"`
+	SchemaVersion int           `json:"schema_version"`
+	CachedAt      time.Time     `json:"cached_at"`
+	Matches       []model.Match `json:"matches"`
 }
 
 type cachedPastEvents struct {
-	CachedAt time.Time  `json:"cached_at"`
-	Events   []rawEvent `json:"events"`
+	SchemaVersion int        `json:"schema_version"`
+	CachedAt      time.Time  `json:"cached_at"`
+	Events        []rawEvent `json:"events"`
 }
 
 // Client implements model.Client for fetching ESPN soccer fixtures.
@@ -490,6 +501,9 @@ func (c *Client) readDiskCache(leagueKey string) (*cachedData, bool) {
 	if err := json.Unmarshal(data, &cached); err != nil {
 		return nil, false
 	}
+	if cached.SchemaVersion != cacheSchemaVersion {
+		return nil, false
+	}
 
 	return &cached, true
 }
@@ -540,8 +554,9 @@ func (c *Client) setCache(leagueKey string, matches []model.Match) {
 	}
 	cachePath := c.cacheFilePath(leagueKey)
 	cached := cachedData{
-		CachedAt: c.now(),
-		Matches:  matches,
+		SchemaVersion: cacheSchemaVersion,
+		CachedAt:      c.now(),
+		Matches:       matches,
 	}
 	data, err := json.Marshal(cached)
 	if err != nil {
@@ -571,6 +586,9 @@ func (c *Client) readDiskPastEvents(leagueKey string) (*cachedPastEvents, bool) 
 
 	var cached cachedPastEvents
 	if err := json.Unmarshal(data, &cached); err != nil {
+		return nil, false
+	}
+	if cached.SchemaVersion != cacheSchemaVersion {
 		return nil, false
 	}
 
@@ -607,8 +625,9 @@ func (c *Client) setCachedPastEvents(leagueKey string, events []rawEvent) {
 	}
 	cachePath := c.pastCacheFilePath(leagueKey)
 	cached := cachedPastEvents{
-		CachedAt: c.now(),
-		Events:   events,
+		SchemaVersion: cacheSchemaVersion,
+		CachedAt:      c.now(),
+		Events:        events,
 	}
 	data, err := json.Marshal(cached)
 	if err != nil {
@@ -630,6 +649,9 @@ func (c *Client) readDiskSummary(eventID string) (*cachedSummary, bool) {
 
 	var cached cachedSummary
 	if err := json.Unmarshal(data, &cached); err != nil {
+		return nil, false
+	}
+	if cached.SchemaVersion != cacheSchemaVersion {
 		return nil, false
 	}
 
@@ -676,11 +698,12 @@ func (c *Client) setCachedSummary(eventID string, stats *model.MatchStats, lineu
 	}
 	cachePath := c.summaryCachePath(eventID)
 	cached := cachedSummary{
-		CachedAt:   c.now(),
-		Stats:      stats,
-		Lineups:    lineups,
-		Referee:    referee,
-		Attendance: attendance,
+		SchemaVersion: cacheSchemaVersion,
+		CachedAt:      c.now(),
+		Stats:         stats,
+		Lineups:       lineups,
+		Referee:       referee,
+		Attendance:    attendance,
 	}
 	data, err := json.Marshal(cached)
 	if err != nil {
@@ -1557,6 +1580,9 @@ func (c *Client) readDiskStandings(leagueKey string) (*cachedStandings, bool) {
 	if err := json.Unmarshal(data, &cached); err != nil {
 		return nil, false
 	}
+	if cached.SchemaVersion != cacheSchemaVersion {
+		return nil, false
+	}
 	return &cached, true
 }
 
@@ -1566,8 +1592,9 @@ func (c *Client) setCachedStandings(leagueKey string, standings *model.LeagueSta
 	}
 	_ = os.MkdirAll(c.cacheDir, 0o755)
 	cached := cachedStandings{
-		CachedAt:  c.now(),
-		Standings: standings,
+		SchemaVersion: cacheSchemaVersion,
+		CachedAt:      c.now(),
+		Standings:     standings,
 	}
 	data, err := json.Marshal(cached)
 	if err == nil {
@@ -1774,6 +1801,9 @@ func (c *Client) readDiskStatistics(leagueKey string) (*cachedStatistics, bool) 
 	if err := json.Unmarshal(data, &cached); err != nil {
 		return nil, false
 	}
+	if cached.SchemaVersion != cacheSchemaVersion {
+		return nil, false
+	}
 	return &cached, true
 }
 
@@ -1783,8 +1813,9 @@ func (c *Client) setCachedStatistics(leagueKey string, statistics *model.LeagueS
 	}
 	_ = os.MkdirAll(c.cacheDir, 0o755)
 	cached := cachedStatistics{
-		CachedAt:   c.now(),
-		Statistics: statistics,
+		SchemaVersion: cacheSchemaVersion,
+		CachedAt:      c.now(),
+		Statistics:    statistics,
 	}
 	data, err := json.Marshal(cached)
 	if err == nil {

@@ -599,6 +599,46 @@ func TestFormatClock_ByStatusCode(t *testing.T) {
 			status:   model.MatchStatus{State: "in", Description: "Halftime"},
 			expected: "HT",
 		},
+		{
+			name:     "final code wins over numeric detail",
+			status:   model.MatchStatus{State: "in", Code: "STATUS_FINAL", Detail: "90'"},
+			expected: "FT",
+		},
+		{
+			name:     "final code wins over Spanish description",
+			status:   model.MatchStatus{Code: "STATUS_FINAL", Description: "Finalizado"},
+			expected: "FT",
+		},
+		{
+			name:     "scheduled code renders the not-yet-started form over Spanish description",
+			status:   model.MatchStatus{State: "pre", Code: "STATUS_SCHEDULED", Description: "Programado"},
+			expected: "PRE",
+		},
+		{
+			name:     "in-progress code renders the numeric detail as a minute",
+			status:   model.MatchStatus{State: "in", Code: "STATUS_IN_PROGRESS", Detail: "63"},
+			expected: "63'",
+		},
+		{
+			name:     "in-progress code keeps an already formatted minute",
+			status:   model.MatchStatus{State: "in", Code: "STATUS_IN_PROGRESS", Detail: "63'"},
+			expected: "63'",
+		},
+		{
+			name:     "in-progress code without feed text renders live",
+			status:   model.MatchStatus{Code: "STATUS_IN_PROGRESS"},
+			expected: "LIVE",
+		},
+		{
+			name:     "unmapped code keeps the Spanish detail fallback",
+			status:   model.MatchStatus{State: "in", Code: "STATUS_POSTPONED", Detail: "Aplazado"},
+			expected: "Aplazado",
+		},
+		{
+			name:     "unmapped code keeps the Spanish description fallback",
+			status:   model.MatchStatus{State: "in", Code: "STATUS_RAIN_DELAY", Description: "Retrasado"},
+			expected: "Retrasado",
+		},
 	}
 
 	for _, tt := range tests {

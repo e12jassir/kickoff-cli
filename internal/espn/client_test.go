@@ -301,8 +301,9 @@ func TestClient_FetchMatches_OfflineFallback(t *testing.T) {
 		},
 	}
 	cachedBytes, _ := json.Marshal(cachedData{
-		CachedAt: cachedTime,
-		Matches:  cachedMatches,
+		SchemaVersion: cacheSchemaVersion,
+		CachedAt:      cachedTime,
+		Matches:       cachedMatches,
 	})
 	cacheFile := filepath.Join(tempDir, "matches_laliga.json")
 	if err := os.WriteFile(cacheFile, cachedBytes, 0o644); err != nil {
@@ -371,7 +372,8 @@ func TestClient_FetchMatchDetails_OfflineFallback(t *testing.T) {
 
 	// Pre-populate summary cache
 	sum := cachedSummary{
-		CachedAt: cachedTime,
+		SchemaVersion: cacheSchemaVersion,
+		CachedAt:      cachedTime,
 		Stats: &model.MatchStats{
 			HomeShots: "12",
 			AwayShots: "8",
@@ -2005,6 +2007,178 @@ func TestNormalizeTeamDisplayName(t *testing.T) {
 		got := normalizeTeamDisplayName(tc.input)
 		if got != tc.expected {
 			t.Errorf("normalizeTeamDisplayName(%q) = %q, expected %q", tc.input, got, tc.expected)
+		}
+	}
+}
+
+// TestClient_CacheSchemaVersion pins the on-disk schema marker shared by every
+// persisted ESPN cache: an entry written by the current schema version is
+// served from disk without touching the network, while an entry written by a
+// different version (or none at all) is treated as a miss and refetched.
+func TestClient_CacheSchemaVersion(t *testing.T) {
+	fixedNow := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	cachedAt := fixedNow.Format(time.RFC3339)
+
+	// versionField renders the schema_version member, or nothing when the
+	// stored entry predates the field entirely.
+	versionField := func(version string) string {
+		if version == "" {
+			return ""
+		}
+		return fmt.Sprintf(`"schema_version":%s,`, version)
+	}
+
+	// A scheduled match on the fixed "today" keeps the scoreboard path from
+	// firing the upcoming/past probe fan-out, so request counts stay exact.
+	scheduledScoreboard := fmt.Sprintf(`{
+		"events": [{
+			"id": "today1",
+			"date": "2026-10-16T20:00Z",
+			"name": "A vs B",
+			"competitions": [{
+				"status": {"type": {"name": "STATUS_SCHEDULED", "description": "Scheduled", "detail": "", "state": "pre", "completed": false}},
+				"competitors": [
+					{"id": "1", "homeAway": "home", "team": {"displayName": "A"}},
+					{"id": "2", "homeAway": "away", "team": {"displayName": "B"}}
+				]
+			}]
+		}]
+	}`)
+
+	cases := []struct {
+		name string
+		file string
+		body func(version string) string
+		call func(ctx context.Context, c *Client) error
+		// wantFresh is the exact upstream request count when the entry is
+		// served from disk.
+		wantFresh int
+		// wantStale is the minimum upstream request count when the entry is
+		// treated as a miss.
+		wantStale int
+	}{
+		{
+			name: "matches",
+			file: "matches_premier.json",
+			body: func(version string) string {
+				return fmt.Sprintf(`{%s"cached_at":%q,"matches":[{"id":"m1","title":"A vs B"}]}`, versionField(version), cachedAt)
+			},
+			call: func(ctx context.Context, c *Client) error {
+				_, err := c.FetchMatches(ctx, "premier")
+				return err
+			},
+			wantFresh: 0,
+			wantStale: 1,
+		},
+		{
+			name: "past events",
+			file: "past_matches_premier.json",
+			body: func(version string) string {
+				return fmt.Sprintf(`{%s"cached_at":%q,"events":[{"id":"past1","date":"2026-10-15T20:00Z"}]}`, versionField(version), cachedAt)
+			},
+			call: func(ctx context.Context, c *Client) error {
+				_, err := c.FetchMatches(ctx, "premier")
+				return err
+			},
+			// FetchMatches always asks the scoreboard once; a valid past
+			// cache is what suppresses the extra day probes.
+			wantFresh: 1,
+			wantStale: 2,
+		},
+		{
+			name: "summary",
+			file: "summary-ev1.json",
+			body: func(version string) string {
+				return fmt.Sprintf(`{%s"cached_at":%q,"stats":{"homeShots":"10"},"lineups":null,"referee":"Ref A","attendance":1000}`, versionField(version), cachedAt)
+			},
+			call: func(ctx context.Context, c *Client) error {
+				_, err := c.FetchMatchDetails(ctx, "premier", "ev1")
+				return err
+			},
+			wantFresh: 0,
+			wantStale: 1,
+		},
+		{
+			name: "standings",
+			file: "standings_premier.json",
+			body: func(version string) string {
+				return fmt.Sprintf(`{%s"cached_at":%q,"standings":{"leagueKey":"premier"}}`, versionField(version), cachedAt)
+			},
+			call: func(ctx context.Context, c *Client) error {
+				_, err := c.FetchStandings(ctx, "premier")
+				return err
+			},
+			wantFresh: 0,
+			wantStale: 1,
+		},
+		{
+			name: "statistics",
+			file: "statistics_premier.json",
+			body: func(version string) string {
+				return fmt.Sprintf(`{%s"cached_at":%q,"statistics":{"leagueKey":"premier"}}`, versionField(version), cachedAt)
+			},
+			call: func(ctx context.Context, c *Client) error {
+				_, err := c.FetchStatistics(ctx, "premier")
+				return err
+			},
+			wantFresh: 0,
+			wantStale: 1,
+		},
+	}
+
+	versions := []struct {
+		name  string
+		value string
+		fresh bool
+	}{
+		{name: "current version", value: fmt.Sprintf("%d", cacheSchemaVersion), fresh: true},
+		{name: "stale version", value: "0", fresh: false},
+		{name: "absent version", value: "", fresh: false},
+	}
+
+	for _, tc := range cases {
+		for _, v := range versions {
+			t.Run(tc.name+"/"+v.name, func(t *testing.T) {
+				dir := t.TempDir()
+				if err := os.WriteFile(filepath.Join(dir, tc.file), []byte(tc.body(v.value)), 0o644); err != nil {
+					t.Fatalf("seed cache file %s: %v", tc.file, err)
+				}
+
+				var requests int64
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					atomic.AddInt64(&requests, 1)
+					w.Header().Set("Content-Type", "application/json")
+					if strings.Contains(r.URL.Path, "scoreboard") {
+						fmt.Fprint(w, scheduledScoreboard)
+						return
+					}
+					fmt.Fprint(w, `{}`)
+				}))
+				defer server.Close()
+
+				client := NewClient(
+					WithBaseURL(server.URL),
+					WithCacheDir(dir),
+					WithNow(func() time.Time { return fixedNow }),
+					WithCacheTTL(time.Hour),
+					WithPastCacheTTL(time.Hour),
+				)
+
+				if err := tc.call(context.Background(), client); err != nil {
+					t.Fatalf("%s: unexpected error: %v", tc.name, err)
+				}
+
+				got := int(atomic.LoadInt64(&requests))
+				if v.fresh {
+					if got != tc.wantFresh {
+						t.Fatalf("%s with the current schema version: upstream requests = %d, want %d (entry served from disk)", tc.name, got, tc.wantFresh)
+					}
+					return
+				}
+				if got < tc.wantStale {
+					t.Fatalf("%s with a %s: upstream requests = %d, want at least %d (entry refetched)", tc.name, v.name, got, tc.wantStale)
+				}
+			})
 		}
 	}
 }
