@@ -1341,6 +1341,55 @@ func TestResolveMatch_TrueAmbiguityStillRejected(t *testing.T) {
 	}
 }
 
+// TestResolveMatch_BridgedDisplayVariants proves the display-name bridge in
+// parrilla.CanonicalChannel reaches the resolver. When the guide publishes one
+// signal under both of its known spellings, the tie is one channel, not two, so
+// the match resolves instead of declining as ambiguous.
+func TestResolveMatch_BridgedDisplayVariants(t *testing.T) {
+	tests := []struct {
+		name   string
+		guides []ChannelGuide
+	}{
+		{
+			name: "ESPN publishes the primary signal as ESPN and ESPN 1 HD",
+			guides: []ChannelGuide{
+				{Name: "ESPN", Slug: "espn", Programs: []string{"Feyenoord vs. Como"}},
+				{Name: "ESPN 1 HD", Slug: "espn_colombia", Programs: []string{"Feyenoord vs. Como"}},
+			},
+		},
+		{
+			name: "RCN publishes the signal as Canal RCN HD and RCN HD",
+			guides: []ChannelGuide{
+				{Name: "Canal RCN HD", Slug: "rcn_television", Programs: []string{"Feyenoord vs. Como"}},
+				{Name: "RCN HD", Slug: "rcn", Programs: []string{"Feyenoord vs. Como"}},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := NewService()
+			svc.SetGuides(tt.guides)
+
+			match := model.Match{
+				HomeTeam: model.Competitor{DisplayName: "Feyenoord Rotterdam"},
+				AwayTeam: model.Competitor{DisplayName: "Como"},
+			}
+
+			target, found := svc.ResolveMatch(match)
+			if !found {
+				t.Fatalf("two spellings of one signal must not look ambiguous, got not found")
+			}
+			if target.Name != tt.guides[0].Name {
+				t.Errorf("expected the first published spelling %q to be kept, got %q", tt.guides[0].Name, target.Name)
+			}
+			if target.Slug != tt.guides[0].Slug {
+				t.Errorf("expected the first slug %q to be kept, got %q", tt.guides[0].Slug, target.Slug)
+			}
+		})
+	}
+}
+
 // TestDefaultTargets_NoDuplicateIdentities enforces that the crawl target list
 // carries one entry per signal. Two slugs for the same channel made every
 // fixture on that channel look ambiguous, because the resolver compared raw
