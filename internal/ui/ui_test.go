@@ -2299,9 +2299,16 @@ func TestModalDateFormatting(t *testing.T) {
 	m.width = 100
 	m.height = 35
 
+	// The header decides "(Hoy)" against displayNow(), so the clock and the
+	// fixtures have to share one location. Building "today" with time.Local made
+	// this test flip to "(Mañana)" whenever CI ran between 00:00 and 05:00 UTC:
+	// the process date was already the next day while the display zone was not.
+	loc := time.FixedZone("UTC-5", -5*60*60)
+	now := time.Date(2026, 10, 21, 15, 0, 0, 0, loc)
+	m = m.WithClock(func() time.Time { return now }, loc)
+
 	// Future match (+3 days)
-	now := time.Now()
-	futureTime := time.Date(now.Year(), now.Month(), now.Day()+3, 14, 0, 0, 0, time.Local)
+	futureTime := time.Date(now.Year(), now.Month(), now.Day()+3, 14, 0, 0, 0, loc)
 	matchFuture := model.Match{
 		ID:        "match-future",
 		Title:     "FC Porto vs PSV Eindhoven",
@@ -2332,7 +2339,7 @@ func TestModalDateFormatting(t *testing.T) {
 	}
 
 	// Today's match
-	todayTime := time.Date(now.Year(), now.Month(), now.Day(), 14, 0, 0, 0, time.Local)
+	todayTime := time.Date(now.Year(), now.Month(), now.Day(), 14, 0, 0, 0, loc)
 	matchToday := model.Match{
 		ID:        "match-today",
 		Title:     "FC Porto vs PSV Eindhoven",
