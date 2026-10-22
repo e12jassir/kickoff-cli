@@ -411,13 +411,8 @@ func TestService_ResolveMatch(t *testing.T) {
 
 // TestResolveMatch_SourceTimezoneOverlap proves that guide times, which are
 // published in Colombian local time, are compared against the kickoff converted
-// to Colombia. The display timezone must not shift the comparison window.
+// to Colombia.
 func TestResolveMatch_SourceTimezoneOverlap(t *testing.T) {
-	madrid, err := time.LoadLocation("Europe/Madrid")
-	if err != nil {
-		t.Fatalf("failed to load Europe/Madrid: %v", err)
-	}
-
 	// 2026-10-18T00:00Z is 2026-10-17 19:00 in Colombia (02:00 in Madrid).
 	kickoff := time.Date(2026, time.October, 18, 0, 0, 0, 0, time.UTC)
 
@@ -433,10 +428,7 @@ func TestResolveMatch_SourceTimezoneOverlap(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			svc := NewService(
-				WithTimezone(madrid),
-				WithCacheDir(t.TempDir()),
-			)
+			svc := NewService(WithCacheDir(t.TempDir()))
 			svc.SetGuides([]ChannelGuide{{
 				Name:      "ESPN 2 HD",
 				Slug:      "espn_2_colombia",

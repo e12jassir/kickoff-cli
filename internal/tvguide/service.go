@@ -40,7 +40,6 @@ type Service struct {
 	cacheDir   string
 	cacheTTL   time.Duration
 	now        func() time.Time
-	loc        *time.Location // display zone; source schedules use Bogota
 	targets    []ChannelTarget
 	httpClient *http.Client
 	baseURL    string
@@ -99,15 +98,6 @@ func WithNow(nowFunc func() time.Time) Option {
 	}
 }
 
-// WithTimezone overrides the display timezone held by the service. Resolution
-// itself is anchored to locale.BogotaLocation, so this option does not change
-// which guide entry matches a fixture; the view layer owns display conversion.
-func WithTimezone(loc *time.Location) Option {
-	return func(s *Service) {
-		s.loc = loc
-	}
-}
-
 // WithAutoRefresh enables the startup disk cache load and the background crawl
 // when the cache is cold. Long-lived callers opt in; tests and short-lived tools
 // stay offline and deterministic.
@@ -138,15 +128,9 @@ func NewService(opts ...Option) *Service {
 	}
 	defaultCache := filepath.Join(cacheBase, "kickoff")
 
-	// Retain the display timezone on the service so callers can model the user's
-	// zone. Source schedules and cache days are anchored to Bogota instead, so
-	// the display choice never influences which guide or programme matches.
-	loc := locale.Location()
-
 	s := &Service{
 		cacheDir: defaultCache,
 		cacheTTL: DefaultCacheTTL,
-		loc:      loc,
 		now:      time.Now,
 		targets:  DefaultTargets,
 		baseURL:  DefaultBaseURL,
