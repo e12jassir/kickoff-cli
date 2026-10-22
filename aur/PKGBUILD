@@ -1,6 +1,6 @@
 # Maintainer: Esteban David Marrugo Jassir <e12jassir@gmail.com>
 pkgname=kickoff-bin
-pkgver=0.2.7
+pkgver=0.3.0
 pkgrel=1
 pkgdesc="An elegant, lightning-fast football TUI and live broadcast launcher for the terminal (binary release)"
 arch=('x86_64' 'aarch64')
@@ -14,8 +14,8 @@ provides=('kickoff' 'kickoff-cli' 'kickoff-cli-bin')
 conflicts=('kickoff' 'kickoff-cli' 'kickoff-cli-bin')
 source_x86_64=("$pkgname-$pkgver-x86_64.tar.gz::$url/releases/download/v$pkgver/kickoff_${pkgver}_linux_amd64.tar.gz")
 source_aarch64=("$pkgname-$pkgver-aarch64.tar.gz::$url/releases/download/v$pkgver/kickoff_${pkgver}_linux_arm64.tar.gz")
-sha256sums_x86_64=('27595fff989333ade779a95217d8edb676f184008c968d83bde3403f04719487')
-sha256sums_aarch64=('71b2c03d382db4274c8dfce092e91ef17b946abc9f2eef681ac1196c919bb376')
+sha256sums_x86_64=('eaad177de0afbebd0f44c740f00821b5e115347bd770ae4758991436a6067341')
+sha256sums_aarch64=('5351b010019e5152347f41382919434386c01899762a59aafcdd81f7c6133682')
 
 package() {
     install -Dm755 "$srcdir/kickoff" "$pkgdir/usr/bin/kickoff"
