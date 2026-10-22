@@ -2821,6 +2821,81 @@ func TestEnterMatch_DoesNotBlockOnCatalog(t *testing.T) {
 	}
 }
 
+// ctxAwareCatalog implements the context-aware channel resolver, recording the
+// deadline it receives so tests can prove the lookup is bounded.
+type ctxAwareCatalog struct {
+	channels     []model.Channel
+	hasDeadline  bool
+	deadlineLeft time.Duration
+	calledCtx    bool
+}
+
+func (c *ctxAwareCatalog) GetChannels(match model.Match) []model.Channel {
+	return c.channels
+}
+
+func (c *ctxAwareCatalog) GetChannelsCtx(ctx context.Context, match model.Match) []model.Channel {
+	c.calledCtx = true
+	if deadline, ok := ctx.Deadline(); ok {
+		c.hasDeadline = true
+		c.deadlineLeft = time.Until(deadline)
+	}
+	return c.channels
+}
+
+// TestResolveChannelsCmd_BoundsCatalogLookupWithDeadline proves the async channel
+// lookup hands a context-aware catalog a context with a deadline derived from the
+// catalog's parrilla fetch budget (catalog.go's parrillaFetchTimeout = 10s) plus
+// margin, so a hung source can no longer pin the command goroutine forever.
+func TestResolveChannelsCmd_BoundsCatalogLookupWithDeadline(t *testing.T) {
+	cat := &ctxAwareCatalog{channels: []model.Channel{{Name: "ESPN", URL: "http://example.com/espn.m3u8"}}}
+
+	msg := resolveChannelsCmd(cat, model.Match{ID: "m-bounded"}, 7)()
+
+	if !cat.calledCtx {
+		t.Fatalf("expected the channel lookup to use the context-aware entry point")
+	}
+	if !cat.hasDeadline {
+		t.Fatalf("expected the channel lookup to receive a bounded context, got none")
+	}
+	// The catalog bounds its own parrilla fetch at 10s, so the caller's budget
+	// must sit above that (margin for the rest of the resolution) and stay
+	// bounded by channelsResolveBudget.
+	if cat.deadlineLeft <= 10*time.Second || cat.deadlineLeft > channelsResolveBudget {
+		t.Fatalf("expected a lookup deadline above the catalog's 10s parrilla budget and at most %v, got %v", channelsResolveBudget, cat.deadlineLeft)
+	}
+
+	resolved, ok := msg.(channelsResolvedMsg)
+	if !ok {
+		t.Fatalf("expected a channelsResolvedMsg, got %T", msg)
+	}
+	if resolved.matchID != "m-bounded" || resolved.gen != 7 {
+		t.Fatalf("expected the message to carry matchID m-bounded and gen 7, got %+v", resolved)
+	}
+	if len(resolved.channels) != 1 || resolved.channels[0].Name != "ESPN" {
+		t.Fatalf("expected the resolved channels to be forwarded, got %+v", resolved.channels)
+	}
+}
+
+// TestResolveChannelsCmd_FallsBackForPlainResolver preserves the behavior of
+// resolvers that only expose GetChannels: the command must still resolve them.
+func TestResolveChannelsCmd_FallsBackForPlainResolver(t *testing.T) {
+	cat := &mockCatalog{channels: []model.Channel{{Name: "ESPN", URL: "http://example.com/espn.m3u8"}}}
+
+	msg := resolveChannelsCmd(cat, model.Match{ID: "m-plain"}, 3)()
+
+	resolved, ok := msg.(channelsResolvedMsg)
+	if !ok {
+		t.Fatalf("expected a channelsResolvedMsg, got %T", msg)
+	}
+	if resolved.matchID != "m-plain" || resolved.gen != 3 {
+		t.Fatalf("expected the message to carry matchID m-plain and gen 3, got %+v", resolved)
+	}
+	if len(resolved.channels) != 1 || resolved.channels[0].Name != "ESPN" {
+		t.Fatalf("expected the plain resolver's channels to be forwarded, got %+v", resolved.channels)
+	}
+}
+
 func TestLateChannelsMsg_Discarded(t *testing.T) {
 	m := NewModel(&mockClient{}, &mockCatalog{}, &mockPlayer{})
 	m.state = StateChannelSelect

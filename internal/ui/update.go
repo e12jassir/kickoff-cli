@@ -100,14 +100,41 @@ type channelsResolvedMsg struct {
 	channels []model.Channel
 }
 
+// channelsResolveBudget bounds the async channel lookup. catalog.go's
+// parrillaFetchTimeout (10s) is unexported and already bounds a single parrilla
+// fetch, so this constant mirrors it plus a 2s margin: the catalog's own deadline
+// normally fires first, and this outer budget only guarantees that a source which
+// ignores its context cannot pin the command goroutine indefinitely.
+const channelsResolveBudget = 12 * time.Second
+
+// channelsCtxResolver is implemented by resolvers that accept a context. It stays
+// separate from model.Resolver so every existing resolver (and test double) keeps
+// compiling and working through the plain GetChannels fallback.
+type channelsCtxResolver interface {
+	GetChannelsCtx(ctx context.Context, match model.Match) []model.Channel
+}
+
 func resolveChannelsCmd(catalog model.Resolver, match model.Match, gen uint64) tea.Cmd {
 	return func() tea.Msg {
+		channels := lookupChannels(catalog, match)
 		return channelsResolvedMsg{
 			matchID:  match.ID,
 			gen:      gen,
-			channels: catalog.GetChannels(match),
+			channels: channels,
 		}
 	}
+}
+
+// lookupChannels resolves channels off the event loop under a bounded context,
+// falling back to the context-less entry point for resolvers that lack one.
+func lookupChannels(catalog model.Resolver, match model.Match) []model.Channel {
+	ctxAware, ok := catalog.(channelsCtxResolver)
+	if !ok {
+		return catalog.GetChannels(match)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), channelsResolveBudget)
+	defer cancel()
+	return ctxAware.GetChannelsCtx(ctx, match)
 }
 
 type webStreamsResolver interface {
