@@ -1843,3 +1843,77 @@ func TestCatalog_WebCacheDiskPersistence(t *testing.T) {
 		t.Errorf("expected expired cache to be ignored, got %+v", expiredPeek)
 	}
 }
+
+// TestBuildChannelsForTarget_BySlug verifies that buildChannelsForTarget resolves
+// the stream endpoint based on target.Slug, decoupling resolution from the display Name.
+// It also verifies fallback to parrilla.CanonicalChannel and explicit name when Slug is empty.
+func TestBuildChannelsForTarget_BySlug(t *testing.T) {
+	cat := newTestCatalog()
+
+	tests := []struct {
+		name       string
+		target     tvguide.ChannelTarget
+		wantSubstr string
+	}{
+		{
+			name: "slug matches espn_colombia regardless of localized display name",
+			target: tvguide.ChannelTarget{
+				Name: "ESPN 1 (English Broadcast)",
+				Slug: "espn_colombia",
+			},
+			wantSubstr: "espn",
+		},
+		{
+			name: "slug matches win_sports_plus regardless of display name",
+			target: tvguide.ChannelTarget{
+				Name: "Win+ Football HD",
+				Slug: "win_sports_plus",
+			},
+			wantSubstr: "win",
+		},
+		{
+			name: "slug matches caracol_television regardless of display name",
+			target: tvguide.ChannelTarget{
+				Name: "Caracol International",
+				Slug: "caracol_television",
+			},
+			wantSubstr: "caracol",
+		},
+		{
+			name: "empty slug falls back to canonical channel display name",
+			target: tvguide.ChannelTarget{
+				Name: "ESPN 1 HD",
+				Slug: "",
+			},
+			wantSubstr: "espn",
+		},
+		{
+			name: "custom stream url takes precedence",
+			target: tvguide.ChannelTarget{
+				Name:      "Custom Channel",
+				Slug:      "custom_slug",
+				StreamURL: "https://example.com/custom.m3u8",
+			},
+			wantSubstr: "custom.m3u8",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			channels := cat.buildChannelsForTarget(tt.target)
+			if len(channels) == 0 {
+				t.Fatalf("expected channels for target %+v, got none", tt.target)
+			}
+			found := false
+			for _, ch := range channels {
+				if strings.Contains(strings.ToLower(ch.URL), tt.wantSubstr) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("buildChannelsForTarget(%+v) urls = %+v, want substring %q", tt.target, channels, tt.wantSubstr)
+			}
+		})
+	}
+}

@@ -761,32 +761,72 @@ func (c *Catalog) m3uSnapshot() []M3UChannel {
 	return c.m3uChannels
 }
 
+func targetSlugToEndpointKey(slug string) string {
+	switch strings.ToLower(strings.TrimSpace(slug)) {
+	case "espn_colombia", "espn1":
+		return "espn1"
+	case "espn_2_colombia", "espn2":
+		return "espn2"
+	case "espn_3_colombia", "espn3":
+		return "espn3"
+	case "espn_4_colombia", "espn4":
+		return "espn4"
+	case "espn_5_colombia", "espn5":
+		return "espn5"
+	case "espn_6_colombia", "espn6":
+		return "espn6"
+	case "espn_7_colombia", "espn7":
+		return "espn7"
+	case "win_sports", "win":
+		return "win"
+	case "win_sports_plus", "win_plus":
+		return "win_plus"
+	case "caracol_television", "caracol_colombia", "caracol":
+		return "caracol"
+	case "rcn_television", "rcn_colombia", "rcn":
+		return "rcn"
+	default:
+		return ""
+	}
+}
+
 func (c *Catalog) buildChannelsForTarget(target tvguide.ChannelTarget) []model.Channel {
 	streamURL := target.StreamURL
 	if streamURL == "" {
-		switch target.Name {
-		case "ESPN 1 HD":
-			streamURL, _ = c.StreamEndpoint("espn1")
-		case "ESPN 2 HD":
-			streamURL, _ = c.StreamEndpoint("espn2")
-		case "ESPN 3 HD":
-			streamURL, _ = c.StreamEndpoint("espn3")
-		case "ESPN 4 HD":
-			streamURL, _ = c.StreamEndpoint("espn4")
-		case "ESPN 5 HD":
-			streamURL, _ = c.StreamEndpoint("espn5")
-		case "ESPN 6 HD":
-			streamURL, _ = c.StreamEndpoint("espn6")
-		case "ESPN 7 HD":
-			streamURL, _ = c.StreamEndpoint("espn7")
-		case "Win Sports HD":
-			streamURL, _ = c.StreamEndpoint("win")
-		case "Win+ Fútbol":
-			streamURL, _ = c.StreamEndpoint("win_plus")
-		case "Caracol TV HD":
-			streamURL, _ = c.StreamEndpoint("caracol")
-		case "Canal RCN HD":
-			streamURL, _ = c.StreamEndpoint("rcn")
+		endpointKey := targetSlugToEndpointKey(target.Slug)
+		if endpointKey == "" {
+			if key, _, ok := parrilla.CanonicalChannel(target.Name); ok {
+				endpointKey = key
+			}
+		}
+		if endpointKey == "" {
+			switch target.Name {
+			case "ESPN 1 HD":
+				endpointKey = "espn1"
+			case "ESPN 2 HD":
+				endpointKey = "espn2"
+			case "ESPN 3 HD":
+				endpointKey = "espn3"
+			case "ESPN 4 HD":
+				endpointKey = "espn4"
+			case "ESPN 5 HD":
+				endpointKey = "espn5"
+			case "ESPN 6 HD":
+				endpointKey = "espn6"
+			case "ESPN 7 HD":
+				endpointKey = "espn7"
+			case "Win Sports HD":
+				endpointKey = "win"
+			case "Win+ Fútbol":
+				endpointKey = "win_plus"
+			case "Caracol TV HD":
+				endpointKey = "caracol"
+			case "Canal RCN HD":
+				endpointKey = "rcn"
+			}
+		}
+		if endpointKey != "" {
+			streamURL, _ = c.StreamEndpoint(endpointKey)
 		}
 	}
 
