@@ -3202,3 +3202,102 @@ func TestRenderTabGoleadores_PlayerFallback(t *testing.T) {
 		t.Errorf("expected scorer row to render the presentation fallback, got:\n%s", got)
 	}
 }
+
+// TestModel_CategoriesKeyedByCategoryID proves the accordion menu stores
+// category identity, not the localized label: categories and both maps are keyed
+// by CategoryID, and the keyboard path expands by that same ID.
+func TestModel_CategoriesKeyedByCategoryID(t *testing.T) {
+	m := NewModel(&mockClient{}, &mockCatalog{}, &mockPlayer{})
+
+	wantIDs := []string{"international", "national_teams", "european", "domestic_cups", "south_american", "americas"}
+	if len(m.categories) != len(wantIDs) {
+		t.Fatalf("categories = %v, want %d IDs", m.categories, len(wantIDs))
+	}
+	for i, want := range wantIDs {
+		if m.categories[i] != want {
+			t.Errorf("categories[%d] = %q, want %q", i, m.categories[i], want)
+		}
+		if m.categoryNames[want] == "" {
+			t.Errorf("missing display name for category %q", want)
+		}
+		if len(m.categoryIndices[want]) == 0 {
+			t.Errorf("missing league indices for category %q", want)
+		}
+	}
+
+	if got, want := m.categoryNames["international"], "Torneos Internacionales"; got != want {
+		t.Errorf("categoryNames[international] = %q, want %q", got, want)
+	}
+	if got := len(m.categoryIndices["international"]); got != 5 {
+		t.Errorf("international holds %d leagues, want 5", got)
+	}
+	if got := m.categoryIndices["european"]; len(got) != 5 || got[0] != 6 {
+		t.Errorf("european indices = %v, want first index 6 and 5 leagues", got)
+	}
+
+	// Enter expands the selected category, keyed by CategoryID.
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if !m.expandedCats["international"] {
+		t.Fatalf("expected expandedCats to be keyed by CategoryID, got %v", m.expandedCats)
+	}
+	if m.expandedCats["Torneos Internacionales"] {
+		t.Errorf("expandedCats must not be keyed by the display label, got %v", m.expandedCats)
+	}
+}
+
+// TestModel_CategoryLabelIsPresentation proves a translated label only changes
+// what the view prints, never grouping, cursor state, or category identity.
+func TestModel_CategoryLabelIsPresentation(t *testing.T) {
+	leagues := []model.League{
+		{Key: "champions", Name: "UEFA Champions League", Code: "uefa.champions", Category: "International Tournaments", CategoryID: "international"},
+		{Key: "premier", Name: "Premier League", Code: "eng.1", Category: "European Leagues", CategoryID: "european"},
+	}
+
+	m := NewModel(&mockClient{}, &mockCatalog{}, &mockPlayer{}, leagues...)
+
+	wantIDs := []string{"international", "european"}
+	if len(m.categories) != len(wantIDs) {
+		t.Fatalf("categories = %v, want %v", m.categories, wantIDs)
+	}
+	for i, want := range wantIDs {
+		if m.categories[i] != want {
+			t.Errorf("categories[%d] = %q, want %q", i, m.categories[i], want)
+		}
+	}
+	if got, want := m.categoryNames["international"], "International Tournaments"; got != want {
+		t.Errorf("categoryNames[international] = %q, want %q", got, want)
+	}
+	if got := m.categoryIndices["international"]; len(got) != 1 || got[0] != 0 {
+		t.Errorf("international indices = %v, want [0]", got)
+	}
+
+	m.expandedCats["international"] = true
+	view := m.View()
+	if !strings.Contains(view, "INTERNATIONAL TOURNAMENTS") {
+		t.Errorf("expected view to render the localized label, got:\n%s", view)
+	}
+	if strings.Contains(view, "TORNEOS INTERNACIONALES") {
+		t.Errorf("view must not render the default Spanish label for a translated league set:\n%s", view)
+	}
+}
+
+// TestModel_LeagueWithoutCategoryIDGroupsUnderOther keeps the previous behavior
+// for leagues that carry no category at all: one shared fallback group.
+func TestModel_LeagueWithoutCategoryIDGroupsUnderOther(t *testing.T) {
+	leagues := []model.League{
+		{Key: "custom", Name: "Custom Cup", Code: "custom.1"},
+	}
+
+	m := NewModel(&mockClient{}, &mockCatalog{}, &mockPlayer{}, leagues...)
+
+	if len(m.categories) != 1 || m.categories[0] != "other" {
+		t.Fatalf("categories = %v, want [other]", m.categories)
+	}
+	if got, want := m.categoryNames["other"], "Otras Competiciones"; got != want {
+		t.Errorf("categoryNames[other] = %q, want %q", got, want)
+	}
+	if got := m.categoryIndices["other"]; len(got) != 1 || got[0] != 0 {
+		t.Errorf("other indices = %v, want [0]", got)
+	}
+}

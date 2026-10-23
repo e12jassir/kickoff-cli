@@ -745,8 +745,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			case "esc":
-				if len(m.categories) > 0 {
-					currCat := m.categories[m.categoryCursor]
+				if currCat, ok := m.currentCategoryID(); ok {
 					if !m.categoryMode {
 						m.categoryMode = true
 						return m, nil
@@ -756,8 +755,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			case "left", "h":
-				if len(m.categories) > 0 {
-					currCat := m.categories[m.categoryCursor]
+				if currCat, ok := m.currentCategoryID(); ok {
 					if !m.categoryMode {
 						m.categoryMode = true
 					} else if m.expandedCats[currCat] {
@@ -765,8 +763,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			case "right", "l":
-				if len(m.categories) > 0 {
-					currCat := m.categories[m.categoryCursor]
+				if currCat, ok := m.currentCategoryID(); ok {
 					if !m.expandedCats[currCat] {
 						m.expandedCats[currCat] = true
 					}
@@ -776,8 +773,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			case "up", "k":
-				if len(m.categories) > 0 {
-					currCat := m.categories[m.categoryCursor]
+				if currCat, ok := m.currentCategoryID(); ok {
 					indices := m.categoryIndices[currCat]
 					if !m.categoryMode && m.expandedCats[currCat] && len(indices) > 0 {
 						// Inside expanded category: check current league position
@@ -798,15 +794,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						// Moving between categories
 						m.categoryMode = true
 						m.categoryCursor = (m.categoryCursor - 1 + len(m.categories)) % len(m.categories)
-						prevCat := m.categories[m.categoryCursor]
-						if m.expandedCats[prevCat] && len(m.categoryIndices[prevCat]) > 0 {
-							m.leagueCursor = m.categoryIndices[prevCat][0]
+						if prevCat, ok := m.currentCategoryID(); ok {
+							if m.expandedCats[prevCat] && len(m.categoryIndices[prevCat]) > 0 {
+								m.leagueCursor = m.categoryIndices[prevCat][0]
+							}
 						}
 					}
 				}
 			case "down", "j":
-				if len(m.categories) > 0 {
-					currCat := m.categories[m.categoryCursor]
+				if currCat, ok := m.currentCategoryID(); ok {
 					indices := m.categoryIndices[currCat]
 					if m.categoryMode {
 						if m.expandedCats[currCat] && len(indices) > 0 {
@@ -816,9 +812,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						} else {
 							// Move to next category
 							m.categoryCursor = (m.categoryCursor + 1) % len(m.categories)
-							nextCat := m.categories[m.categoryCursor]
-							if m.expandedCats[nextCat] && len(m.categoryIndices[nextCat]) > 0 {
-								m.leagueCursor = m.categoryIndices[nextCat][0]
+							if nextCat, ok := m.currentCategoryID(); ok {
+								if m.expandedCats[nextCat] && len(m.categoryIndices[nextCat]) > 0 {
+									m.leagueCursor = m.categoryIndices[nextCat][0]
+								}
 							}
 						}
 					} else {
@@ -836,16 +833,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							// At last league in category, move to next category header
 							m.categoryMode = true
 							m.categoryCursor = (m.categoryCursor + 1) % len(m.categories)
-							nextCat := m.categories[m.categoryCursor]
-							if m.expandedCats[nextCat] && len(m.categoryIndices[nextCat]) > 0 {
-								m.leagueCursor = m.categoryIndices[nextCat][0]
+							if nextCat, ok := m.currentCategoryID(); ok {
+								if m.expandedCats[nextCat] && len(m.categoryIndices[nextCat]) > 0 {
+									m.leagueCursor = m.categoryIndices[nextCat][0]
+								}
 							}
 						}
 					}
 				}
 			case "space":
-				if len(m.categories) > 0 {
-					currCat := m.categories[m.categoryCursor]
+				if currCat, ok := m.currentCategoryID(); ok {
 					m.expandedCats[currCat] = !m.expandedCats[currCat]
 					if m.expandedCats[currCat] {
 						m.categoryMode = false
@@ -857,8 +854,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			case "enter":
-				if len(m.categories) > 0 {
-					currCat := m.categories[m.categoryCursor]
+				if currCat, ok := m.currentCategoryID(); ok {
 					indices := m.categoryIndices[currCat]
 					if m.categoryMode {
 						if !m.expandedCats[currCat] {

@@ -65,12 +65,15 @@ type Model struct {
 	activeTab    int
 	leagueTab    LeagueTab // 0: Resumen, 1: Partidos, 2: Posiciones, 3: Goleadores
 
-	// Accordion menu state
-	categories      []string
+	// Accordion menu state. Every map and list is keyed by model.League.CategoryID,
+	// the language-invariant category identity; categoryNames holds the localized
+	// label that is only ever rendered.
+	categories      []string // CategoryIDs in menu order
 	categoryCursor  int
-	categoryMode    bool             // true: cursor moves between categories; false: cursor moves between leagues of expanded category
-	categoryIndices map[string][]int // category name -> indices into m.leagues
-	expandedCats    map[string]bool  // category name -> whether it is expanded
+	categoryMode    bool              // true: cursor moves between categories; false: cursor moves between leagues of expanded category
+	categoryNames   map[string]string // category ID -> localized display name
+	categoryIndices map[string][]int  // category ID -> indices into m.leagues
+	expandedCats    map[string]bool   // category ID -> whether it is expanded
 
 	matches         []model.Match
 	pastMatches     []model.Match
@@ -137,6 +140,44 @@ type Model struct {
 	notifier    bar.Notifier
 }
 
+// unknownCategoryID groups leagues that carry no CategoryID. It is a stable
+// identity, so such leagues stay in one group regardless of display language.
+const unknownCategoryID = "other"
+
+// unknownCategoryName is the fallback label rendered for unknownCategoryID.
+const unknownCategoryName = "Otras Competiciones"
+
+// buildCategories derives the accordion menu structure from the league list.
+// CategoryID is the group identity and Category only its label, so translating a
+// label never changes grouping, ordering, or cursor state.
+func buildCategories(leagues []model.League) (ids []string, names map[string]string, indices map[string][]int) {
+	names = make(map[string]string)
+	indices = make(map[string][]int)
+	seen := make(map[string]bool)
+
+	for i, league := range leagues {
+		catID := league.CategoryID
+		if catID == "" {
+			catID = unknownCategoryID
+		}
+		if !seen[catID] {
+			seen[catID] = true
+			ids = append(ids, catID)
+			label := league.Category
+			if label == "" {
+				label = catID
+				if catID == unknownCategoryID {
+					label = unknownCategoryName
+				}
+			}
+			names[catID] = label
+		}
+		indices[catID] = append(indices[catID], i)
+	}
+
+	return ids, names, indices
+}
+
 // NewModel constructs a new UI model with defaults and dependencies.
 func NewModel(client model.Client, catalog model.Resolver, player model.Controller, leagues ...model.League) Model {
 	if len(leagues) == 0 {
@@ -147,20 +188,7 @@ func NewModel(client model.Client, catalog model.Resolver, player model.Controll
 	sp.Spinner = spinner.Dot
 	sp.Style = AppTitleStyle
 
-	var categories []string
-	categoryIndices := make(map[string][]int)
-	seenCat := make(map[string]bool)
-	for i, l := range leagues {
-		cat := l.Category
-		if cat == "" {
-			cat = "Otras Competiciones"
-		}
-		if !seenCat[cat] {
-			seenCat[cat] = true
-			categories = append(categories, cat)
-		}
-		categoryIndices[cat] = append(categoryIndices[cat], i)
-	}
+	categories, categoryNames, categoryIndices := buildCategories(leagues)
 
 	expandedCats := make(map[string]bool)
 	// All categories start collapsed by default for a clean minimal layout
@@ -175,6 +203,7 @@ func NewModel(client model.Client, catalog model.Resolver, player model.Controll
 		categories:      categories,
 		categoryCursor:  0,
 		categoryMode:    true,
+		categoryNames:   categoryNames,
 		categoryIndices: categoryIndices,
 		expandedCats:    expandedCats,
 		activeTab:       0,
@@ -203,6 +232,23 @@ func NewModel(client model.Client, catalog model.Resolver, player model.Controll
 		goalTracker:     bar.NewScoreTracker(),
 		notifier:        bar.NewNotifier(),
 	}
+}
+
+// currentCategoryID returns the CategoryID under the category cursor.
+func (m Model) currentCategoryID() (string, bool) {
+	if m.categoryCursor < 0 || m.categoryCursor >= len(m.categories) {
+		return "", false
+	}
+	return m.categories[m.categoryCursor], true
+}
+
+// categoryName returns the localized label for a category ID. It falls back to
+// the ID itself so an unknown category still renders something meaningful.
+func (m Model) categoryName(catID string) string {
+	if name := m.categoryNames[catID]; name != "" {
+		return name
+	}
+	return catID
 }
 
 // WithClock overrides the wall clock and display timezone used by the view.
@@ -252,7 +298,7 @@ func (m Model) WithInitialState(st UIState) Model {
 // CurrentLeague returns the currently selected league.
 func (m Model) CurrentLeague() model.League {
 	if len(m.leagues) == 0 {
-		return model.League{Key: "champions", Name: "UEFA Champions League", Code: "uefa.champions", Category: "Torneos Internacionales"}
+		return model.League{Key: "champions", Name: "UEFA Champions League", Code: "uefa.champions", Category: "Torneos Internacionales", CategoryID: "international"}
 	}
 	if m.activeTab < 0 || m.activeTab >= len(m.leagues) {
 		return m.leagues[0]

@@ -60,9 +60,9 @@ func renderMainMenu(m Model) string {
 
 	var lines []string
 
-	for catIdx, cat := range m.categories {
-		indices := m.categoryIndices[cat]
-		isExpanded := m.expandedCats[cat]
+	for catIdx, catID := range m.categories {
+		indices := m.categoryIndices[catID]
+		isExpanded := m.expandedCats[catID]
 		isCatSelected := m.categoryMode && (catIdx == m.categoryCursor)
 
 		// Minimal aesthetic indicator for accordion category
@@ -83,7 +83,7 @@ func renderMainMenu(m Model) string {
 			catPrefix = "› "
 		}
 
-		catText := fmt.Sprintf("%s%s %s (%d)", catPrefix, dot, strings.ToUpper(cat), len(indices))
+		catText := fmt.Sprintf("%s%s %s (%d)", catPrefix, dot, strings.ToUpper(m.categoryName(catID)), len(indices))
 		if isCatSelected {
 			lines = append(lines, lipgloss.NewStyle().Foreground(ColorHighlight).Bold(true).Render(catText))
 		} else {
