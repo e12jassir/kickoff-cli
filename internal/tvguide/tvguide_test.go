@@ -1033,6 +1033,90 @@ func TestMatchScore_CanonicalClubIdentity(t *testing.T) {
 	}
 }
 
+// TestMatchScore_BilingualInvarianceAndUEFAExonyms asserts that CONMEBOL national
+// teams (es/en) and UEFA exonyms resolve symmetrically against guide listings.
+func TestMatchScore_BilingualInvarianceAndUEFAExonyms(t *testing.T) {
+	tests := []struct {
+		name        string
+		guideTitle  string
+		match       model.Match
+		shouldMatch bool
+	}{
+		{
+			name:       "Brazil (EN) vs Colombia resolves against Brasil vs Colombia guide",
+			guideTitle: "Brasil vs. Colombia",
+			match: model.Match{
+				HomeTeam: model.Competitor{DisplayName: "Brazil"},
+				AwayTeam: model.Competitor{DisplayName: "Colombia"},
+			},
+			shouldMatch: true,
+		},
+		{
+			name:       "Brasil (ES) vs Argentina resolves against Brazil vs Argentina",
+			guideTitle: "Brazil vs Argentina",
+			match: model.Match{
+				HomeTeam: model.Competitor{DisplayName: "Brasil"},
+				AwayTeam: model.Competitor{DisplayName: "Argentina"},
+			},
+			shouldMatch: true,
+		},
+		{
+			name:       "Selección Colombia resolves against Colombia",
+			guideTitle: "Selección Colombia vs. Perú",
+			match: model.Match{
+				HomeTeam: model.Competitor{DisplayName: "Colombia"},
+				AwayTeam: model.Competitor{DisplayName: "Peru"},
+			},
+			shouldMatch: true,
+		},
+		{
+			name:       "Estrella Roja (ES) matches Red Star Belgrade",
+			guideTitle: "Estrella Roja vs. Milan",
+			match: model.Match{
+				HomeTeam: model.Competitor{DisplayName: "Red Star Belgrade"},
+				AwayTeam: model.Competitor{DisplayName: "AC Milan"},
+			},
+			shouldMatch: true,
+		},
+		{
+			name:       "Copenhague (ES) matches Copenhagen",
+			guideTitle: "Copenhague vs. Chelsea",
+			match: model.Match{
+				HomeTeam: model.Competitor{DisplayName: "FC Copenhagen"},
+				AwayTeam: model.Competitor{DisplayName: "Chelsea"},
+			},
+			shouldMatch: true,
+		},
+		{
+			name:       "Malmoe (ES) matches Malmö",
+			guideTitle: "Malmoe vs. Rangers",
+			match: model.Match{
+				HomeTeam: model.Competitor{DisplayName: "Malmö"},
+				AwayTeam: model.Competitor{DisplayName: "Rangers"},
+			},
+			shouldMatch: true,
+		},
+		{
+			name:       "Ferencvarosi (ES/HU) matches Ferencvaros",
+			guideTitle: "Ferencvarosi TC vs. Olympiacos",
+			match: model.Match{
+				HomeTeam: model.Competitor{DisplayName: "Ferencváros"},
+				AwayTeam: model.Competitor{DisplayName: "Olympiacos"},
+			},
+			shouldMatch: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			matched, score := MatchScore(tt.guideTitle, tt.match)
+			if matched != tt.shouldMatch {
+				t.Fatalf("MatchScore(%q) matched=%v (score %d), want matched=%v", tt.guideTitle, matched, score, tt.shouldMatch)
+			}
+		})
+	}
+}
+
 // TestMatchScore_SpanishExonymsAndNameBridges pins the fix for the five live
 // misses of the 2026-10-17 Gol Caracol parrilla vs ESPN es run. All five were
 // NAME-BRIDGING GAPS (the parrilla lists the fixture under a different
