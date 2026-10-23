@@ -160,7 +160,8 @@ func ParseM3UFile(path string) ([]M3UChannel, error) {
 	if err != nil {
 		return nil, fmt.Errorf("could not open M3U file %s: %w", path, err)
 	}
-	defer f.Close()
+	// Read-only file handle: a Close error cannot lose the lines ParseM3U reads.
+	defer func() { _ = f.Close() }()
 
 	return ParseM3U(f)
 }

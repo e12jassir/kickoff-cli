@@ -45,7 +45,7 @@ func TestClient_FetchMatches(t *testing.T) {
 				w.Header().Set("Content-Type", "application/json")
 				// Match 1 is today (2026-10-13 19:00Z -> 14:00 COT)
 				// Match 2 is tomorrow (2026-10-14 19:00Z -> 14:00 COT)
-				fmt.Fprint(w, `{
+				_, _ = fmt.Fprint(w, `{
 					"events": [
 						{
 							"id": "1001",
@@ -135,7 +135,7 @@ func TestClient_FetchMatches(t *testing.T) {
 			handler: func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				// 3 events: 1 incomplete date, 1 empty competitions, 1 valid today
-				fmt.Fprint(w, `{
+				_, _ = fmt.Fprint(w, `{
 					"events": [
 						{"id": "bad1", "date": ""},
 						{"id": "bad2", "date": "2026-10-13T18:00Z", "competitions": []},
@@ -170,7 +170,7 @@ func TestClient_FetchMatches(t *testing.T) {
 			name: "Empty fixtures array",
 			handler: func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
-				fmt.Fprint(w, `{"events": []}`)
+				_, _ = fmt.Fprint(w, `{"events": []}`)
 			},
 			leagueKey:     "seriea",
 			expectMatches: 0,
@@ -180,7 +180,7 @@ func TestClient_FetchMatches(t *testing.T) {
 			name: "Corrupted JSON payload returns ErrCorruptedPayload",
 			handler: func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
-				fmt.Fprint(w, `{"events": [ { broken json ...`)
+				_, _ = fmt.Fprint(w, `{"events": [ { broken json ...`)
 			},
 			leagueKey:     "bundesliga",
 			expectMatches: 0,
@@ -211,7 +211,7 @@ func TestClient_FetchMatches(t *testing.T) {
 			if err != nil {
 				t.Fatalf("failed to create temp dir: %v", err)
 			}
-			defer os.RemoveAll(tempDir)
+			defer func() { _ = os.RemoveAll(tempDir) }()
 
 			if tt.preCache != nil {
 				tt.preCache(tempDir)
@@ -282,7 +282,7 @@ func TestClient_FetchMatches_OfflineFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	client := NewClient(
 		WithBaseURL(server.URL),
@@ -361,7 +361,7 @@ func TestClient_FetchMatchDetails_OfflineFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	client := NewClient(
 		WithBaseURL(server.URL),
@@ -419,7 +419,7 @@ func TestClient_FetchMatches_WithEvents(t *testing.T) {
 
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{
+		_, _ = fmt.Fprint(w, `{
 			"events": [
 				{
 					"id": "1001",
@@ -506,7 +506,7 @@ func TestClient_FetchMatches_WithEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	client := NewClient(
 		WithBaseURL(server.URL),
@@ -555,7 +555,7 @@ func TestClient_FetchMatchStats(t *testing.T) {
 
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{
+		_, _ = fmt.Fprint(w, `{
 			"boxscore": {
 				"teams": [
 					{
@@ -592,7 +592,7 @@ func TestClient_FetchMatchStats(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	client := NewClient(
 		WithBaseURL(server.URL),
@@ -654,7 +654,7 @@ func TestClient_FetchMatchDetails(t *testing.T) {
 
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{
+		_, _ = fmt.Fprint(w, `{
 			"boxscore": {
 				"teams": [
 					{
@@ -741,7 +741,7 @@ func TestClient_FetchMatchDetails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	client := NewClient(
 		WithBaseURL(server.URL),
@@ -833,7 +833,7 @@ func TestClient_FetchMatchDetails(t *testing.T) {
 	// Defensive check: no rosters returns nil lineups without error
 	noRosterHandler := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"boxscore": {"teams": []}}`)
+		_, _ = fmt.Fprint(w, `{"boxscore": {"teams": []}}`)
 	}
 	noRosterServer := httptest.NewServer(http.HandlerFunc(noRosterHandler))
 	defer noRosterServer.Close()
@@ -892,7 +892,7 @@ func TestClient_FetchStandings_Parsing(t *testing.T) {
 
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{
+		_, _ = fmt.Fprint(w, `{
 			"name": "LaLiga EA Sports",
 			"children": [
 				{
@@ -998,7 +998,7 @@ func TestClient_FetchStatistics_Parsing(t *testing.T) {
 func TestClient_FetchStatistics_MissingAthleteName(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{
+		_, _ = fmt.Fprint(w, `{
 			"stats": [
 				{
 					"name": "goals",
@@ -1204,7 +1204,7 @@ func TestClient_DoWithRetry_5xx_Success(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.RawQuery, "dates=") {
 			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprint(w, `{"events": []}`)
+			_, _ = fmt.Fprint(w, `{"events": []}`)
 			return
 		}
 		att := mainAttempts.Add(1)
@@ -1217,7 +1217,7 @@ func TestClient_DoWithRetry_5xx_Success(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"events": []}`)
+		_, _ = fmt.Fprint(w, `{"events": []}`)
 	}))
 	defer server.Close()
 
@@ -1244,7 +1244,7 @@ func TestClient_DoWithRetry_429_Success(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.RawQuery, "dates=") {
 			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprint(w, `{"events": []}`)
+			_, _ = fmt.Fprint(w, `{"events": []}`)
 			return
 		}
 		att := mainAttempts.Add(1)
@@ -1254,7 +1254,7 @@ func TestClient_DoWithRetry_429_Success(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"events": []}`)
+		_, _ = fmt.Fprint(w, `{"events": []}`)
 	}))
 	defer server.Close()
 
@@ -1286,7 +1286,7 @@ func TestClient_DoWithRetry_Direct(t *testing.T) {
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, "OK")
+		_, _ = fmt.Fprint(w, "OK")
 	}))
 	defer server.Close()
 
@@ -1303,7 +1303,7 @@ func TestClient_DoWithRetry_Direct(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected nil err, got: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected 200 OK, got %d", resp.StatusCode)
@@ -1350,11 +1350,11 @@ func TestClient_DecoupledPastDaysCache(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		if strings.Contains(r.URL.RawQuery, "dates=") {
 			pastRequests.Add(1)
-			fmt.Fprint(w, `{"events": []}`)
+			_, _ = fmt.Fprint(w, `{"events": []}`)
 			return
 		}
 		mainRequests.Add(1)
-		fmt.Fprint(w, `{
+		_, _ = fmt.Fprint(w, `{
 			"events": [
 				{
 					"id": "today1",
@@ -1452,14 +1452,14 @@ func TestClient_ProbeFunctions_UseDoWithRetry(t *testing.T) {
 				w.WriteHeader(http.StatusInternalServerError)
 				return
 			}
-			fmt.Fprint(w, `{"events": [{"id": "past10", "date": "2026-10-15T15:00Z", "competitions": []}]}`)
+			_, _ = fmt.Fprint(w, `{"events": [{"id": "past10", "date": "2026-10-15T15:00Z", "competitions": []}]}`)
 			return
 		}
 		if upcomingAttempts.Add(1) == 1 {
 			w.WriteHeader(http.StatusTooManyRequests)
 			return
 		}
-		fmt.Fprint(w, `{"events": []}`)
+		_, _ = fmt.Fprint(w, `{"events": []}`)
 	}))
 	defer server.Close()
 
@@ -1489,18 +1489,18 @@ func TestClient_FetchRecentPastScoreboardEvents_14DaysWindow(t *testing.T) {
 		// offset 6 = 2026-10-13 (Tue Champions match)
 		// offset 12 = 2026-10-07 (Old matchday - should be excluded because 12 > 5 + 3)
 		if strings.Contains(q, "dates=20261014") {
-			fmt.Fprint(w, `{"events": [{"id": "ev-wed", "date": "2026-10-14T19:00Z", "competitions": []}]}`)
+			_, _ = fmt.Fprint(w, `{"events": [{"id": "ev-wed", "date": "2026-10-14T19:00Z", "competitions": []}]}`)
 			return
 		}
 		if strings.Contains(q, "dates=20261013") {
-			fmt.Fprint(w, `{"events": [{"id": "ev-tue", "date": "2026-10-13T19:00Z", "competitions": []}]}`)
+			_, _ = fmt.Fprint(w, `{"events": [{"id": "ev-tue", "date": "2026-10-13T19:00Z", "competitions": []}]}`)
 			return
 		}
 		if strings.Contains(q, "dates=20261007") {
-			fmt.Fprint(w, `{"events": [{"id": "ev-old", "date": "2026-10-07T19:00Z", "competitions": []}]}`)
+			_, _ = fmt.Fprint(w, `{"events": [{"id": "ev-old", "date": "2026-10-07T19:00Z", "competitions": []}]}`)
 			return
 		}
-		fmt.Fprint(w, `{"events": []}`)
+		_, _ = fmt.Fprint(w, `{"events": []}`)
 	}))
 	defer server.Close()
 
@@ -1554,7 +1554,7 @@ func (s *probeConcurrencySampler) handler(w http.ResponseWriter, r *http.Request
 	time.Sleep(s.delay)
 
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprint(w, `{"events": []}`)
+	_, _ = fmt.Fprint(w, `{"events": []}`)
 }
 
 func (s *probeConcurrencySampler) reset() {
@@ -1822,7 +1822,7 @@ func TestClient_UpcomingProbe_SkipsCurrentDay(t *testing.T) {
 		if dates == "" {
 			// Only a finished match from a previous day: this forces FetchMatches
 			// to look for the next matchday through the upcoming sweep.
-			fmt.Fprintf(w, `{
+			_, _ = fmt.Fprintf(w, `{
 				"events": [
 					{
 						"id": "past1",
@@ -1843,7 +1843,7 @@ func TestClient_UpcomingProbe_SkipsCurrentDay(t *testing.T) {
 			return
 		}
 
-		fmt.Fprint(w, `{"events": []}`)
+		_, _ = fmt.Fprint(w, `{"events": []}`)
 	}))
 	defer server.Close()
 
@@ -2036,7 +2036,7 @@ func TestClient_FetchMatches_StatusCode(t *testing.T) {
 	t.Run("halftime with Spanish feed text", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprint(w, `{
+			_, _ = fmt.Fprint(w, `{
 				"events": [
 					{
 						"id": "2001",
@@ -2199,7 +2199,7 @@ func TestClient_CacheSchemaVersion(t *testing.T) {
 
 	// A scheduled match on the fixed "today" keeps the scoreboard path from
 	// firing the upcoming/past probe fan-out, so request counts stay exact.
-	scheduledScoreboard := fmt.Sprintf(`{
+	scheduledScoreboard := `{
 		"events": [{
 			"id": "today1",
 			"date": "2026-10-16T20:00Z",
@@ -2212,7 +2212,7 @@ func TestClient_CacheSchemaVersion(t *testing.T) {
 				]
 			}]
 		}]
-	}`)
+	}`
 
 	cases := []struct {
 		name string
@@ -2318,10 +2318,10 @@ func TestClient_CacheSchemaVersion(t *testing.T) {
 					atomic.AddInt64(&requests, 1)
 					w.Header().Set("Content-Type", "application/json")
 					if strings.Contains(r.URL.Path, "scoreboard") {
-						fmt.Fprint(w, scheduledScoreboard)
+						_, _ = fmt.Fprint(w, scheduledScoreboard)
 						return
 					}
-					fmt.Fprint(w, `{}`)
+					_, _ = fmt.Fprint(w, `{}`)
 				}))
 				defer server.Close()
 

@@ -133,7 +133,8 @@ func CheckForUpdate(ctx context.Context, repo, currentVersion string) (*ReleaseI
 	if err != nil {
 		return nil, false, err
 	}
-	defer resp.Body.Close()
+	// Read-only HTTP body: a Close error cannot change the bytes we consume.
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, false, fmt.Errorf("github api returned status %d", resp.StatusCode)
@@ -317,7 +318,9 @@ func ExtractBinaryFromZip(r io.ReaderAt, size int64) ([]byte, error) {
 			if err != nil {
 				return nil, fmt.Errorf("failed to open file inside zip: %w", err)
 			}
-			defer rc.Close()
+			// Read-only zip entry: Close only releases the reader; the bytes and
+			// the returned error come from io.ReadAll.
+			defer func() { _ = rc.Close() }()
 			return io.ReadAll(rc)
 		}
 	}
@@ -331,7 +334,9 @@ func ExtractBinaryFromTarGz(r io.Reader) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize gzip reader: %w", err)
 	}
-	defer gz.Close()
+	// gzip.Reader.Close releases the underlying reader; integrity is checked
+	// by the decompression itself, so a Close error cannot lose extracted data.
+	defer func() { _ = gz.Close() }()
 
 	tr := tar.NewReader(gz)
 	for {
@@ -390,7 +395,8 @@ func SelfUpdate(ctx context.Context, repo, currentVersion string) error {
 	if err != nil {
 		return fmt.Errorf("error downloading package: %w", err)
 	}
-	defer resp.Body.Close()
+	// Read-only HTTP body: a Close error cannot change the bytes we consume.
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("download server responded with HTTP %d", resp.StatusCode)
@@ -417,7 +423,8 @@ func SelfUpdate(ctx context.Context, repo, currentVersion string) error {
 	if err != nil {
 		return fmt.Errorf("error downloading checksums.txt: %w", err)
 	}
-	defer chkResp.Body.Close()
+	// Read-only HTTP body: a Close error cannot change the bytes we consume.
+	defer func() { _ = chkResp.Body.Close() }()
 
 	if chkResp.StatusCode != http.StatusOK {
 		return fmt.Errorf("checksums download server responded with HTTP %d", chkResp.StatusCode)
@@ -458,7 +465,9 @@ func SelfUpdate(ctx context.Context, repo, currentVersion string) error {
 		return fmt.Errorf("could not create temporary file in %s (permissions?): %w", dir, err)
 	}
 	tmpName := tmpFile.Name()
-	defer os.Remove(tmpName)
+	// Best-effort cleanup of the staging file: a leftover temp file is harmless
+	// next to the atomic rename that follows.
+	defer func() { _ = os.Remove(tmpName) }()
 
 	if _, err := tmpFile.Write(binData); err != nil {
 		_ = tmpFile.Close()

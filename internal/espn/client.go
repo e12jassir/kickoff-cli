@@ -520,7 +520,7 @@ func (c *Client) doWithRetry(req *http.Request) (*http.Response, error) {
 
 		if req.Context().Err() != nil {
 			if resp != nil && resp.Body != nil {
-				resp.Body.Close()
+				_ = resp.Body.Close()
 			}
 			return nil, req.Context().Err()
 		}
@@ -533,7 +533,7 @@ func (c *Client) doWithRetry(req *http.Request) (*http.Response, error) {
 		if attempt < maxRetries {
 			backoff := c.calculateBackoff(attempt, resp)
 			if resp != nil && resp.Body != nil {
-				resp.Body.Close()
+				_ = resp.Body.Close()
 			}
 			if backoff > 0 {
 				select {
@@ -674,13 +674,6 @@ func (c *Client) setCache(leagueKey string, matches []model.Match) {
 		return
 	}
 	_ = fsutil.AtomicWriteFile(cachePath, data, 0o644)
-}
-
-func (c *Client) invalidateCache(leagueKey string) {
-	cachePath := c.cacheFilePath(leagueKey)
-	_ = os.Remove(cachePath)
-	pastPath := c.pastCacheFilePath(leagueKey)
-	_ = os.Remove(pastPath)
 }
 
 func (c *Client) pastCacheFilePath(leagueKey string) string {
@@ -865,7 +858,7 @@ func (c *Client) FetchMatches(ctx context.Context, leagueKey string) ([]model.Ma
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		return c.fallbackMatches(leagueKey, fmt.Errorf("upstream espn returned status code %d", resp.StatusCode))
 	}
 
@@ -875,7 +868,7 @@ func (c *Client) FetchMatches(ctx context.Context, leagueKey string) ([]model.Ma
 	// FetchMatches calls pin every slot and stall the sweep until its deadline.
 	var raw rawResponse
 	decodeErr := json.NewDecoder(resp.Body).Decode(&raw)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if decodeErr != nil {
 		return c.fallbackMatches(leagueKey, fmt.Errorf("%w: %v", model.ErrCorruptedPayload, decodeErr))
 	}
@@ -1288,7 +1281,7 @@ func (c *Client) fetchScoreboardDay(ctx context.Context, leagueCode string, now 
 	if err != nil {
 		return scoreboardProbe{}, false
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return scoreboardProbe{}, false
@@ -1418,7 +1411,7 @@ func (c *Client) FetchMatchDetails(ctx context.Context, leagueKey, eventID strin
 	if err != nil {
 		return c.fallbackSummary(eventID, fmt.Errorf("network request failed: %w", err))
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return c.fallbackSummary(eventID, fmt.Errorf("upstream espn returned status code %d", resp.StatusCode))
@@ -1534,9 +1527,10 @@ func (c *Client) FetchMatchDetails(ctx context.Context, leagueKey, eventID strin
 			for i := range raw.Rosters {
 				r := &raw.Rosters[i]
 				if r.Team != nil {
-					if r.Team.ID == homeTeamID {
+					switch r.Team.ID {
+					case homeTeamID:
 						homeRoster = r
-					} else if r.Team.ID == awayTeamID {
+					case awayTeamID:
 						awayRoster = r
 					}
 				}
@@ -1755,7 +1749,7 @@ func (c *Client) FetchStandings(ctx context.Context, leagueKey string) (*model.L
 	if err != nil {
 		return c.fallbackStandings(leagueKey, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return c.fallbackStandings(leagueKey, fmt.Errorf("upstream espn standings returned status code %d", resp.StatusCode))
@@ -1972,7 +1966,7 @@ func (c *Client) FetchStatistics(ctx context.Context, leagueKey string) (*model.
 	if err != nil {
 		return c.fallbackStatistics(leagueKey, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return c.fallbackStatistics(leagueKey, fmt.Errorf("upstream espn statistics returned status code %d", resp.StatusCode))

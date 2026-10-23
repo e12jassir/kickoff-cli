@@ -334,7 +334,8 @@ func (c *Catalog) probeAllStreamsBackground(envStreams []string) {
 			if err != nil {
 				return
 			}
-			defer resp.Body.Close()
+			// Read-only HTTP body: a Close error cannot change the bytes already read.
+			defer func() { _ = resp.Body.Close() }()
 
 			if resp.StatusCode >= 200 && resp.StatusCode < 400 {
 				buf := make([]byte, 256)
@@ -485,7 +486,8 @@ func (c *Catalog) loadExternalConfig() {
 				client := &http.Client{Timeout: 10 * time.Second}
 				resp, err := client.Do(req)
 				if err == nil {
-					defer resp.Body.Close()
+					// Read-only HTTP body: a Close error cannot change the bytes already read.
+					defer func() { _ = resp.Body.Close() }()
 					if resp.StatusCode == http.StatusOK {
 						limitedReader := io.LimitReader(resp.Body, maxPlaylistReadSize)
 						if m3uList, err := ParseM3U(limitedReader); err == nil && len(m3uList) > 0 {

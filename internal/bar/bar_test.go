@@ -541,7 +541,7 @@ func TestFetchAndFilter_RespectsHTTPBudget(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"events": []}`)
+		_, _ = fmt.Fprint(w, `{"events": []}`)
 	}))
 	defer server.Close()
 

@@ -795,7 +795,8 @@ func downloadAndExtractPortableMpvWindows(installDir string) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	// Read-only HTTP body: a Close error cannot change the bytes already read.
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("HTTP %d from mpv download", resp.StatusCode)
@@ -820,12 +821,21 @@ func downloadAndExtractPortableMpvWindows(installDir string) error {
 			destPath := filepath.Join(installDir, "mpv.exe")
 			out, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
 			if err != nil {
-				rc.Close()
+				// The destination never opened, so nothing was written; the
+				// zip entry reader is the only thing left to release.
+				_ = rc.Close()
 				return err
 			}
 			_, cpErr := io.Copy(out, rc)
-			out.Close()
-			rc.Close()
+			// A Close failure on the destination is a flush failure: the binary
+			// on disk may be incomplete, so it must be reported when the copy
+			// itself succeeded.
+			if closeErr := out.Close(); cpErr == nil {
+				cpErr = closeErr
+			}
+			// Closing the zip entry only releases the reader; the bytes already
+			// copied to destPath are unaffected by its error.
+			_ = rc.Close()
 			return cpErr
 		}
 	}
@@ -847,7 +857,8 @@ func downloadAndSaveChannels(url, cfgPath string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer resp.Body.Close()
+	// Read-only HTTP body: a Close error cannot change the bytes already read.
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return 0, fmt.Errorf("HTTP %d", resp.StatusCode)
@@ -1067,10 +1078,10 @@ func (m Model) View() string {
 			if i == m.cursor {
 				cursorSymbol := lipgloss.NewStyle().Foreground(ColorIris).Bold(true).Render("> ")
 				optText := lipgloss.NewStyle().Foreground(ColorIris).Bold(true).Render(opt)
-				content.WriteString(fmt.Sprintf("    %s%s\n", cursorSymbol, optText))
+				fmt.Fprintf(&content, "    %s%s\n", cursorSymbol, optText)
 			} else {
 				optText := lipgloss.NewStyle().Foreground(ColorText).Render(opt)
-				content.WriteString(fmt.Sprintf("      %s\n", optText))
+				fmt.Fprintf(&content, "      %s\n", optText)
 			}
 		}
 
@@ -1114,9 +1125,9 @@ func (m Model) View() string {
 			stepName := lipgloss.NewStyle().Foreground(ColorText).Render(step.Name)
 			if step.Detail != "" {
 				detailText := lipgloss.NewStyle().Foreground(ColorMuted).Render("— " + step.Detail)
-				content.WriteString(fmt.Sprintf("    %s %s %s\n", icon, stepName, detailText))
+				fmt.Fprintf(&content, "    %s %s %s\n", icon, stepName, detailText)
 			} else {
-				content.WriteString(fmt.Sprintf("    %s %s\n", icon, stepName))
+				fmt.Fprintf(&content, "    %s %s\n", icon, stepName)
 			}
 		}
 
@@ -1168,7 +1179,7 @@ func (m Model) View() string {
 			}
 			label := lipgloss.NewStyle().Foreground(ColorText).Bold(true).Render(chk.Name + ":")
 			msg := lipgloss.NewStyle().Foreground(ColorMuted).Render(chk.Message)
-			content.WriteString(fmt.Sprintf("    %s %s %s\n", icon, label, msg))
+			fmt.Fprintf(&content, "    %s %s %s\n", icon, label, msg)
 		}
 
 		subActions := lipgloss.NewStyle().

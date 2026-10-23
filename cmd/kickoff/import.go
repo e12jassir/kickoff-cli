@@ -39,7 +39,8 @@ func readSourceContent(source string) ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("error fetching %s: %w", source, err)
 		}
-		defer resp.Body.Close()
+		// Read-only HTTP body: a Close error cannot change the bytes already read.
+		defer func() { _ = resp.Body.Close() }()
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			return nil, fmt.Errorf("HTTP request failed with status code %d", resp.StatusCode)
 		}

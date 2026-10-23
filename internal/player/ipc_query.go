@@ -10,7 +10,8 @@ import (
 // connection cannot enforce a read deadline. Windows named-pipe handles opened
 // through os.OpenFile are synchronous, so the deadline queryVoConfigured sets
 // is inert there; without an outer bound a wedged pipe would block the caller
-// and the UI goroutine that waits on playback forever.
+// and the UI goroutine that waits on playback forever. It doubles as the
+// default bound of queryVoConfiguredBounded.
 const ipcQueryTimeout = 750 * time.Millisecond
 
 // errIPCQueryTimeout reports that mpv did not answer a query in time.
@@ -21,6 +22,12 @@ var errIPCQueryTimeout = errors.New("mpv ipc query timed out")
 // error, which unblocks the pending read so the helper goroutine cannot
 // outlive the poll iteration.
 func queryVoConfiguredBounded(conn net.Conn, timeout time.Duration) (bool, error) {
+	// A missing bound falls back to ipcQueryTimeout, the same value the Windows
+	// poll loop passes explicitly, so a wedged pipe can never block forever.
+	if timeout <= 0 {
+		timeout = ipcQueryTimeout
+	}
+
 	type queryResult struct {
 		confirmed bool
 		err       error

@@ -463,7 +463,8 @@ func TestCacheSerialization_FreshAndExpired(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	// Best-effort test cleanup: the assertions above own the outcome.
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	fixedTime := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
 	nowFunc := func() time.Time { return fixedTime }
@@ -628,7 +629,8 @@ func TestCrawler_WorkerPool_And_OfflineFallback(t *testing.T) {
 
 	// Test Offline Fallback in Service
 	tempDir, _ := os.MkdirTemp("", "tvguide_offline_*")
-	defer os.RemoveAll(tempDir)
+	// Best-effort test cleanup: the assertions above own the outcome.
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	svc := NewService(
 		WithCacheDir(tempDir),

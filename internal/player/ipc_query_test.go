@@ -61,7 +61,8 @@ func (a testAddr) String() string  { return string(a) }
 // answers vo-configured and the bounded query reports the confirmation.
 func TestQueryVoConfiguredBoundedReturnsAnswer(t *testing.T) {
 	conn := newScriptedConn(`{"data":true,"error":"success"}` + "\n")
-	defer conn.Close()
+	// Scripted stub: closing it is cleanup only, no state is persisted.
+	defer func() { _ = conn.Close() }()
 
 	confirmed, err := queryVoConfiguredBounded(conn, time.Second)
 	if err != nil {
@@ -77,7 +78,8 @@ func TestQueryVoConfiguredBoundedReturnsAnswer(t *testing.T) {
 // hanging on a silent read.
 func TestQueryVoConfiguredBoundedTimesOut(t *testing.T) {
 	conn := newScriptedConn() // never answers
-	defer conn.Close()
+	// Scripted stub: closing it is cleanup only, no state is persisted.
+	defer func() { _ = conn.Close() }()
 
 	type outcome struct {
 		confirmed bool
@@ -117,7 +119,8 @@ func TestQueryVoConfiguredBoundedTimesOut(t *testing.T) {
 // still has to arrive through the scripted read.
 func TestQueryVoConfiguredBoundedIgnoresIgnoredDeadline(t *testing.T) {
 	conn := newScriptedConn(`{"data":false,"error":"success"}` + "\n")
-	defer conn.Close()
+	// Scripted stub: closing it is cleanup only, no state is persisted.
+	defer func() { _ = conn.Close() }()
 
 	confirmed, err := queryVoConfiguredBounded(conn, time.Second)
 	if err != nil {
@@ -135,7 +138,8 @@ func TestQueryVoConfiguredBoundedIgnoresIgnoredDeadline(t *testing.T) {
 // mpv command line the real IPC protocol expects.
 func TestQueryVoConfiguredBoundedWritesCommand(t *testing.T) {
 	recorder := &recordingConn{scriptedConn: newScriptedConn(`{"data":false,"error":"success"}` + "\n")}
-	defer recorder.Close()
+	// Scripted stub: closing it is cleanup only, no state is persisted.
+	defer func() { _ = recorder.Close() }()
 
 	if _, err := queryVoConfiguredBounded(recorder, time.Second); err != nil {
 		t.Fatalf("unexpected error: %v", err)

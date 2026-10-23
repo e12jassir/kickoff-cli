@@ -962,30 +962,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 			case "up", "k":
-				if m.leagueTab == TabResumen {
+				switch m.leagueTab {
+				case TabResumen:
 					if m.resumenCursor > 0 {
 						m.resumenCursor--
 					}
-				} else if m.leagueTab == TabPartidos {
+				case TabPartidos:
 					if m.matchCursor > 0 {
 						m.matchCursor--
 					}
 				}
 				return m, nil
 			case "down", "j":
-				if m.leagueTab == TabResumen {
+				switch m.leagueTab {
+				case TabResumen:
 					pms := m.ResumenMatches()
 					if m.resumenCursor < len(pms)-1 {
 						m.resumenCursor++
 					}
-				} else if m.leagueTab == TabPartidos {
+				case TabPartidos:
 					if m.matchCursor < len(m.matches)-1 {
 						m.matchCursor++
 					}
 				}
 				return m, nil
 			case "enter":
-				if m.leagueTab == TabResumen {
+				switch m.leagueTab {
+				case TabResumen:
 					pms := m.ResumenMatches()
 					if len(pms) > 0 && m.resumenCursor < len(pms) {
 						selectedMatch := pms[m.resumenCursor]
@@ -1019,7 +1022,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						}
 						return m, tea.Batch(cmds...)
 					}
-				} else if m.leagueTab == TabPartidos {
+				case TabPartidos:
 					if len(m.matches) > 0 && m.matchCursor < len(m.matches) {
 						selectedMatch := m.matches[m.matchCursor]
 						m.selectedMatchID = selectedMatch.ID

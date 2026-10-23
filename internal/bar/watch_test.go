@@ -187,7 +187,9 @@ func TestWatch_DispatchesNotifications(t *testing.T) {
 	// Wait for tick to detect goal
 	time.Sleep(45 * time.Millisecond)
 	cancel()
-	<-done
+	if err := <-done; err != nil {
+		t.Fatalf("Watch returned error: %v", err)
+	}
 
 	if notifier.count() != 1 {
 		t.Errorf("expected 1 goal notification dispatched, got %d", notifier.count())

@@ -428,7 +428,9 @@ func TestFetchAgenda_StaleAndDiskFallback(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"data":[{"id":1,"attributes":{"diary_description":"PSG vs Barcelona","diary_hour":"14:00:00","embeds":{"data":[{"attributes":{"embed_name":"ESPN","embed_iframe":"https://example.com/stream"}}]}}}]}`))
+		// Test handler: the write is best-effort and a failure surfaces as a
+		// client-side decode error the assertion already covers.
+		_, _ = w.Write([]byte(`{"data":[{"id":1,"attributes":{"diary_description":"PSG vs Barcelona","diary_hour":"14:00:00","embeds":{"data":[{"attributes":{"embed_name":"ESPN","embed_iframe":"https://example.com/stream"}}]}}}]}`))
 	}))
 	defer ts.Close()
 

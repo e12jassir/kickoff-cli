@@ -143,7 +143,7 @@ func Watch(ctx context.Context, client model.Client, resolver model.Resolver, op
 		if err != nil {
 			return
 		}
-		fmt.Fprintln(out, outStr)
+		_, _ = fmt.Fprintln(out, outStr)
 		flushWriter(out)
 	}
 

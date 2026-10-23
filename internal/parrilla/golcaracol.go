@@ -71,7 +71,8 @@ func (g *golCaracol) Fetch(ctx context.Context, date time.Time) (Snapshot, error
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("parrilla: fetch %s: %w", url, err)
 	}
-	defer resp.Body.Close()
+	// Read-only HTTP body: a Close error cannot change the bytes already read.
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return Snapshot{}, fmt.Errorf("parrilla: unexpected status %d from %s", resp.StatusCode, url)

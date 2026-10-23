@@ -160,7 +160,8 @@ func (c *GatoTVCrawler) FetchChannelData(ctx context.Context, slug string) ([]st
 	if err != nil {
 		return nil, nil, fmt.Errorf("http request failed for %s: %w", slug, err)
 	}
-	defer resp.Body.Close()
+	// Read-only HTTP body: a Close error cannot change the bytes already read.
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, nil, fmt.Errorf("upstream gatotv returned status %d for %s", resp.StatusCode, slug)
