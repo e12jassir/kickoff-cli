@@ -175,7 +175,11 @@ func TestChannelSlice_UnmarshalJSON(t *testing.T) {
 }
 
 func TestForceRefreshContext(t *testing.T) {
-	if model.IsForceRefresh(nil) {
+	// IsForceRefresh documents that a nil Context is tolerated, so that case has
+	// to stay covered. A typed nil keeps the assertion while avoiding an untyped
+	// nil literal in the call.
+	var nilCtx context.Context
+	if model.IsForceRefresh(nilCtx) {
 		t.Error("expected IsForceRefresh(nil) to be false")
 	}
 

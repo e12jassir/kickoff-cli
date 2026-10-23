@@ -58,6 +58,13 @@ func printHelp() {
 }
 
 func main() {
+	// Build provenance: version, commit and date are injected at link time by
+	// the release build (`-ldflags -X main.commit=... -X main.date=...`, see the
+	// Makefile build target and .github/workflows/release.yml). Only version is
+	// printed today, so commit and date are referenced here to keep those linker
+	// targets live while --version and --help keep their documented output.
+	_ = commit + date
+
 	if exe, err := os.Executable(); err == nil {
 		_ = os.Remove(exe + ".old")
 	}

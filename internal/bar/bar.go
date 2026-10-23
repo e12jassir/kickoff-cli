@@ -241,27 +241,41 @@ func FormatClock(status model.MatchStatus) string {
 	switch strings.ToUpper(strings.TrimSpace(status.Code)) {
 	case "STATUS_HALFTIME":
 		return "HT"
-	case "STATUS_FULL_TIME":
+	case "STATUS_FULL_TIME", "STATUS_FINAL":
 		return "FT"
+	case "STATUS_SCHEDULED":
+		// The not-yet-started rendering produced below for a pre-match.
+		return "PRE"
+	case "STATUS_IN_PROGRESS":
+		if clock := formatDetailClock(status); clock != "" {
+			return clock
+		}
+		return "LIVE"
 	}
 
 	if status.Completed || status.State == "post" {
 		return "FT"
 	}
 
+	if clock := formatDetailClock(status); clock != "" {
+		return clock
+	}
+
+	if status.State == "in" {
+		return "LIVE"
+	}
+	return "PRE"
+}
+
+// formatDetailClock renders the feed's detail or description for a match that
+// has already started, returning "" when the feed carries no usable text.
+func formatDetailClock(status model.MatchStatus) string {
 	detail := strings.TrimSpace(status.Detail)
 	if detail != "" {
 		if detail == "Halftime" || detail == "Half Time" || detail == "HT" {
 			return "HT"
 		}
-		isDigits := true
-		for _, r := range detail {
-			if r < '0' || r > '9' {
-				isDigits = false
-				break
-			}
-		}
-		if isDigits {
+		if isMinute(detail) {
 			return detail + "'"
 		}
 		return detail
@@ -275,10 +289,17 @@ func FormatClock(status model.MatchStatus) string {
 		return desc
 	}
 
-	if status.State == "in" {
-		return "LIVE"
+	return ""
+}
+
+// isMinute reports whether s is a bare minute number such as "63".
+func isMinute(s string) bool {
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
 	}
-	return "PRE"
+	return true
 }
 
 // LeagueName returns human-readable competition name from a key or code.
@@ -640,6 +661,10 @@ func FetchAndFilter(ctx context.Context, client model.Client, opts Options) ([]m
 			collected []model.Match
 		)
 
+		// This semaphore bounds in-process work (goroutines and cache reads),
+		// not the network: the ESPN client's HTTP transport enforces the
+		// process-wide request budget, so the total in flight stays at its cap
+		// even when every league here starts at once.
 		sem := make(chan struct{}, 6)
 		for _, l := range model.DefaultLeagues {
 			wg.Add(1)

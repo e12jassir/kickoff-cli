@@ -54,7 +54,8 @@ func (s *Service) ResolveManifest(ctx context.Context, stream *ExtractedStream) 
 	if err != nil {
 		return fmt.Errorf("extractor: fetch player: %w", err)
 	}
-	defer resp.Body.Close()
+	// Read-only HTTP body: a Close error cannot change the bytes already read.
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 400 {
 		return fmt.Errorf("extractor: unexpected status %d from %s", resp.StatusCode, cleanURL)
@@ -89,7 +90,8 @@ func (s *Service) ResolveManifest(ctx context.Context, stream *ExtractedStream) 
 
 			iframeResp, err := s.client.Do(iframeReq)
 			if err == nil {
-				defer iframeResp.Body.Close()
+				// Read-only HTTP body: a Close error cannot change the bytes already read.
+				defer func() { _ = iframeResp.Body.Close() }()
 				if iframeResp.StatusCode >= 200 && iframeResp.StatusCode < 400 {
 					iframeBytes, _ := io.ReadAll(io.LimitReader(iframeResp.Body, 1<<20))
 					iframeBody := string(iframeBytes)
@@ -208,7 +210,8 @@ func (s *Service) ProbeHLS(ctx context.Context, stream *ExtractedStream) bool {
 	if err != nil {
 		return false
 	}
-	defer resp.Body.Close()
+	// Read-only HTTP body: a Close error cannot change the bytes already read.
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 400 {
 		return false

@@ -45,7 +45,7 @@ func TestClient_FetchMatches(t *testing.T) {
 				w.Header().Set("Content-Type", "application/json")
 				// Match 1 is today (2026-10-13 19:00Z -> 14:00 COT)
 				// Match 2 is tomorrow (2026-10-14 19:00Z -> 14:00 COT)
-				fmt.Fprint(w, `{
+				_, _ = fmt.Fprint(w, `{
 					"events": [
 						{
 							"id": "1001",
@@ -135,7 +135,7 @@ func TestClient_FetchMatches(t *testing.T) {
 			handler: func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				// 3 events: 1 incomplete date, 1 empty competitions, 1 valid today
-				fmt.Fprint(w, `{
+				_, _ = fmt.Fprint(w, `{
 					"events": [
 						{"id": "bad1", "date": ""},
 						{"id": "bad2", "date": "2026-10-13T18:00Z", "competitions": []},
@@ -170,7 +170,7 @@ func TestClient_FetchMatches(t *testing.T) {
 			name: "Empty fixtures array",
 			handler: func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
-				fmt.Fprint(w, `{"events": []}`)
+				_, _ = fmt.Fprint(w, `{"events": []}`)
 			},
 			leagueKey:     "seriea",
 			expectMatches: 0,
@@ -180,7 +180,7 @@ func TestClient_FetchMatches(t *testing.T) {
 			name: "Corrupted JSON payload returns ErrCorruptedPayload",
 			handler: func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
-				fmt.Fprint(w, `{"events": [ { broken json ...`)
+				_, _ = fmt.Fprint(w, `{"events": [ { broken json ...`)
 			},
 			leagueKey:     "bundesliga",
 			expectMatches: 0,
@@ -211,7 +211,7 @@ func TestClient_FetchMatches(t *testing.T) {
 			if err != nil {
 				t.Fatalf("failed to create temp dir: %v", err)
 			}
-			defer os.RemoveAll(tempDir)
+			defer func() { _ = os.RemoveAll(tempDir) }()
 
 			if tt.preCache != nil {
 				tt.preCache(tempDir)
@@ -282,7 +282,7 @@ func TestClient_FetchMatches_OfflineFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	client := NewClient(
 		WithBaseURL(server.URL),
@@ -301,8 +301,9 @@ func TestClient_FetchMatches_OfflineFallback(t *testing.T) {
 		},
 	}
 	cachedBytes, _ := json.Marshal(cachedData{
-		CachedAt: cachedTime,
-		Matches:  cachedMatches,
+		SchemaVersion: cacheSchemaVersion,
+		CachedAt:      cachedTime,
+		Matches:       cachedMatches,
 	})
 	cacheFile := filepath.Join(tempDir, "matches_laliga.json")
 	if err := os.WriteFile(cacheFile, cachedBytes, 0o644); err != nil {
@@ -360,7 +361,7 @@ func TestClient_FetchMatchDetails_OfflineFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	client := NewClient(
 		WithBaseURL(server.URL),
@@ -371,7 +372,8 @@ func TestClient_FetchMatchDetails_OfflineFallback(t *testing.T) {
 
 	// Pre-populate summary cache
 	sum := cachedSummary{
-		CachedAt: cachedTime,
+		SchemaVersion: cacheSchemaVersion,
+		CachedAt:      cachedTime,
 		Stats: &model.MatchStats{
 			HomeShots: "12",
 			AwayShots: "8",
@@ -417,7 +419,7 @@ func TestClient_FetchMatches_WithEvents(t *testing.T) {
 
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{
+		_, _ = fmt.Fprint(w, `{
 			"events": [
 				{
 					"id": "1001",
@@ -504,7 +506,7 @@ func TestClient_FetchMatches_WithEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	client := NewClient(
 		WithBaseURL(server.URL),
@@ -553,7 +555,7 @@ func TestClient_FetchMatchStats(t *testing.T) {
 
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{
+		_, _ = fmt.Fprint(w, `{
 			"boxscore": {
 				"teams": [
 					{
@@ -590,7 +592,7 @@ func TestClient_FetchMatchStats(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	client := NewClient(
 		WithBaseURL(server.URL),
@@ -652,7 +654,7 @@ func TestClient_FetchMatchDetails(t *testing.T) {
 
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{
+		_, _ = fmt.Fprint(w, `{
 			"boxscore": {
 				"teams": [
 					{
@@ -739,7 +741,7 @@ func TestClient_FetchMatchDetails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	client := NewClient(
 		WithBaseURL(server.URL),
@@ -831,7 +833,7 @@ func TestClient_FetchMatchDetails(t *testing.T) {
 	// Defensive check: no rosters returns nil lineups without error
 	noRosterHandler := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"boxscore": {"teams": []}}`)
+		_, _ = fmt.Fprint(w, `{"boxscore": {"teams": []}}`)
 	}
 	noRosterServer := httptest.NewServer(http.HandlerFunc(noRosterHandler))
 	defer noRosterServer.Close()
@@ -890,7 +892,7 @@ func TestClient_FetchStandings_Parsing(t *testing.T) {
 
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{
+		_, _ = fmt.Fprint(w, `{
 			"name": "LaLiga EA Sports",
 			"children": [
 				{
@@ -996,7 +998,7 @@ func TestClient_FetchStatistics_Parsing(t *testing.T) {
 func TestClient_FetchStatistics_MissingAthleteName(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{
+		_, _ = fmt.Fprint(w, `{
 			"stats": [
 				{
 					"name": "goals",
@@ -1202,7 +1204,7 @@ func TestClient_DoWithRetry_5xx_Success(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.RawQuery, "dates=") {
 			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprint(w, `{"events": []}`)
+			_, _ = fmt.Fprint(w, `{"events": []}`)
 			return
 		}
 		att := mainAttempts.Add(1)
@@ -1215,7 +1217,7 @@ func TestClient_DoWithRetry_5xx_Success(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"events": []}`)
+		_, _ = fmt.Fprint(w, `{"events": []}`)
 	}))
 	defer server.Close()
 
@@ -1242,7 +1244,7 @@ func TestClient_DoWithRetry_429_Success(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.RawQuery, "dates=") {
 			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprint(w, `{"events": []}`)
+			_, _ = fmt.Fprint(w, `{"events": []}`)
 			return
 		}
 		att := mainAttempts.Add(1)
@@ -1252,7 +1254,7 @@ func TestClient_DoWithRetry_429_Success(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"events": []}`)
+		_, _ = fmt.Fprint(w, `{"events": []}`)
 	}))
 	defer server.Close()
 
@@ -1284,7 +1286,7 @@ func TestClient_DoWithRetry_Direct(t *testing.T) {
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, "OK")
+		_, _ = fmt.Fprint(w, "OK")
 	}))
 	defer server.Close()
 
@@ -1301,7 +1303,7 @@ func TestClient_DoWithRetry_Direct(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected nil err, got: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected 200 OK, got %d", resp.StatusCode)
@@ -1348,11 +1350,11 @@ func TestClient_DecoupledPastDaysCache(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		if strings.Contains(r.URL.RawQuery, "dates=") {
 			pastRequests.Add(1)
-			fmt.Fprint(w, `{"events": []}`)
+			_, _ = fmt.Fprint(w, `{"events": []}`)
 			return
 		}
 		mainRequests.Add(1)
-		fmt.Fprint(w, `{
+		_, _ = fmt.Fprint(w, `{
 			"events": [
 				{
 					"id": "today1",
@@ -1450,14 +1452,14 @@ func TestClient_ProbeFunctions_UseDoWithRetry(t *testing.T) {
 				w.WriteHeader(http.StatusInternalServerError)
 				return
 			}
-			fmt.Fprint(w, `{"events": [{"id": "past10", "date": "2026-10-15T15:00Z", "competitions": []}]}`)
+			_, _ = fmt.Fprint(w, `{"events": [{"id": "past10", "date": "2026-10-15T15:00Z", "competitions": []}]}`)
 			return
 		}
 		if upcomingAttempts.Add(1) == 1 {
 			w.WriteHeader(http.StatusTooManyRequests)
 			return
 		}
-		fmt.Fprint(w, `{"events": []}`)
+		_, _ = fmt.Fprint(w, `{"events": []}`)
 	}))
 	defer server.Close()
 
@@ -1487,18 +1489,18 @@ func TestClient_FetchRecentPastScoreboardEvents_14DaysWindow(t *testing.T) {
 		// offset 6 = 2026-10-13 (Tue Champions match)
 		// offset 12 = 2026-10-07 (Old matchday - should be excluded because 12 > 5 + 3)
 		if strings.Contains(q, "dates=20261014") {
-			fmt.Fprint(w, `{"events": [{"id": "ev-wed", "date": "2026-10-14T19:00Z", "competitions": []}]}`)
+			_, _ = fmt.Fprint(w, `{"events": [{"id": "ev-wed", "date": "2026-10-14T19:00Z", "competitions": []}]}`)
 			return
 		}
 		if strings.Contains(q, "dates=20261013") {
-			fmt.Fprint(w, `{"events": [{"id": "ev-tue", "date": "2026-10-13T19:00Z", "competitions": []}]}`)
+			_, _ = fmt.Fprint(w, `{"events": [{"id": "ev-tue", "date": "2026-10-13T19:00Z", "competitions": []}]}`)
 			return
 		}
 		if strings.Contains(q, "dates=20261007") {
-			fmt.Fprint(w, `{"events": [{"id": "ev-old", "date": "2026-10-07T19:00Z", "competitions": []}]}`)
+			_, _ = fmt.Fprint(w, `{"events": [{"id": "ev-old", "date": "2026-10-07T19:00Z", "competitions": []}]}`)
 			return
 		}
-		fmt.Fprint(w, `{"events": []}`)
+		_, _ = fmt.Fprint(w, `{"events": []}`)
 	}))
 	defer server.Close()
 
@@ -1526,8 +1528,9 @@ func TestClient_FetchRecentPastScoreboardEvents_14DaysWindow(t *testing.T) {
 	}
 }
 
-// probeConcurrencySampler records how many probe requests are in flight at the
-// same time on an httptest.Server handler.
+// probeConcurrencySampler records how many HTTP requests are in flight at the
+// same time on an httptest.Server handler. It is used for probe sweeps and for
+// whole-client request paths, since both draw from the same budget.
 type probeConcurrencySampler struct {
 	// delay keeps each request in flight long enough for concurrent probes to
 	// overlap reliably, even on fast machines.
@@ -1551,7 +1554,7 @@ func (s *probeConcurrencySampler) handler(w http.ResponseWriter, r *http.Request
 	time.Sleep(s.delay)
 
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprint(w, `{"events": []}`)
+	_, _ = fmt.Fprint(w, `{"events": []}`)
 }
 
 func (s *probeConcurrencySampler) reset() {
@@ -1610,17 +1613,185 @@ func TestClient_ScoreboardProbes_BoundConcurrentRequests(t *testing.T) {
 	})
 }
 
-// assertBoundedProbeConcurrency checks the hard limit of 4 in-flight probes and
-// also that the sweep actually overlaps requests instead of running serially.
+// assertBoundedProbeConcurrency checks the hard limit of maxConcurrentRequests
+// in-flight probes and also that the sweep actually overlaps requests instead
+// of running serially.
 func assertBoundedProbeConcurrency(t *testing.T, sampler *probeConcurrencySampler) {
 	t.Helper()
+	assertBoundedConcurrency(t, sampler, maxConcurrentRequests)
+}
+
+// assertBoundedConcurrency checks that the server never saw more than limit
+// requests in flight, and that the traffic overlapped at all so the limit is
+// actually exercised rather than avoided by a serial caller.
+func assertBoundedConcurrency(t *testing.T, sampler *probeConcurrencySampler, limit int32) {
+	t.Helper()
 	observed := sampler.max.Load()
-	t.Logf("max in-flight probe requests observed: %d (limit 4)", observed)
-	if observed > 4 {
-		t.Fatalf("observed %d concurrent probe requests, want at most 4", observed)
+	t.Logf("max in-flight requests observed: %d (limit %d)", observed, limit)
+	if observed > limit {
+		t.Fatalf("observed %d concurrent requests, want at most %d", observed, limit)
 	}
 	if observed < 2 {
-		t.Fatalf("observed %d concurrent probe requests, want the sweep to overlap at least 2", observed)
+		t.Fatalf("observed %d concurrent requests, want the callers to overlap at least 2", observed)
+	}
+}
+
+// passthroughTransport delegates to a base transport so a caller-supplied
+// http.Client reaches the test server, while giving the test a comparable
+// pointer to prove NewClient did not mutate the caller's client.
+type passthroughTransport struct {
+	base http.RoundTripper
+}
+
+func (p *passthroughTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return p.base.RoundTrip(req)
+}
+
+// TestClient_HTTPBudget_BoundsConcurrentRequests guards S12: the HTTP budget is
+// enforced at the transport, so every caller path shares one cap. Before the
+// transport-level budget, only the scoreboard probe fan-out was bounded; the
+// main scoreboard request of each FetchMatches call was not, so parallel
+// FetchMatches calls (exactly what internal/bar's league fan-out does) could
+// exceed the intended cap.
+func TestClient_HTTPBudget_BoundsConcurrentRequests(t *testing.T) {
+	sampler := &probeConcurrencySampler{delay: 10 * time.Millisecond}
+	server := httptest.NewServer(http.HandlerFunc(sampler.handler))
+	defer server.Close()
+
+	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	leagues := []string{
+		"laliga", "premier", "seriea", "bundesliga",
+		"ligue1", "champions", "colombia", "mls",
+	}
+
+	newClient := func(extra ...Option) *Client {
+		opts := []Option{
+			WithBaseURL(server.URL),
+			WithCacheDir(t.TempDir()),
+			WithRetryBackoff(func() time.Duration { return 0 }),
+			WithNow(func() time.Time { return now }),
+		}
+		return NewClient(append(opts, extra...)...)
+	}
+
+	fetchAll := func(client *Client) {
+		var wg sync.WaitGroup
+		for _, leagueKey := range leagues {
+			wg.Add(1)
+			go func(key string) {
+				defer wg.Done()
+				if _, err := client.FetchMatches(context.Background(), key); err != nil {
+					t.Errorf("FetchMatches(%q) failed: %v", key, err)
+				}
+			}(leagueKey)
+		}
+		wg.Wait()
+	}
+
+	t.Run("parallel FetchMatches", func(t *testing.T) {
+		sampler.reset()
+		fetchAll(newClient())
+		assertBoundedConcurrency(t, sampler, maxConcurrentRequests)
+	})
+
+	t.Run("caller-supplied http client", func(t *testing.T) {
+		sampler.reset()
+		originalTransport := &passthroughTransport{base: http.DefaultTransport}
+		custom := &http.Client{Transport: originalTransport}
+
+		fetchAll(newClient(WithHTTPClient(custom)))
+
+		assertBoundedConcurrency(t, sampler, maxConcurrentRequests)
+		if custom.Transport != originalTransport {
+			t.Fatalf("WithHTTPClient mutated the caller's client transport; the budget must be applied to a copy")
+		}
+	})
+}
+
+// TestDerivedProbeDeadline pins the S13 arithmetic: the cold-cache sweep
+// deadline is max(8s, 2s * ceil(days / budget)), clamped at 30s. Values are
+// worked examples, not recomputed from the implementation.
+func TestDerivedProbeDeadline(t *testing.T) {
+	cases := []struct {
+		name        string
+		days        int
+		concurrency int
+		want        time.Duration
+	}{
+		{"14 days on the default budget stays on the floor", 14, 4, 8 * time.Second},
+		{"14 days on a narrow budget scales per batch", 14, 2, 14 * time.Second},
+		{"a wide budget keeps the floor", 14, 8, 8 * time.Second},
+		{"40 days exceed the floor", 40, 4, 20 * time.Second},
+		{"60 days reach the ceiling", 60, 4, 30 * time.Second},
+		{"a very large sweep stays at the ceiling", 200, 4, 30 * time.Second},
+		{"no days keeps the floor", 0, 4, 8 * time.Second},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := derivedProbeDeadline(tc.days, tc.concurrency); got != tc.want {
+				t.Fatalf("derivedProbeDeadline(%d, %d) = %v, want %v", tc.days, tc.concurrency, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestClient_WithProbeBudget guards S13's override: an explicit budget wins over
+// the derived value, is still clamped to the ceiling, and a non-positive value
+// keeps the derived deadline. With probeDays=14 and the 4-request budget the
+// derived value is the 8s floor.
+func TestClient_WithProbeBudget(t *testing.T) {
+	const derived = 8 * time.Second
+
+	cases := []struct {
+		name   string
+		budget time.Duration
+		want   time.Duration
+	}{
+		{"unset derives from the sweep", 0, derived},
+		{"explicit override wins even under the floor", 3 * time.Second, 3 * time.Second},
+		{"explicit override is still capped", 45 * time.Second, 30 * time.Second},
+		{"non-positive override is ignored", -1, derived},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client := NewClient(
+				WithBaseURL("http://espn.invalid"),
+				WithCacheDir(t.TempDir()),
+				WithProbeBudget(tc.budget),
+			)
+			if got := client.probeTimeout(probeDays); got != tc.want {
+				t.Fatalf("probeTimeout(%d) = %v, want %v", probeDays, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestClient_ProbeBudget_TruncatesSlowSweep proves the override reaches the live
+// sweep instead of only the accessor: a deadline shorter than the server's
+// latency cancels the batch instead of letting all 14 probes finish.
+func TestClient_ProbeBudget_TruncatesSlowSweep(t *testing.T) {
+	sampler := &probeConcurrencySampler{delay: 150 * time.Millisecond}
+	server := httptest.NewServer(http.HandlerFunc(sampler.handler))
+	defer server.Close()
+
+	client := NewClient(
+		WithBaseURL(server.URL),
+		WithCacheDir(t.TempDir()),
+		WithRetryBackoff(func() time.Duration { return 0 }),
+		WithProbeBudget(40*time.Millisecond),
+	)
+	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+
+	started := time.Now()
+	client.fetchRecentPastScoreboardEvents(context.Background(), "laliga", now)
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("sweep took %v; a 40ms budget must cut it short", elapsed)
+	}
+
+	if got := sampler.requests.Load(); got >= int32(probeDays) {
+		t.Fatalf("expected the 40ms budget to cut the sweep short, got all %d probes", got)
 	}
 }
 
@@ -1651,7 +1822,7 @@ func TestClient_UpcomingProbe_SkipsCurrentDay(t *testing.T) {
 		if dates == "" {
 			// Only a finished match from a previous day: this forces FetchMatches
 			// to look for the next matchday through the upcoming sweep.
-			fmt.Fprintf(w, `{
+			_, _ = fmt.Fprintf(w, `{
 				"events": [
 					{
 						"id": "past1",
@@ -1672,7 +1843,7 @@ func TestClient_UpcomingProbe_SkipsCurrentDay(t *testing.T) {
 			return
 		}
 
-		fmt.Fprint(w, `{"events": []}`)
+		_, _ = fmt.Fprint(w, `{"events": []}`)
 	}))
 	defer server.Close()
 
@@ -1865,7 +2036,7 @@ func TestClient_FetchMatches_StatusCode(t *testing.T) {
 	t.Run("halftime with Spanish feed text", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprint(w, `{
+			_, _ = fmt.Fprint(w, `{
 				"events": [
 					{
 						"id": "2001",
@@ -2005,6 +2176,178 @@ func TestNormalizeTeamDisplayName(t *testing.T) {
 		got := normalizeTeamDisplayName(tc.input)
 		if got != tc.expected {
 			t.Errorf("normalizeTeamDisplayName(%q) = %q, expected %q", tc.input, got, tc.expected)
+		}
+	}
+}
+
+// TestClient_CacheSchemaVersion pins the on-disk schema marker shared by every
+// persisted ESPN cache: an entry written by the current schema version is
+// served from disk without touching the network, while an entry written by a
+// different version (or none at all) is treated as a miss and refetched.
+func TestClient_CacheSchemaVersion(t *testing.T) {
+	fixedNow := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	cachedAt := fixedNow.Format(time.RFC3339)
+
+	// versionField renders the schema_version member, or nothing when the
+	// stored entry predates the field entirely.
+	versionField := func(version string) string {
+		if version == "" {
+			return ""
+		}
+		return fmt.Sprintf(`"schema_version":%s,`, version)
+	}
+
+	// A scheduled match on the fixed "today" keeps the scoreboard path from
+	// firing the upcoming/past probe fan-out, so request counts stay exact.
+	scheduledScoreboard := `{
+		"events": [{
+			"id": "today1",
+			"date": "2026-10-16T20:00Z",
+			"name": "A vs B",
+			"competitions": [{
+				"status": {"type": {"name": "STATUS_SCHEDULED", "description": "Scheduled", "detail": "", "state": "pre", "completed": false}},
+				"competitors": [
+					{"id": "1", "homeAway": "home", "team": {"displayName": "A"}},
+					{"id": "2", "homeAway": "away", "team": {"displayName": "B"}}
+				]
+			}]
+		}]
+	}`
+
+	cases := []struct {
+		name string
+		file string
+		body func(version string) string
+		call func(ctx context.Context, c *Client) error
+		// wantFresh is the exact upstream request count when the entry is
+		// served from disk.
+		wantFresh int
+		// wantStale is the minimum upstream request count when the entry is
+		// treated as a miss.
+		wantStale int
+	}{
+		{
+			name: "matches",
+			file: "matches_premier.json",
+			body: func(version string) string {
+				return fmt.Sprintf(`{%s"cached_at":%q,"matches":[{"id":"m1","title":"A vs B"}]}`, versionField(version), cachedAt)
+			},
+			call: func(ctx context.Context, c *Client) error {
+				_, err := c.FetchMatches(ctx, "premier")
+				return err
+			},
+			wantFresh: 0,
+			wantStale: 1,
+		},
+		{
+			name: "past events",
+			file: "past_matches_premier.json",
+			body: func(version string) string {
+				return fmt.Sprintf(`{%s"cached_at":%q,"events":[{"id":"past1","date":"2026-10-15T20:00Z"}]}`, versionField(version), cachedAt)
+			},
+			call: func(ctx context.Context, c *Client) error {
+				_, err := c.FetchMatches(ctx, "premier")
+				return err
+			},
+			// FetchMatches always asks the scoreboard once; a valid past
+			// cache is what suppresses the extra day probes.
+			wantFresh: 1,
+			wantStale: 2,
+		},
+		{
+			name: "summary",
+			file: "summary-ev1.json",
+			body: func(version string) string {
+				return fmt.Sprintf(`{%s"cached_at":%q,"stats":{"homeShots":"10"},"lineups":null,"referee":"Ref A","attendance":1000}`, versionField(version), cachedAt)
+			},
+			call: func(ctx context.Context, c *Client) error {
+				_, err := c.FetchMatchDetails(ctx, "premier", "ev1")
+				return err
+			},
+			wantFresh: 0,
+			wantStale: 1,
+		},
+		{
+			name: "standings",
+			file: "standings_premier.json",
+			body: func(version string) string {
+				return fmt.Sprintf(`{%s"cached_at":%q,"standings":{"leagueKey":"premier"}}`, versionField(version), cachedAt)
+			},
+			call: func(ctx context.Context, c *Client) error {
+				_, err := c.FetchStandings(ctx, "premier")
+				return err
+			},
+			wantFresh: 0,
+			wantStale: 1,
+		},
+		{
+			name: "statistics",
+			file: "statistics_premier.json",
+			body: func(version string) string {
+				return fmt.Sprintf(`{%s"cached_at":%q,"statistics":{"leagueKey":"premier"}}`, versionField(version), cachedAt)
+			},
+			call: func(ctx context.Context, c *Client) error {
+				_, err := c.FetchStatistics(ctx, "premier")
+				return err
+			},
+			wantFresh: 0,
+			wantStale: 1,
+		},
+	}
+
+	versions := []struct {
+		name  string
+		value string
+		fresh bool
+	}{
+		{name: "current version", value: fmt.Sprintf("%d", cacheSchemaVersion), fresh: true},
+		{name: "stale version", value: "0", fresh: false},
+		{name: "absent version", value: "", fresh: false},
+	}
+
+	for _, tc := range cases {
+		for _, v := range versions {
+			t.Run(tc.name+"/"+v.name, func(t *testing.T) {
+				dir := t.TempDir()
+				if err := os.WriteFile(filepath.Join(dir, tc.file), []byte(tc.body(v.value)), 0o644); err != nil {
+					t.Fatalf("seed cache file %s: %v", tc.file, err)
+				}
+
+				var requests int64
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					atomic.AddInt64(&requests, 1)
+					w.Header().Set("Content-Type", "application/json")
+					if strings.Contains(r.URL.Path, "scoreboard") {
+						_, _ = fmt.Fprint(w, scheduledScoreboard)
+						return
+					}
+					_, _ = fmt.Fprint(w, `{}`)
+				}))
+				defer server.Close()
+
+				client := NewClient(
+					WithBaseURL(server.URL),
+					WithCacheDir(dir),
+					WithNow(func() time.Time { return fixedNow }),
+					WithCacheTTL(time.Hour),
+					WithPastCacheTTL(time.Hour),
+				)
+
+				if err := tc.call(context.Background(), client); err != nil {
+					t.Fatalf("%s: unexpected error: %v", tc.name, err)
+				}
+
+				got := int(atomic.LoadInt64(&requests))
+				if v.fresh {
+					if got != tc.wantFresh {
+						t.Fatalf("%s with the current schema version: upstream requests = %d, want %d (entry served from disk)", tc.name, got, tc.wantFresh)
+					}
+					return
+				}
+				if got < tc.wantStale {
+					t.Fatalf("%s with a %s: upstream requests = %d, want at least %d (entry refetched)", tc.name, v.name, got, tc.wantStale)
+				}
+			})
 		}
 	}
 }

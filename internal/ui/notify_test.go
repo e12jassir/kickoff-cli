@@ -120,7 +120,9 @@ func TestGoalNotification_IgnoresFinishedMatches(t *testing.T) {
 	m, notifier := goalModel(t)
 
 	m = deliverMatches(t, m, []model.Match{finishedMatch("m2", "0", "0")})
-	m = deliverMatches(t, m, []model.Match{finishedMatch("m2", "1", "0")})
+	// The second refresh only exists to prove an unchanged final score stays
+	// silent, so its returned model is deliberately not carried forward.
+	_ = deliverMatches(t, m, []model.Match{finishedMatch("m2", "1", "0")})
 
 	if got := notifier.recorded(); len(got) != 0 {
 		t.Fatalf("completed matches must not notify, got %v", got)

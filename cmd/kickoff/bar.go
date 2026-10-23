@@ -126,7 +126,9 @@ func RunBar(args []string, client model.Client, resolver model.Resolver, out io.
 	}
 
 	if output != "" {
-		fmt.Fprintln(out, output)
+		if _, err := fmt.Fprintln(out, output); err != nil {
+			return fmt.Errorf("could not write status bar output: %w", err)
+		}
 	}
 	return nil
 }

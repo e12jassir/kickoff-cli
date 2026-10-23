@@ -231,7 +231,8 @@ func (s *Service) fetchAgendaFromDomain(ctx context.Context, baseDomain string) 
 	if err != nil {
 		return nil, fmt.Errorf("fetch domain %s: %w", baseDomain, err)
 	}
-	defer resp.Body.Close()
+	// Read-only HTTP body: a Close error cannot change the bytes already read.
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("status %d from %s", resp.StatusCode, baseDomain)

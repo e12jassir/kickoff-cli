@@ -23,7 +23,8 @@ func TestCreateSocketDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSocketDir failed: %v", err)
 	}
-	defer os.RemoveAll(dir)
+	// Best-effort test cleanup: the directory assertion below is what matters.
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	info, err := os.Stat(dir)
 	if err != nil {
@@ -199,21 +200,22 @@ func TestQueryVoConfigured_MockSocket(t *testing.T) {
 			if err != nil {
 				t.Fatalf("failed to create temp dir: %v", err)
 			}
-			defer os.RemoveAll(tempDir)
+			// Best-effort cleanup: the mock socket assertions below are what matter.
+			defer func() { _ = os.RemoveAll(tempDir) }()
 
 			sockPath := filepath.Join(tempDir, "test.sock")
 			listener, err := net.Listen("unix", sockPath)
 			if err != nil {
 				t.Fatalf("failed to listen on mock socket: %v", err)
 			}
-			defer listener.Close()
+			defer func() { _ = listener.Close() }()
 
 			go func() {
 				conn, err := listener.Accept()
 				if err != nil {
 					return
 				}
-				defer conn.Close()
+				defer func() { _ = conn.Close() }()
 
 				buf := make([]byte, 1024)
 				_, _ = conn.Read(buf)
@@ -227,7 +229,7 @@ func TestQueryVoConfigured_MockSocket(t *testing.T) {
 			if err != nil {
 				t.Fatalf("failed to dial mock socket: %v", err)
 			}
-			defer clientConn.Close()
+			defer func() { _ = clientConn.Close() }()
 
 			got, err := queryVoConfigured(clientConn)
 			if (err != nil) != tt.wantErr {
@@ -246,7 +248,8 @@ func TestController_Lifecycle_PrematureExit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp mock script: %v", err)
 	}
-	defer os.Remove(mockScript.Name())
+	// Best-effort cleanup: a leftover mock script cannot affect the assertions.
+	defer func() { _ = os.Remove(mockScript.Name()) }()
 
 	_, _ = mockScript.WriteString("#!/bin/sh\nexit 1\n")
 	_ = mockScript.Close()
@@ -256,7 +259,8 @@ func TestController_Lifecycle_PrematureExit(t *testing.T) {
 		WithMPVBinary(mockScript.Name()),
 		WithPollTimeout(2*time.Second),
 	)
-	defer ctrl.Stop()
+	// Best-effort teardown: the test already asserts the controller behaviour.
+	defer func() { _ = ctrl.Stop() }()
 
 	req := model.PlayRequest{
 		Channel: model.Channel{Name: "Test Channel", URL: "http://example.invalid/test.m3u8"},
@@ -279,7 +283,8 @@ func TestController_Lifecycle_Timeout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp mock script: %v", err)
 	}
-	defer os.Remove(mockScript.Name())
+	// Best-effort cleanup: a leftover mock script cannot affect the assertions.
+	defer func() { _ = os.Remove(mockScript.Name()) }()
 
 	_, _ = mockScript.WriteString("#!/bin/sh\nsleep 30\n")
 	_ = mockScript.Close()
@@ -289,7 +294,8 @@ func TestController_Lifecycle_Timeout(t *testing.T) {
 		WithMPVBinary(mockScript.Name()),
 		WithPollTimeout(300*time.Millisecond),
 	)
-	defer ctrl.Stop()
+	// Best-effort teardown: the test already asserts the controller behaviour.
+	defer func() { _ = ctrl.Stop() }()
 
 	req := model.PlayRequest{
 		Channel: model.Channel{Name: "Test Channel", URL: "http://example.invalid/test.m3u8"},
@@ -316,7 +322,8 @@ func TestController_StopConcurrentWithPlayStream_NoDoubleWait(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp mock script: %v", err)
 	}
-	defer os.Remove(mockScript.Name())
+	// Best-effort cleanup: a leftover mock script cannot affect the assertions.
+	defer func() { _ = os.Remove(mockScript.Name()) }()
 
 	_, _ = mockScript.WriteString("#!/bin/sh\nsleep 30\n")
 	_ = mockScript.Close()
@@ -326,7 +333,8 @@ func TestController_StopConcurrentWithPlayStream_NoDoubleWait(t *testing.T) {
 		WithMPVBinary(mockScript.Name()),
 		WithPollTimeout(5*time.Second),
 	)
-	defer ctrl.Stop()
+	// Best-effort teardown: the test already asserts the controller behaviour.
+	defer func() { _ = ctrl.Stop() }()
 
 	req := model.PlayRequest{
 		Channel: model.Channel{Name: "Test Channel", URL: "http://example.invalid/test.m3u8"},
@@ -336,9 +344,12 @@ func TestController_StopConcurrentWithPlayStream_NoDoubleWait(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	playErr := make(chan error, 1)
+	playDone := make(chan struct{})
 	go func() {
-		playErr <- ctrl.PlayStream(ctx, req)
+		// The returned error is irrelevant here: this test only asserts that
+		// Stop unblocks PlayStream without a second cmd.Wait().
+		_ = ctrl.PlayStream(ctx, req)
+		close(playDone)
 	}()
 
 	// Give the reaper goroutine time to start and block in cmd.Wait().
@@ -349,7 +360,7 @@ func TestController_StopConcurrentWithPlayStream_NoDoubleWait(t *testing.T) {
 
 	cancel()
 	select {
-	case <-playErr:
+	case <-playDone:
 	case <-time.After(5 * time.Second):
 		t.Fatal("PlayStream did not return after Stop")
 	}

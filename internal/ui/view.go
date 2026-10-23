@@ -1010,7 +1010,7 @@ func renderCompactLineups(match model.Match, modalContentWidth int, noEmoji bool
 
 	headLeft := lipgloss.NewStyle().Width(colW).Align(lipgloss.Left).Foreground(lipgloss.Color("#38BDF8")).Bold(true).Render(truncateModalText(homeFormStr, colW))
 	headRight := lipgloss.NewStyle().Width(colW).Align(lipgloss.Left).Foreground(lipgloss.Color("#F59E0B")).Bold(true).Render(truncateModalText(awayFormStr, colW))
-	sb.WriteString(fmt.Sprintf("%s    %s\n", headLeft, headRight))
+	fmt.Fprintf(&sb, "%s    %s\n", headLeft, headRight)
 
 	// Coach lines
 	if homeLineup.Coach != "" || awayLineup.Coach != "" {
@@ -1024,14 +1024,14 @@ func renderCompactLineups(match model.Match, modalContentWidth int, noEmoji bool
 		}
 		dtLeftStyled := lipgloss.NewStyle().Width(colW).Align(lipgloss.Left).Foreground(ColorMuted).Render(truncateModalText(dtLeft, colW))
 		dtRightStyled := lipgloss.NewStyle().Width(colW).Align(lipgloss.Left).Foreground(ColorMuted).Render(truncateModalText(dtRight, colW))
-		sb.WriteString(fmt.Sprintf("%s    %s\n", dtLeftStyled, dtRightStyled))
+		fmt.Fprintf(&sb, "%s    %s\n", dtLeftStyled, dtRightStyled)
 	}
 	sb.WriteString("\n")
 
 	// Starters
 	secLeft := lipgloss.NewStyle().Width(colW).Align(lipgloss.Left).Foreground(ColorCategory).Bold(true).Render("TITULARES")
 	secRight := lipgloss.NewStyle().Width(colW).Align(lipgloss.Left).Foreground(ColorCategory).Bold(true).Render("TITULARES")
-	sb.WriteString(fmt.Sprintf("%s    %s\n", secLeft, secRight))
+	fmt.Fprintf(&sb, "%s    %s\n", secLeft, secRight)
 
 	formatPlayer := func(p model.Player) string {
 		jStr := "   "
@@ -1065,7 +1065,7 @@ func renderCompactLineups(match model.Match, modalContentWidth int, noEmoji bool
 		if i < len(awayStarters) {
 			aText = formatPlayer(awayStarters[i])
 		}
-		sb.WriteString(fmt.Sprintf("%s    %s\n", colLeftStyle.Render(truncateModalText(hText, colW)), colRightStyle.Render(truncateModalText(aText, colW))))
+		fmt.Fprintf(&sb, "%s    %s\n", colLeftStyle.Render(truncateModalText(hText, colW)), colRightStyle.Render(truncateModalText(aText, colW)))
 	}
 
 	// Substitutes / Bench
@@ -1073,7 +1073,7 @@ func renderCompactLineups(match model.Match, modalContentWidth int, noEmoji bool
 		sb.WriteString("\n")
 		subLeft := lipgloss.NewStyle().Width(colW).Align(lipgloss.Left).Foreground(ColorCategory).Bold(true).Render("SUPLENTES")
 		subRight := lipgloss.NewStyle().Width(colW).Align(lipgloss.Left).Foreground(ColorCategory).Bold(true).Render("SUPLENTES")
-		sb.WriteString(fmt.Sprintf("%s    %s\n", subLeft, subRight))
+		fmt.Fprintf(&sb, "%s    %s\n", subLeft, subRight)
 
 		homeBench := homeLineup.Bench
 		awayBench := awayLineup.Bench
@@ -1088,7 +1088,7 @@ func renderCompactLineups(match model.Match, modalContentWidth int, noEmoji bool
 			if i < len(awayBench) {
 				aText = formatPlayer(awayBench[i])
 			}
-			sb.WriteString(fmt.Sprintf("%s    %s\n", colLeftStyle.Render(truncateModalText(hText, colW)), colRightStyle.Render(truncateModalText(aText, colW))))
+			fmt.Fprintf(&sb, "%s    %s\n", colLeftStyle.Render(truncateModalText(hText, colW)), colRightStyle.Render(truncateModalText(aText, colW)))
 		}
 	}
 
@@ -1198,10 +1198,7 @@ func renderTimeline(events []model.MatchEvent, homeTeamID string, modalContentWi
 		return ""
 	}
 
-	disableEmoji := false
-	if len(noEmoji) > 0 && noEmoji[0] {
-		disableEmoji = true
-	}
+	disableEmoji := len(noEmoji) > 0 && noEmoji[0]
 
 	sortedEvents := make([]model.MatchEvent, len(events))
 	copy(sortedEvents, events)
@@ -1264,7 +1261,7 @@ func renderTimeline(events []model.MatchEvent, homeTeamID string, modalContentWi
 			etText := " " + StatusPostStyle.Render("E.T") + " "
 			axis := spineStyle.Render("  │") + etText + spineStyle.Render("│  ")
 			rightBlank := strings.Repeat(" ", 25)
-			b.WriteString(fmt.Sprintf("%s%s%s\n", leftBlank, axis, rightBlank))
+			fmt.Fprintf(&b, "%s%s%s\n", leftBlank, axis, rightBlank)
 			htShown = true
 		}
 
@@ -1313,13 +1310,13 @@ func renderTimeline(events []model.MatchEvent, homeTeamID string, modalContentWi
 			leftStyled := lipgloss.NewStyle().Width(24).Align(lipgloss.Right).Foreground(ColorText).Render(eventText)
 			axis := spineStyle.Render("──┤") + clkFmt + spineStyle.Render("│  ")
 			rightBlank := strings.Repeat(" ", 25)
-			b.WriteString(fmt.Sprintf("%s%s%s\n", leftStyled, axis, rightBlank))
+			fmt.Fprintf(&b, "%s%s%s\n", leftStyled, axis, rightBlank)
 		} else {
 			leftBlank := strings.Repeat(" ", 24)
 			axis := spineStyle.Render("  │") + clkFmt + spineStyle.Render("├──")
 			eventText := fmt.Sprintf(" %s %s", icon, truncateModalText(pName, 19))
 			rightStyled := lipgloss.NewStyle().Width(25).Align(lipgloss.Left).Foreground(ColorText).Render(eventText)
-			b.WriteString(fmt.Sprintf("%s%s%s\n", leftBlank, axis, rightStyled))
+			fmt.Fprintf(&b, "%s%s%s\n", leftBlank, axis, rightStyled)
 		}
 	}
 	return b.String()

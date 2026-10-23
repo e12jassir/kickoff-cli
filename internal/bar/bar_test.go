@@ -3,11 +3,16 @@ package bar
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/e12jassir/kickoff-cli/internal/espn"
 	"github.com/e12jassir/kickoff-cli/internal/model"
 )
 
@@ -513,6 +518,53 @@ func TestFetchAndFilter(t *testing.T) {
 	}
 }
 
+// TestFetchAndFilter_RespectsHTTPBudget guards S12 from the caller side:
+// FetchAndFilter fans out over model.DefaultLeagues with its own dispatch cap of
+// 6, so the ESPN HTTP budget at the transport is the only thing that can keep
+// the total in flight at 4. Under a client-level probe limiter the league
+// fan-out reached 6+ concurrent requests.
+func TestFetchAndFilter_RespectsHTTPBudget(t *testing.T) {
+	const httpBudget = 4 // espn.maxConcurrentRequests
+
+	var inFlight, maxInFlight, requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		current := inFlight.Add(1)
+		defer inFlight.Add(-1)
+		requests.Add(1)
+		for {
+			observed := maxInFlight.Load()
+			if current <= observed || maxInFlight.CompareAndSwap(observed, current) {
+				break
+			}
+		}
+
+		time.Sleep(5 * time.Millisecond)
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"events": []}`)
+	}))
+	defer server.Close()
+
+	client := espn.NewClient(
+		espn.WithBaseURL(server.URL),
+		espn.WithCacheDir(t.TempDir()),
+		espn.WithRetryBackoff(func() time.Duration { return 0 }),
+	)
+
+	if _, err := FetchAndFilter(context.Background(), client, Options{}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	observed := maxInFlight.Load()
+	t.Logf("max in-flight requests observed across %d requests: %d (limit %d)", requests.Load(), observed, httpBudget)
+	if observed > httpBudget {
+		t.Fatalf("observed %d concurrent requests through the league fan-out, want at most %d", observed, httpBudget)
+	}
+	if observed < 2 {
+		t.Fatalf("observed %d concurrent requests, want the fan-out to overlap at least 2", observed)
+	}
+}
+
 func TestShortTeam(t *testing.T) {
 	tests := []struct {
 		input    model.Competitor
@@ -598,6 +650,46 @@ func TestFormatClock_ByStatusCode(t *testing.T) {
 			name:     "falls back to English description without code",
 			status:   model.MatchStatus{State: "in", Description: "Halftime"},
 			expected: "HT",
+		},
+		{
+			name:     "final code wins over numeric detail",
+			status:   model.MatchStatus{State: "in", Code: "STATUS_FINAL", Detail: "90'"},
+			expected: "FT",
+		},
+		{
+			name:     "final code wins over Spanish description",
+			status:   model.MatchStatus{Code: "STATUS_FINAL", Description: "Finalizado"},
+			expected: "FT",
+		},
+		{
+			name:     "scheduled code renders the not-yet-started form over Spanish description",
+			status:   model.MatchStatus{State: "pre", Code: "STATUS_SCHEDULED", Description: "Programado"},
+			expected: "PRE",
+		},
+		{
+			name:     "in-progress code renders the numeric detail as a minute",
+			status:   model.MatchStatus{State: "in", Code: "STATUS_IN_PROGRESS", Detail: "63"},
+			expected: "63'",
+		},
+		{
+			name:     "in-progress code keeps an already formatted minute",
+			status:   model.MatchStatus{State: "in", Code: "STATUS_IN_PROGRESS", Detail: "63'"},
+			expected: "63'",
+		},
+		{
+			name:     "in-progress code without feed text renders live",
+			status:   model.MatchStatus{Code: "STATUS_IN_PROGRESS"},
+			expected: "LIVE",
+		},
+		{
+			name:     "unmapped code keeps the Spanish detail fallback",
+			status:   model.MatchStatus{State: "in", Code: "STATUS_POSTPONED", Detail: "Aplazado"},
+			expected: "Aplazado",
+		},
+		{
+			name:     "unmapped code keeps the Spanish description fallback",
+			status:   model.MatchStatus{State: "in", Code: "STATUS_RAIN_DELAY", Description: "Retrasado"},
+			expected: "Retrasado",
 		},
 	}
 

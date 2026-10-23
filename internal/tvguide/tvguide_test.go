@@ -411,13 +411,8 @@ func TestService_ResolveMatch(t *testing.T) {
 
 // TestResolveMatch_SourceTimezoneOverlap proves that guide times, which are
 // published in Colombian local time, are compared against the kickoff converted
-// to Colombia. The display timezone must not shift the comparison window.
+// to Colombia.
 func TestResolveMatch_SourceTimezoneOverlap(t *testing.T) {
-	madrid, err := time.LoadLocation("Europe/Madrid")
-	if err != nil {
-		t.Fatalf("failed to load Europe/Madrid: %v", err)
-	}
-
 	// 2026-10-18T00:00Z is 2026-10-17 19:00 in Colombia (02:00 in Madrid).
 	kickoff := time.Date(2026, time.October, 18, 0, 0, 0, 0, time.UTC)
 
@@ -433,10 +428,7 @@ func TestResolveMatch_SourceTimezoneOverlap(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			svc := NewService(
-				WithTimezone(madrid),
-				WithCacheDir(t.TempDir()),
-			)
+			svc := NewService(WithCacheDir(t.TempDir()))
 			svc.SetGuides([]ChannelGuide{{
 				Name:      "ESPN 2 HD",
 				Slug:      "espn_2_colombia",
@@ -471,7 +463,8 @@ func TestCacheSerialization_FreshAndExpired(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	// Best-effort test cleanup: the assertions above own the outcome.
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	fixedTime := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
 	nowFunc := func() time.Time { return fixedTime }
@@ -636,7 +629,8 @@ func TestCrawler_WorkerPool_And_OfflineFallback(t *testing.T) {
 
 	// Test Offline Fallback in Service
 	tempDir, _ := os.MkdirTemp("", "tvguide_offline_*")
-	defer os.RemoveAll(tempDir)
+	// Best-effort test cleanup: the assertions above own the outcome.
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	svc := NewService(
 		WithCacheDir(tempDir),
@@ -1349,6 +1343,55 @@ func TestResolveMatch_TrueAmbiguityStillRejected(t *testing.T) {
 	}
 }
 
+// TestResolveMatch_BridgedDisplayVariants proves the display-name bridge in
+// parrilla.CanonicalChannel reaches the resolver. When the guide publishes one
+// signal under both of its known spellings, the tie is one channel, not two, so
+// the match resolves instead of declining as ambiguous.
+func TestResolveMatch_BridgedDisplayVariants(t *testing.T) {
+	tests := []struct {
+		name   string
+		guides []ChannelGuide
+	}{
+		{
+			name: "ESPN publishes the primary signal as ESPN and ESPN 1 HD",
+			guides: []ChannelGuide{
+				{Name: "ESPN", Slug: "espn", Programs: []string{"Feyenoord vs. Como"}},
+				{Name: "ESPN 1 HD", Slug: "espn_colombia", Programs: []string{"Feyenoord vs. Como"}},
+			},
+		},
+		{
+			name: "RCN publishes the signal as Canal RCN HD and RCN HD",
+			guides: []ChannelGuide{
+				{Name: "Canal RCN HD", Slug: "rcn_television", Programs: []string{"Feyenoord vs. Como"}},
+				{Name: "RCN HD", Slug: "rcn", Programs: []string{"Feyenoord vs. Como"}},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := NewService()
+			svc.SetGuides(tt.guides)
+
+			match := model.Match{
+				HomeTeam: model.Competitor{DisplayName: "Feyenoord Rotterdam"},
+				AwayTeam: model.Competitor{DisplayName: "Como"},
+			}
+
+			target, found := svc.ResolveMatch(match)
+			if !found {
+				t.Fatalf("two spellings of one signal must not look ambiguous, got not found")
+			}
+			if target.Name != tt.guides[0].Name {
+				t.Errorf("expected the first published spelling %q to be kept, got %q", tt.guides[0].Name, target.Name)
+			}
+			if target.Slug != tt.guides[0].Slug {
+				t.Errorf("expected the first slug %q to be kept, got %q", tt.guides[0].Slug, target.Slug)
+			}
+		})
+	}
+}
+
 // TestDefaultTargets_NoDuplicateIdentities enforces that the crawl target list
 // carries one entry per signal. Two slugs for the same channel made every
 // fixture on that channel look ambiguous, because the resolver compared raw
@@ -1414,6 +1457,141 @@ func TestChannelIdentity_DistinguishesSeparateSignals(t *testing.T) {
 			t.Errorf("channelIdentity(%q) == channelIdentity(%q) = %v, want %v (%q vs %q)",
 				tt.name, tt.b, gotSame, tt.same, channelIdentity(tt.name), channelIdentity(tt.b))
 		}
+	}
+}
+
+// TestNormalize_SquadQualifierForms pins how the normalizer tokenizes the
+// squad-age spellings the guide publishes. The qualifier gate reads Normalize's
+// output, so these forms are its contract: "sub 20" arrives as a pair, while
+// "U20" and "Sub20" arrive fused. Assuming a different shape would leave the
+// gate silently inert.
+func TestNormalize_SquadQualifierForms(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"Brasil Sub-20", "brasil sub 20"},
+		{"Brasil Sub 20", "brasil sub 20"},
+		{"Brasil U20", "brasil u20"},
+		{"Brasil U-20", "brasil u 20"},
+		{"Brasil Sub20", "brasil sub20"},
+		{"Real Madrid Femenino", "real madrid femenino"},
+	}
+
+	for _, tt := range tests {
+		if got := Normalize(tt.input); got != tt.want {
+			t.Errorf("Normalize(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+// TestMatchScore_SquadQualifierGate proves match scoring is symmetric about the
+// squad qualifier. A candidate may only resolve when both titles carry the SAME
+// qualifier (both absent counts as equal); a qualifier on one side only, or two
+// different qualifiers, describe a different competition and must not match.
+// The gate runs before the full-fixture-title check, so a senior title can never
+// be answered by a youth broadcast that happens to repeat both team names.
+func TestMatchScore_SquadQualifierGate(t *testing.T) {
+	senior := model.Match{
+		HomeTeam: model.Competitor{DisplayName: "Brasil"},
+		AwayTeam: model.Competitor{DisplayName: "Argentina"},
+		Title:    "Brasil vs Argentina",
+	}
+	sub20 := model.Match{
+		HomeTeam: model.Competitor{DisplayName: "Brasil Sub-20"},
+		AwayTeam: model.Competitor{DisplayName: "Argentina Sub-20"},
+		Title:    "Brasil Sub-20 vs Argentina Sub-20",
+	}
+	realMadridSenior := model.Match{
+		HomeTeam: model.Competitor{DisplayName: "Real Madrid"},
+		AwayTeam: model.Competitor{DisplayName: "Barcelona"},
+		Title:    "Real Madrid vs Barcelona",
+	}
+
+	tests := []struct {
+		name       string
+		guideTitle string
+		match      model.Match
+		matched    bool
+		score      int
+	}{
+		{
+			name:       "senior fixture must not match a guide title carrying a sub-20 qualifier",
+			guideTitle: "Brasil Sub-20 vs Argentina Sub-20",
+			match:      senior,
+			matched:    false,
+			score:      0,
+		},
+		{
+			name:       "senior guide must not match a fixture title carrying the qualifier",
+			guideTitle: "Brasil vs Argentina",
+			match:      sub20,
+			matched:    false,
+			score:      0,
+		},
+		{
+			name:       "both sub-20 keeps today's score",
+			guideTitle: "Brasil Sub-20 vs Argentina Sub-20",
+			match:      sub20,
+			matched:    true,
+			score:      10,
+		},
+		{
+			name:       "the same qualifier spelled U20 is canonicalised and keeps the score",
+			guideTitle: "Brasil U20 vs Argentina U20",
+			match:      sub20,
+			matched:    true,
+			score:      5,
+		},
+		{
+			name:       "sub-20 versus sub-17 describes a different competition",
+			guideTitle: "Brasil Sub-20 vs Argentina Sub-20",
+			match: model.Match{
+				HomeTeam: model.Competitor{DisplayName: "Brasil Sub-17"},
+				AwayTeam: model.Competitor{DisplayName: "Argentina Sub-17"},
+				Title:    "Brasil Sub-17 vs Argentina Sub-17",
+			},
+			matched: false,
+			score:   0,
+		},
+		{
+			name:       "a femenino guide must not answer a senior Real Madrid fixture",
+			guideTitle: "Real Madrid Femenino vs Barcelona Femenino",
+			match:      realMadridSenior,
+			matched:    false,
+			score:      0,
+		},
+		{
+			name:       "both senior titles keep today's score unchanged",
+			guideTitle: "Real Madrid vs Barcelona",
+			match:      realMadridSenior,
+			matched:    true,
+			score:      10,
+		},
+		{
+			name:       "clubs carrying short tokens still match normally",
+			guideTitle: "W Connection vs B SAD",
+			match: model.Match{
+				HomeTeam: model.Competitor{DisplayName: "W Connection"},
+				AwayTeam: model.Competitor{DisplayName: "B SAD"},
+			},
+			matched: true,
+			score:   5,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			matched, score := MatchScore(tt.guideTitle, tt.match)
+			if matched != tt.matched {
+				t.Fatalf("MatchScore(%q, %q) matched=%v (score %d), want matched=%v",
+					tt.guideTitle, tt.match.Title, matched, score, tt.matched)
+			}
+			if score != tt.score {
+				t.Fatalf("MatchScore(%q, %q) score=%d, want %d",
+					tt.guideTitle, tt.match.Title, score, tt.score)
+			}
+		})
 	}
 }
 

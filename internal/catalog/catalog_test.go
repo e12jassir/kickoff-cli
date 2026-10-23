@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -1066,6 +1067,91 @@ func parrillaSnap(channels []string) parrilla.Snapshot {
 			StartMins:   14 * 60,
 			Channels:    channels,
 		}},
+	}
+}
+
+// contextBlockingParrilla is a parrilla source that stays in flight until the
+// context it receives is cancelled, simulating a hung formatter/HTTP fetch. The
+// fallback timer keeps a non-propagated context from hanging the test binary.
+type contextBlockingParrilla struct {
+	unblock time.Duration
+
+	mu    sync.Mutex
+	calls int
+}
+
+func (f *contextBlockingParrilla) Fetch(ctx context.Context, date time.Time) (parrilla.Snapshot, error) {
+	f.mu.Lock()
+	f.calls++
+	f.mu.Unlock()
+
+	timer := time.NewTimer(f.unblock)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return parrilla.Snapshot{}, ctx.Err()
+	case <-timer.C:
+		return parrilla.Snapshot{}, errors.New("parrilla source blocked past the fallback timer")
+	}
+}
+
+func (f *contextBlockingParrilla) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
+// TestCatalog_GetChannelsCtx_AbandonsBlockedParrillaFetch proves the context
+// carried by GetChannelsCtx reaches the in-flight parrilla fetch: a source that
+// only returns once its context is cancelled must let the call come back as soon
+// as the caller's deadline fires, well before the source's own fallback timer.
+func TestCatalog_GetChannelsCtx_AbandonsBlockedParrillaFetch(t *testing.T) {
+	const fetcherUnblock = 3 * time.Second
+	fake := &contextBlockingParrilla{unblock: fetcherUnblock}
+	cat := newTestCatalog(WithParrilla(fake))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	done := make(chan []model.Channel, 1)
+	go func() { done <- cat.GetChannelsCtx(ctx, newParrillaMatch(nil)) }()
+
+	var channels []model.Channel
+	select {
+	case channels = <-done:
+	case <-time.After(fetcherUnblock / 2):
+		t.Fatalf("GetChannelsCtx did not return within %v of a cancelled context: the caller's context was not propagated to the parrilla fetch", fetcherUnblock/2)
+	}
+
+	if len(channels) != 0 {
+		t.Fatalf("expected no channels from an abandoned parrilla fetch, got %+v", channels)
+	}
+	if got := fake.callCount(); got != 1 {
+		t.Fatalf("expected exactly one parrilla fetch attempt, got %d", got)
+	}
+}
+
+// TestCatalog_GetChannelsCtx_MatchesGetChannels pins the compatibility contract:
+// the context-aware entry point returns exactly what GetChannels returns for a
+// source that answers promptly, so callers that never cancel see no change.
+func TestCatalog_GetChannelsCtx_MatchesGetChannels(t *testing.T) {
+	cat := newTestCatalog(WithParrilla(&parrillaFake{snap: parrillaSnap([]string{"ESPN 2"})}))
+	match := newParrillaMatch(nil)
+
+	want := cat.GetChannels(match)
+	if len(want) == 0 {
+		t.Fatalf("expected GetChannels to resolve the parrilla fixture, got none")
+	}
+
+	got := cat.GetChannelsCtx(context.Background(), match)
+	if len(got) != len(want) {
+		t.Fatalf("expected GetChannelsCtx to return %d channels like GetChannels, got %d (%+v)", len(want), len(got), got)
+	}
+	for i := range want {
+		if !reflect.DeepEqual(got[i], want[i]) {
+			t.Fatalf("channel %d differs: GetChannelsCtx=%+v GetChannels=%+v", i, got[i], want[i])
+		}
 	}
 }
 

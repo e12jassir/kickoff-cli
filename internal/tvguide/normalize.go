@@ -928,6 +928,61 @@ func guideTokenSet(normTitle string) map[string]struct{} {
 	return set
 }
 
+// squadQualifierTokens is the closed set of squad qualifiers that separate one
+// squad from another that shares the same club or national team. Values are the
+// canonical spelling, so "femenina" and "women" agree with "femenino".
+//
+// Only this curated set qualifies, and every entry is at least three
+// characters: single-letter tokens such as "w" and "b" stay inert, exactly as
+// keywords treats them.
+var squadQualifierTokens = map[string]string{
+	"femenino":  "femenino",
+	"femenina":  "femenino",
+	"women":     "femenino",
+	"reservas":  "reservas",
+	"filial":    "filial",
+	"juvenil":   "juvenil",
+	"juveniles": "juvenil",
+	"primavera": "primavera",
+}
+
+// squadAgeNumbers is the closed set of youth age groups (sub-15/17/20/23).
+var squadAgeNumbers = map[string]bool{"15": true, "17": true, "20": true, "23": true}
+
+// squadQualifier returns the canonical squad qualifier carried by an
+// already-normalized title, or "" when it carries none.
+//
+// Normalize renders "Sub-20" and "Sub 20" as the token pair "sub 20", "U-20" as
+// "u 20", and "U20"/"Sub20" as one fused token (see
+// TestNormalize_SquadQualifierForms). All of those collapse onto the same
+// canonical "u20" value, so equivalent spellings compare equal.
+func squadQualifier(normTitle string) string {
+	toks := strings.Fields(normTitle)
+	for i, tok := range toks {
+		if q, ok := squadQualifierTokens[tok]; ok {
+			return q
+		}
+		if q, ok := fusedSquadAge(tok); ok {
+			return q
+		}
+		if (tok == "sub" || tok == "u") && i+1 < len(toks) && squadAgeNumbers[toks[i+1]] {
+			return "u" + toks[i+1]
+		}
+	}
+	return ""
+}
+
+// fusedSquadAge reports whether an already-normalized token is a fused youth age
+// qualifier ("sub20", "u20", ...) and returns its canonical "u20" form.
+func fusedSquadAge(tok string) (string, bool) {
+	for _, prefix := range [2]string{"sub", "u"} {
+		if age := strings.TrimPrefix(tok, prefix); age != tok && squadAgeNumbers[age] {
+			return "u" + age, true
+		}
+	}
+	return "", false
+}
+
 // teamIdentified reports whether the guide title identifies this team.
 //
 // Canonical identity comes first: when the team maps to a known club id, the
@@ -973,6 +1028,12 @@ func isFixturePhrase(normTitle string) bool {
 // different competition, a studio panel, or a namesake club, and resolving on it
 // is exactly how the wrong broadcast gets picked.
 //
+// Before either of those checks, one squad-qualifier gate applies: the guide
+// title and the fixture title must carry the SAME squad qualifier, or none at
+// all. A senior fixture never resolves against a Sub-20 broadcast, and a
+// "Real Madrid" fixture never resolves against "Real Madrid Femenino", even
+// though both team names are identical.
+//
 // Returns:
 //
 //	matched: true only for a full fixture-title match or a genuine both-teams match
@@ -984,6 +1045,14 @@ func MatchScore(guideTitle string, match model.Match) (bool, int) {
 	}
 
 	tNorm := Normalize(match.Title)
+
+	// 0. Squad qualifier gate. A qualifier present on only one side, or two
+	// different qualifiers, describe a different competition. It runs before
+	// the full-fixture-title check on purpose: repeating both team names is not
+	// evidence that the squads are the same.
+	if squadQualifier(gNorm) != squadQualifier(tNorm) {
+		return false, 0
+	}
 
 	// 1. Full fixture-title match (e.g. "Roma vs. Real Madrid" against
 	// "AS Roma vs Real Madrid"). Both sides must read as a fixture phrase so a

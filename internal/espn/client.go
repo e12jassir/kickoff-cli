@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math/rand/v2"
 	"net/http"
 	"os"
@@ -32,12 +33,34 @@ const (
 	// interactive UI far past the point where a retry is still useful.
 	maxRetryAfter = 10 * time.Second
 
-	// probeConcurrency caps the scoreboard probes a cold cache may keep in
-	// flight. The historical sweep fans out over 14 days, and without a cap a
-	// single startup could burst ~29 simultaneous requests to ESPN.
-	probeConcurrency = 4
+	// maxConcurrentRequests caps how many HTTP requests this process keeps in
+	// flight at once. It is enforced once, at the HTTP transport, so every
+	// caller path (scoreboard reads, day probes, match details, standings,
+	// statistics and internal/bar's league fan-out) shares the same budget
+	// instead of each fan-out adding its own. The historical sweep fans out
+	// over 14 days, and without a cap a single startup could burst ~29
+	// simultaneous requests to ESPN.
+	maxConcurrentRequests = 4
 	// probeDays is the size of the past and upcoming day windows.
 	probeDays = 14
+
+	// probeDeadlineFloor is the minimum time a cold-cache sweep gets: enough
+	// for one batch of probes on a slow link, and the fixed value every sweep
+	// used before the deadline became derived from the work.
+	probeDeadlineFloor = 8 * time.Second
+	// probeBatchCost is the allowance per budget batch when deriving a sweep
+	// deadline. A sweep that needs n batches of maxConcurrentRequests probes
+	// gets n * probeBatchCost, clamped between the floor and the ceiling.
+	probeBatchCost = 2 * time.Second
+	// maxProbeDeadline caps both the derived and the overridden sweep deadline
+	// so a wide window can never hold a startup for minutes.
+	maxProbeDeadline = 30 * time.Second
+
+	// cacheSchemaVersion is the on-disk schema revision shared by every
+	// persisted ESPN cache entry. Bumping it invalidates older entries by
+	// design: a read whose stored version differs is treated as a cache miss
+	// and the entry is refetched, with no migration or backfill.
+	cacheSchemaVersion = 1
 )
 
 type rawResponse struct {
@@ -172,21 +195,24 @@ type rawStatisticItem struct {
 }
 
 type cachedSummary struct {
-	CachedAt   time.Time           `json:"cached_at"`
-	Stats      *model.MatchStats   `json:"stats"`
-	Lineups    *model.MatchLineups `json:"lineups"`
-	Referee    string              `json:"referee"`
-	Attendance int                 `json:"attendance"`
+	SchemaVersion int                 `json:"schema_version"`
+	CachedAt      time.Time           `json:"cached_at"`
+	Stats         *model.MatchStats   `json:"stats"`
+	Lineups       *model.MatchLineups `json:"lineups"`
+	Referee       string              `json:"referee"`
+	Attendance    int                 `json:"attendance"`
 }
 
 type cachedStandings struct {
-	CachedAt  time.Time              `json:"cached_at"`
-	Standings *model.LeagueStandings `json:"standings"`
+	SchemaVersion int                    `json:"schema_version"`
+	CachedAt      time.Time              `json:"cached_at"`
+	Standings     *model.LeagueStandings `json:"standings"`
 }
 
 type cachedStatistics struct {
-	CachedAt   time.Time               `json:"cached_at"`
-	Statistics *model.LeagueStatistics `json:"statistics"`
+	SchemaVersion int                     `json:"schema_version"`
+	CachedAt      time.Time               `json:"cached_at"`
+	Statistics    *model.LeagueStatistics `json:"statistics"`
 }
 
 type rawVenue struct {
@@ -220,13 +246,15 @@ type rawStatusType struct {
 }
 
 type cachedData struct {
-	CachedAt time.Time     `json:"cached_at"`
-	Matches  []model.Match `json:"matches"`
+	SchemaVersion int           `json:"schema_version"`
+	CachedAt      time.Time     `json:"cached_at"`
+	Matches       []model.Match `json:"matches"`
 }
 
 type cachedPastEvents struct {
-	CachedAt time.Time  `json:"cached_at"`
-	Events   []rawEvent `json:"events"`
+	SchemaVersion int        `json:"schema_version"`
+	CachedAt      time.Time  `json:"cached_at"`
+	Events        []rawEvent `json:"events"`
 }
 
 // Client implements model.Client for fetching ESPN soccer fixtures.
@@ -240,10 +268,9 @@ type Client struct {
 	now          func() time.Time
 	retryBackoff func() time.Duration
 
-	// probeSem is a client-wide limiter for scoreboard probes; probeSemOnce
-	// lazily creates it so a client built without NewClient still works.
-	probeSemOnce sync.Once
-	probeSem     chan struct{}
+	// probeBudget, when positive, replaces the deadline derived from the size
+	// of a cold-cache sweep. It is still clamped to maxProbeDeadline.
+	probeBudget time.Duration
 }
 
 type Option func(*Client)
@@ -296,6 +323,16 @@ func WithRetryBackoff(fn func() time.Duration) Option {
 	}
 }
 
+// WithProbeBudget overrides the deadline a cold-cache scoreboard sweep gets.
+// An explicit value always wins over the deadline derived from the number of
+// day probes, and is still capped at maxProbeDeadline. Non-positive values are
+// ignored so callers can pass a zero value to keep the derived deadline.
+func WithProbeBudget(d time.Duration) Option {
+	return func(c *Client) {
+		c.probeBudget = d
+	}
+}
+
 func NewClient(opts ...Option) *Client {
 	cacheBase, err := os.UserCacheDir()
 	if err != nil || cacheBase == "" {
@@ -331,7 +368,92 @@ func NewClient(opts ...Option) *Client {
 		opt(c)
 	}
 
+	// Install the shared HTTP budget last so it also covers a caller-supplied
+	// http.Client: no caller path may bypass the cap.
+	c.httpClient = withRequestBudget(c.httpClient)
+
 	return c
+}
+
+// requestBudget is the process-wide slot pool every ESPN client shares. It
+// lives at package scope on purpose: the cap describes the whole process
+// talking to ESPN, so two clients cannot each spend the full budget and double
+// the request burst.
+var requestBudget = make(chan struct{}, maxConcurrentRequests)
+
+// budgetTransport bounds how many requests are in flight at the same time,
+// regardless of which Client method or fan-out issued them. It holds one slot
+// from the moment a request starts until its response body is closed, because
+// the body, not the RoundTrip call, is the unit of work: every caller decodes
+// the response after RoundTrip returns.
+type budgetTransport struct {
+	base  http.RoundTripper
+	slots chan struct{}
+}
+
+// newRequestBudgetTransport wraps base in the shared budget. It refuses to wrap
+// an existing budgetTransport: stacking two budgets would let the outer
+// acquisition block on the inner one while the outer slot is still held, which
+// no other goroutine can release.
+func newRequestBudgetTransport(base http.RoundTripper) http.RoundTripper {
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	if _, alreadyBounded := base.(*budgetTransport); alreadyBounded {
+		return base
+	}
+	return &budgetTransport{base: base, slots: requestBudget}
+}
+
+// withRequestBudget returns a copy of client whose transport enforces the shared
+// budget. The caller's client is copied rather than mutated so a client shared
+// with another subsystem keeps its own behavior.
+func withRequestBudget(client *http.Client) *http.Client {
+	if client == nil {
+		client = &http.Client{Timeout: defaultTimeout}
+	}
+	if _, alreadyBounded := client.Transport.(*budgetTransport); alreadyBounded {
+		return client
+	}
+
+	bounded := *client
+	bounded.Transport = newRequestBudgetTransport(client.Transport)
+	return &bounded
+}
+
+func (t *budgetTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	select {
+	case t.slots <- struct{}{}:
+	case <-req.Context().Done():
+		return nil, req.Context().Err()
+	}
+
+	resp, err := t.base.RoundTrip(req)
+	if err != nil {
+		<-t.slots
+		return nil, err
+	}
+	if resp == nil || resp.Body == nil {
+		<-t.slots
+		return resp, nil
+	}
+
+	resp.Body = &budgetBody{ReadCloser: resp.Body, slots: t.slots}
+	return resp, nil
+}
+
+// budgetBody releases its budget slot when closed. Release is idempotent
+// because net/http and the retry loop may close a body more than once.
+type budgetBody struct {
+	io.ReadCloser
+	slots     chan struct{}
+	closeOnce sync.Once
+}
+
+func (b *budgetBody) Close() error {
+	err := b.ReadCloser.Close()
+	b.closeOnce.Do(func() { <-b.slots })
+	return err
 }
 
 // parseRetryAfter parses the standard HTTP Retry-After header.
@@ -398,7 +520,7 @@ func (c *Client) doWithRetry(req *http.Request) (*http.Response, error) {
 
 		if req.Context().Err() != nil {
 			if resp != nil && resp.Body != nil {
-				resp.Body.Close()
+				_ = resp.Body.Close()
 			}
 			return nil, req.Context().Err()
 		}
@@ -411,7 +533,7 @@ func (c *Client) doWithRetry(req *http.Request) (*http.Response, error) {
 		if attempt < maxRetries {
 			backoff := c.calculateBackoff(attempt, resp)
 			if resp != nil && resp.Body != nil {
-				resp.Body.Close()
+				_ = resp.Body.Close()
 			}
 			if backoff > 0 {
 				select {
@@ -490,6 +612,9 @@ func (c *Client) readDiskCache(leagueKey string) (*cachedData, bool) {
 	if err := json.Unmarshal(data, &cached); err != nil {
 		return nil, false
 	}
+	if cached.SchemaVersion != cacheSchemaVersion {
+		return nil, false
+	}
 
 	return &cached, true
 }
@@ -540,21 +665,15 @@ func (c *Client) setCache(leagueKey string, matches []model.Match) {
 	}
 	cachePath := c.cacheFilePath(leagueKey)
 	cached := cachedData{
-		CachedAt: c.now(),
-		Matches:  matches,
+		SchemaVersion: cacheSchemaVersion,
+		CachedAt:      c.now(),
+		Matches:       matches,
 	}
 	data, err := json.Marshal(cached)
 	if err != nil {
 		return
 	}
 	_ = fsutil.AtomicWriteFile(cachePath, data, 0o644)
-}
-
-func (c *Client) invalidateCache(leagueKey string) {
-	cachePath := c.cacheFilePath(leagueKey)
-	_ = os.Remove(cachePath)
-	pastPath := c.pastCacheFilePath(leagueKey)
-	_ = os.Remove(pastPath)
 }
 
 func (c *Client) pastCacheFilePath(leagueKey string) string {
@@ -571,6 +690,9 @@ func (c *Client) readDiskPastEvents(leagueKey string) (*cachedPastEvents, bool) 
 
 	var cached cachedPastEvents
 	if err := json.Unmarshal(data, &cached); err != nil {
+		return nil, false
+	}
+	if cached.SchemaVersion != cacheSchemaVersion {
 		return nil, false
 	}
 
@@ -607,8 +729,9 @@ func (c *Client) setCachedPastEvents(leagueKey string, events []rawEvent) {
 	}
 	cachePath := c.pastCacheFilePath(leagueKey)
 	cached := cachedPastEvents{
-		CachedAt: c.now(),
-		Events:   events,
+		SchemaVersion: cacheSchemaVersion,
+		CachedAt:      c.now(),
+		Events:        events,
 	}
 	data, err := json.Marshal(cached)
 	if err != nil {
@@ -630,6 +753,9 @@ func (c *Client) readDiskSummary(eventID string) (*cachedSummary, bool) {
 
 	var cached cachedSummary
 	if err := json.Unmarshal(data, &cached); err != nil {
+		return nil, false
+	}
+	if cached.SchemaVersion != cacheSchemaVersion {
 		return nil, false
 	}
 
@@ -676,11 +802,12 @@ func (c *Client) setCachedSummary(eventID string, stats *model.MatchStats, lineu
 	}
 	cachePath := c.summaryCachePath(eventID)
 	cached := cachedSummary{
-		CachedAt:   c.now(),
-		Stats:      stats,
-		Lineups:    lineups,
-		Referee:    referee,
-		Attendance: attendance,
+		SchemaVersion: cacheSchemaVersion,
+		CachedAt:      c.now(),
+		Stats:         stats,
+		Lineups:       lineups,
+		Referee:       referee,
+		Attendance:    attendance,
 	}
 	data, err := json.Marshal(cached)
 	if err != nil {
@@ -729,15 +856,21 @@ func (c *Client) FetchMatches(ctx context.Context, leagueKey string) ([]model.Ma
 	if err != nil {
 		return c.fallbackMatches(leagueKey, fmt.Errorf("network request failed: %w", err))
 	}
-	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		_ = resp.Body.Close()
 		return c.fallbackMatches(leagueKey, fmt.Errorf("upstream espn returned status code %d", resp.StatusCode))
 	}
 
+	// The body is closed before the probe fan-out below, never with defer:
+	// the transport's HTTP budget is process-wide, so holding this response
+	// open while the sweep asks for slots of its own would let concurrent
+	// FetchMatches calls pin every slot and stall the sweep until its deadline.
 	var raw rawResponse
-	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
-		return c.fallbackMatches(leagueKey, fmt.Errorf("%w: %v", model.ErrCorruptedPayload, err))
+	decodeErr := json.NewDecoder(resp.Body).Decode(&raw)
+	_ = resp.Body.Close()
+	if decodeErr != nil {
+		return c.fallbackMatches(leagueKey, fmt.Errorf("%w: %v", model.ErrCorruptedPayload, decodeErr))
 	}
 
 	now := c.now().In(c.loc)
@@ -1055,10 +1188,11 @@ func (c *Client) FetchMatches(ctx context.Context, leagueKey string) ([]model.Ma
 	return matches, nil
 }
 
-// probeScoreboardDays fetches one scoreboard per day offset. Probes are
-// dispatched through a client-wide limiter so a cold-cache sweep never keeps
-// more than probeConcurrency requests in flight, and it stops dispatching as
-// soon as ctx is cancelled.
+// probeScoreboardDays fetches one scoreboard per day offset. The HTTP transport
+// budget is the only limiter here: this dispatches one goroutine per offset and
+// lets the transport queue them, so probes, main scoreboard reads and the bar
+// league fan-out all draw from the same pool. A goroutine still waiting for a
+// slot gives up as soon as ctx is cancelled.
 func (c *Client) probeScoreboardDays(ctx context.Context, leagueCode string, now time.Time, offsets []int) []scoreboardProbe {
 	if len(offsets) == 0 {
 		return nil
@@ -1070,15 +1204,13 @@ func (c *Client) probeScoreboardDays(ctx context.Context, leagueCode string, now
 	var wg sync.WaitGroup
 
 	for _, offset := range offsets {
-		release, err := c.acquireProbeSlot(ctx)
-		if err != nil {
+		if ctx.Err() != nil {
 			break
 		}
 
 		wg.Add(1)
 		go func(dayOffset int) {
 			defer wg.Done()
-			defer release()
 
 			if probe, ok := c.fetchScoreboardDay(ctx, leagueCode, now, dayOffset); ok {
 				results <- probe
@@ -1096,27 +1228,37 @@ func (c *Client) probeScoreboardDays(ctx context.Context, leagueCode string, now
 	return probes
 }
 
-// acquireProbeSlot reserves one probe slot, waiting for a free one at most
-// until ctx is cancelled. The returned function releases the slot.
-func (c *Client) acquireProbeSlot(ctx context.Context) (func(), error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
+// probeTimeout reports the deadline a sweep over days day probes gets. An
+// explicit WithProbeBudget value wins and is clamped to maxProbeDeadline;
+// otherwise the deadline is derived from how many budget batches the sweep
+// implies.
+func (c *Client) probeTimeout(days int) time.Duration {
+	if c.probeBudget > 0 {
+		return min(c.probeBudget, maxProbeDeadline)
 	}
-
-	slots := c.probeSlots()
-	select {
-	case slots <- struct{}{}:
-		return func() { <-slots }, nil
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
+	return derivedProbeDeadline(days, maxConcurrentRequests)
 }
 
-func (c *Client) probeSlots() chan struct{} {
-	c.probeSemOnce.Do(func() {
-		c.probeSem = make(chan struct{}, probeConcurrency)
-	})
-	return c.probeSem
+// derivedProbeDeadline sizes a cold-cache sweep from its work:
+// max(probeDeadlineFloor, probeBatchCost * ceil(days/concurrency)), clamped to
+// maxProbeDeadline. The floor keeps a normal 14-day sweep on the value it always
+// had; the per-batch term lets a wider window or a narrower budget buy the time
+// its extra batches need instead of being cut off mid-sweep.
+func derivedProbeDeadline(days, concurrency int) time.Duration {
+	if concurrency <= 0 {
+		concurrency = 1
+	}
+
+	batches := 0
+	if days > 0 {
+		batches = (days + concurrency - 1) / concurrency
+	}
+
+	deadline := time.Duration(batches) * probeBatchCost
+	if deadline < probeDeadlineFloor {
+		return probeDeadlineFloor
+	}
+	return min(deadline, maxProbeDeadline)
 }
 
 // fetchScoreboardDay requests the scoreboard for a single day offset. Requests
@@ -1139,7 +1281,7 @@ func (c *Client) fetchScoreboardDay(ctx context.Context, leagueCode string, now 
 	if err != nil {
 		return scoreboardProbe{}, false
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return scoreboardProbe{}, false
@@ -1158,13 +1300,13 @@ func (c *Client) fetchScoreboardDay(ctx context.Context, leagueCode string, now 
 
 // fetchRecentPastScoreboardEvents probes dates 1-14 days into the past to capture the full recent matchday round.
 func (c *Client) fetchRecentPastScoreboardEvents(ctx context.Context, leagueCode string, now time.Time) []rawEvent {
-	probeCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
-	defer cancel()
-
 	offsets := make([]int, 0, probeDays)
 	for offset := 1; offset <= probeDays; offset++ {
 		offsets = append(offsets, -offset)
 	}
+
+	probeCtx, cancel := context.WithTimeout(ctx, c.probeTimeout(len(offsets)))
+	defer cancel()
 
 	allRes := c.probeScoreboardDays(probeCtx, leagueCode, now, offsets)
 	if len(allRes) == 0 {
@@ -1190,13 +1332,13 @@ func (c *Client) fetchRecentPastScoreboardEvents(ctx context.Context, leagueCode
 // fetchUpcomingScoreboardEvents probes dates 1-14 days into the future to find the next active matchday.
 // It starts at offset 1 because the current day is already covered by the default scoreboard request.
 func (c *Client) fetchUpcomingScoreboardEvents(ctx context.Context, leagueCode string, now time.Time) []rawEvent {
-	probeCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
-	defer cancel()
-
 	offsets := make([]int, 0, probeDays)
 	for offset := 1; offset <= probeDays; offset++ {
 		offsets = append(offsets, offset)
 	}
+
+	probeCtx, cancel := context.WithTimeout(ctx, c.probeTimeout(len(offsets)))
+	defer cancel()
 
 	allRes := c.probeScoreboardDays(probeCtx, leagueCode, now, offsets)
 	if len(allRes) == 0 {
@@ -1269,7 +1411,7 @@ func (c *Client) FetchMatchDetails(ctx context.Context, leagueKey, eventID strin
 	if err != nil {
 		return c.fallbackSummary(eventID, fmt.Errorf("network request failed: %w", err))
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return c.fallbackSummary(eventID, fmt.Errorf("upstream espn returned status code %d", resp.StatusCode))
@@ -1385,9 +1527,10 @@ func (c *Client) FetchMatchDetails(ctx context.Context, leagueKey, eventID strin
 			for i := range raw.Rosters {
 				r := &raw.Rosters[i]
 				if r.Team != nil {
-					if r.Team.ID == homeTeamID {
+					switch r.Team.ID {
+					case homeTeamID:
 						homeRoster = r
-					} else if r.Team.ID == awayTeamID {
+					case awayTeamID:
 						awayRoster = r
 					}
 				}
@@ -1557,6 +1700,9 @@ func (c *Client) readDiskStandings(leagueKey string) (*cachedStandings, bool) {
 	if err := json.Unmarshal(data, &cached); err != nil {
 		return nil, false
 	}
+	if cached.SchemaVersion != cacheSchemaVersion {
+		return nil, false
+	}
 	return &cached, true
 }
 
@@ -1566,8 +1712,9 @@ func (c *Client) setCachedStandings(leagueKey string, standings *model.LeagueSta
 	}
 	_ = os.MkdirAll(c.cacheDir, 0o755)
 	cached := cachedStandings{
-		CachedAt:  c.now(),
-		Standings: standings,
+		SchemaVersion: cacheSchemaVersion,
+		CachedAt:      c.now(),
+		Standings:     standings,
 	}
 	data, err := json.Marshal(cached)
 	if err == nil {
@@ -1602,7 +1749,7 @@ func (c *Client) FetchStandings(ctx context.Context, leagueKey string) (*model.L
 	if err != nil {
 		return c.fallbackStandings(leagueKey, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return c.fallbackStandings(leagueKey, fmt.Errorf("upstream espn standings returned status code %d", resp.StatusCode))
@@ -1774,6 +1921,9 @@ func (c *Client) readDiskStatistics(leagueKey string) (*cachedStatistics, bool) 
 	if err := json.Unmarshal(data, &cached); err != nil {
 		return nil, false
 	}
+	if cached.SchemaVersion != cacheSchemaVersion {
+		return nil, false
+	}
 	return &cached, true
 }
 
@@ -1783,8 +1933,9 @@ func (c *Client) setCachedStatistics(leagueKey string, statistics *model.LeagueS
 	}
 	_ = os.MkdirAll(c.cacheDir, 0o755)
 	cached := cachedStatistics{
-		CachedAt:   c.now(),
-		Statistics: statistics,
+		SchemaVersion: cacheSchemaVersion,
+		CachedAt:      c.now(),
+		Statistics:    statistics,
 	}
 	data, err := json.Marshal(cached)
 	if err == nil {
@@ -1815,7 +1966,7 @@ func (c *Client) FetchStatistics(ctx context.Context, leagueKey string) (*model.
 	if err != nil {
 		return c.fallbackStatistics(leagueKey, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return c.fallbackStatistics(leagueKey, fmt.Errorf("upstream espn statistics returned status code %d", resp.StatusCode))

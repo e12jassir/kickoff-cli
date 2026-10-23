@@ -12,7 +12,6 @@ PROPUESTAS_*.md
 
 # Internal SDD process artifacts — published specs stay, planning stays private
 openspec/changes/
-openspec/config.yaml
 
 # Repomix dumps (generated locally, never commit the codebase as a blob)
 repomix-output.xml

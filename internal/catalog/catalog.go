@@ -334,7 +334,8 @@ func (c *Catalog) probeAllStreamsBackground(envStreams []string) {
 			if err != nil {
 				return
 			}
-			defer resp.Body.Close()
+			// Read-only HTTP body: a Close error cannot change the bytes already read.
+			defer func() { _ = resp.Body.Close() }()
 
 			if resp.StatusCode >= 200 && resp.StatusCode < 400 {
 				buf := make([]byte, 256)
@@ -485,7 +486,8 @@ func (c *Catalog) loadExternalConfig() {
 				client := &http.Client{Timeout: 10 * time.Second}
 				resp, err := client.Do(req)
 				if err == nil {
-					defer resp.Body.Close()
+					// Read-only HTTP body: a Close error cannot change the bytes already read.
+					defer func() { _ = resp.Body.Close() }()
 					if resp.StatusCode == http.StatusOK {
 						limitedReader := io.LimitReader(resp.Body, maxPlaylistReadSize)
 						if m3uList, err := ParseM3U(limitedReader); err == nil && len(m3uList) > 0 {
@@ -856,6 +858,14 @@ func (c *Catalog) buildChannelsForTarget(target tvguide.ChannelTarget) []model.C
 
 // GetChannels resolves match-specific broadcast channels based on user configuration.
 func (c *Catalog) GetChannels(match model.Match) []model.Channel {
+	return c.GetChannelsCtx(context.Background(), match)
+}
+
+// GetChannelsCtx resolves match-specific broadcast channels like GetChannels but
+// honors ctx, so a caller that owns a time boundary can abandon a hung parrilla
+// or web-extractor source instead of leaving the goroutine in flight forever.
+// Callers that never cancel observe exactly the same result and ordering.
+func (c *Catalog) GetChannelsCtx(ctx context.Context, match model.Match) []model.Channel {
 	if match.Status.Completed || strings.ToLower(match.Status.State) == "post" {
 		return nil
 	}
@@ -907,7 +917,7 @@ func (c *Catalog) GetChannels(match model.Match) []model.Channel {
 	// channel: entries still marked "por definir" and channels without a
 	// configured stream URL yield nothing.
 	if len(candidates) == 0 {
-		if parrillaChs := c.resolveFromParrilla(match); len(parrillaChs) > 0 {
+		if parrillaChs := c.resolveFromParrilla(ctx, match); len(parrillaChs) > 0 {
 			candidates = append(candidates, parrillaChs...)
 		}
 	}
@@ -938,7 +948,7 @@ func (c *Catalog) GetChannels(match model.Match) []model.Channel {
 		if cached && c.now().Sub(entry.CachedAt) < 30*time.Minute {
 			candidates = append(candidates, entry.Channels...)
 		} else {
-			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+			ctx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
 			defer cancel()
 			if webChs := c.ResolveWebChannels(ctx, match); len(webChs) > 0 {
 				candidates = append(candidates, webChs...)
@@ -1248,8 +1258,8 @@ func (c *Catalog) resolveSignalURL(key, label string) (string, bool) {
 // national broadcasters also emit their companion feeds. When no listed channel
 // resolves to a URL, or the schedule is unreachable, it returns nothing so lower
 // tiers can run.
-func (c *Catalog) resolveFromParrilla(match model.Match) []model.Channel {
-	snap, ok := c.parrillaSnapshot(parrillaDay(match))
+func (c *Catalog) resolveFromParrilla(ctx context.Context, match model.Match) []model.Channel {
+	snap, ok := c.parrillaSnapshot(ctx, parrillaDay(match))
 	if !ok {
 		return nil
 	}
@@ -1304,7 +1314,7 @@ func parrillaDay(match model.Match) time.Time {
 // most once per source calendar day. A successful snapshot is cached for its whole
 // day; a failed fetch is cached only for parrillaFailureTTL, so a transient outage
 // is retried during the same day instead of hiding the grid until midnight.
-func (c *Catalog) parrillaSnapshot(date time.Time) (parrilla.Snapshot, bool) {
+func (c *Catalog) parrillaSnapshot(ctx context.Context, date time.Time) (parrilla.Snapshot, bool) {
 	key := date.In(locale.BogotaLocation()).Format("2006-01-02")
 
 	c.mu.RLock()
@@ -1335,7 +1345,7 @@ func (c *Catalog) parrillaSnapshot(date time.Time) (parrilla.Snapshot, bool) {
 		return parrilla.Snapshot{}, false
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), parrillaFetchTimeout)
+	ctx, cancel := context.WithTimeout(ctx, parrillaFetchTimeout)
 	defer cancel()
 	snap, err := fetcher.Fetch(ctx, date)
 	fetchOK := err == nil
