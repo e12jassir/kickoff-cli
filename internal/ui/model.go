@@ -282,6 +282,18 @@ func (m Model) cat() *i18n.Catalog {
 	return m.i18n
 }
 
+// isPlayingStatus reports whether statusMsg represents an active playback status.
+func (m Model) isPlayingStatus() bool {
+	if m.statusMsg == "" {
+		return false
+	}
+	prefix := m.cat().NowPlayingTemplate
+	if idx := strings.Index(prefix, "{channel}"); idx != -1 {
+		prefix = prefix[:idx]
+	}
+	return strings.HasPrefix(m.statusMsg, prefix) || strings.Contains(m.statusMsg, "Reproduciendo")
+}
+
 // displayNow returns the current instant in the user's display timezone.
 func (m Model) displayNow() time.Time {
 	now := time.Now

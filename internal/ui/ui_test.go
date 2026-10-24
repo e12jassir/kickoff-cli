@@ -1063,7 +1063,7 @@ func TestModel_ChannelModal_SanitizedAndAligned(t *testing.T) {
 		Status:    model.MatchStatus{State: "in", Description: "1T 25'"},
 	}
 
-	out := renderChannelModal(match, time.Now(), channels, 0, 0, false, "", false, false)
+	out := renderChannelModal(match, time.Now(), channels, 0, 0, false, "", false, false, false, 60, i18n.Default())
 
 	// 1. Must NOT contain bullet indentations "·" preceding channel names
 	if strings.Contains(out, "· Win+ Fútbol") || strings.Contains(out, "· Win Sports") {
@@ -1549,8 +1549,8 @@ func TestModel_TabResumen_SymmetricalCards_Scroll_And_NvimNav(t *testing.T) {
 
 	viewScrolled := m.View()
 	// Now it should have up scroll indicator
-	if !strings.Contains(viewScrolled, "anteriores") {
-		t.Errorf("expected up scroll indicator 'anteriores' after scrolling down, got:\n%s", viewScrolled)
+	if !strings.Contains(viewScrolled, "anterior") {
+		t.Errorf("expected up scroll indicator 'anterior' after scrolling down, got:\n%s", viewScrolled)
 	}
 
 	// 3. Navigate up with 'k'
@@ -3175,7 +3175,7 @@ func TestRenderTimeline_PlayerFallback(t *testing.T) {
 		{Type: "goal", Clock: "80'", TeamID: "home", IsScoring: true, PlayerName: "R. Lewandowski"},
 	}
 
-	got := renderTimeline(events, "home", 60, true)
+	got := renderTimeline(events, "home", 60, true, i18n.Default())
 
 	wantFragments := []string{"Cuerpo técnico", "Autogol", "Gol ", "R. Lewandowski"}
 	for _, fragment := range wantFragments {
@@ -3383,7 +3383,7 @@ func TestRender_PresentationFallbacks_EmptyDomain(t *testing.T) {
 		Venue:    "",
 		Status:   model.MatchStatus{State: "pre", Description: ""},
 	}
-	modalView := renderChannelModal(modalMatch, time.Now(), nil, 0, 0, false, "", false, false, cat)
+	modalView := renderChannelModal(modalMatch, time.Now(), nil, 0, 0, false, "", false, false, false, 60, cat)
 	if !strings.Contains(modalView, cat.FallbackHome) {
 		t.Errorf("renderChannelModal missing FallbackHome: %s", modalView)
 	}
@@ -3420,7 +3420,7 @@ func TestRender_PresentationFallbacks_EmptyDomain(t *testing.T) {
 		{Type: "card_yellow", PlayerName: "", Clock: "20'", TeamID: "h1", IsYellow: true},
 		{Type: "goal", PlayerName: "", Clock: "30'", TeamID: "h1", IsOwnGoal: true},
 	}
-	tlView := renderTimeline(tlEvents, "h1", 60, true)
+	tlView := renderTimeline(tlEvents, "h1", 60, true, cat)
 	if !strings.Contains(tlView, cat.FallbackGoal) {
 		t.Errorf("renderTimeline missing FallbackGoal: %s", tlView)
 	}

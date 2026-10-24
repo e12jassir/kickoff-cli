@@ -16,7 +16,7 @@ import (
 // View renders the terminal user interface according to model state.
 func (m Model) View() string {
 	if m.width < 60 || m.height < 15 {
-		return "Terminal window is too small (min 60x15). Please resize."
+		return m.cat().WindowTooSmall
 	}
 	if m.state == StateStartup {
 		return renderStartup(m)
@@ -28,12 +28,13 @@ func (m Model) View() string {
 }
 
 func renderStartup(m Model) string {
+	cat := m.cat()
 	logo := AsciiLogoStyle.Render(AsciiLogo)
-	subtitle := SubtitleStyle.Render("Terminal Live Football • Cargando Competiciones...")
+	subtitle := SubtitleStyle.Render(cat.StartupSubtitle)
 
-	loader := fmt.Sprintf("%s Cargando Kickoff...", m.spinner.View())
+	loader := cat.StartupLoader(m.spinner.View())
 	loaderStyled := lipgloss.NewStyle().Foreground(ColorHighlight).Bold(true).Render(loader)
-	hint := FooterHelpStyle.Render("Presiona cualquier tecla para continuar...")
+	hint := FooterHelpStyle.Render(cat.StartupHint)
 
 	content := lipgloss.JoinVertical(lipgloss.Center,
 		logo,
@@ -56,8 +57,9 @@ func renderStartup(m Model) string {
 }
 
 func renderMainMenu(m Model) string {
+	cat := m.cat()
 	logo := AsciiLogoStyle.Render(AsciiLogo)
-	subtitle := SubtitleStyle.Render("Terminal Live Football")
+	subtitle := SubtitleStyle.Render(cat.MenuSubtitle)
 
 	var lines []string
 
@@ -116,11 +118,11 @@ func renderMainMenu(m Model) string {
 
 	menuBox := MenuBoxStyle.Render(strings.Join(lines, "\n"))
 
-	footerText := "↑/k ↓/j: navegar  •  enter/space: desplegar/entrar  •  ←/→: plegar/desplegar  •  q: salir"
-	if strings.Contains(m.statusMsg, "Reproduciendo") {
-		footerText = "↑/k ↓/j: navegar  •  enter: entrar  •  x: parar señal  •  q: salir"
+	footerText := cat.MenuHelp
+	if m.isPlayingStatus() {
+		footerText = cat.MenuHelpPlaying
 	} else if m.updateAvailable != "" {
-		footerText = fmt.Sprintf("↑/k ↓/j: navegar  •  enter: entrar  •  u: actualizar (%s)  •  q: salir", m.updateAvailable)
+		footerText = cat.MenuHelpUpdate(m.updateAvailable)
 	}
 	footer := FooterHelpStyle.Render(footerText)
 
@@ -131,7 +133,7 @@ func renderMainMenu(m Model) string {
 		banner := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#00FF88")).
 			Bold(true).
-			Render(fmt.Sprintf("%s ¡Actualización disponible (%s)! Presiona [u] para actualizar", icon, m.updateAvailable))
+			Render(cat.UpdateBanner(icon, m.updateAvailable))
 		elements = append(elements, "", banner)
 	}
 	if m.statusMsg != "" {
@@ -156,8 +158,9 @@ func renderMainMenu(m Model) string {
 }
 
 func renderBrowsing(m Model) string {
+	cat := m.cat()
 	curr := m.CurrentLeague()
-	headerText := fmt.Sprintf("KICKOFF · %s", curr.Name)
+	headerText := cat.Header(curr.Name)
 
 	var statusBadge string
 	if len(m.matches) > 0 && m.matches[0].IsOffline {
@@ -165,7 +168,7 @@ func renderBrowsing(m Model) string {
 		if !m.matches[0].CachedAt.IsZero() {
 			cachedTimeStr = m.matches[0].CachedAt.Format("15:04")
 		}
-		statusBadge = OfflineBadgeStyle.Render(fmt.Sprintf("[OFFLINE · cached at %s]", cachedTimeStr))
+		statusBadge = OfflineBadgeStyle.Render(cat.OfflineBadge(cachedTimeStr))
 	} else {
 		hasLive := false
 		for _, match := range m.matches {
@@ -175,7 +178,7 @@ func renderBrowsing(m Model) string {
 			}
 		}
 		if hasLive {
-			statusBadge = LiveBadgeStyle.Render("[LIVE · 5s sync]")
+			statusBadge = LiveBadgeStyle.Render(cat.LiveBadge)
 		}
 	}
 
@@ -185,7 +188,7 @@ func renderBrowsing(m Model) string {
 	header := AppTitleStyle.Render(headerText)
 
 	// Top View Tabs: [1 Resumen] [2 Partidos] [3 Posiciones] [4 Goleadores]
-	tabLabels := []string{"1 Resumen", "2 Partidos", "3 Posiciones", "4 Goleadores"}
+	tabLabels := []string{cat.TabResumen, cat.TabPartidos, cat.TabPosiciones, cat.TabGoleadores}
 	renderedTabs := make([]string, 4)
 	for i, lbl := range tabLabels {
 		if LeagueTab(i) == m.leagueTab {
@@ -197,9 +200,9 @@ func renderBrowsing(m Model) string {
 	tabsRow := lipgloss.JoinHorizontal(lipgloss.Center, renderedTabs[0], "   ", renderedTabs[1], "   ", renderedTabs[2], "   ", renderedTabs[3])
 
 	var body string
-	footerHelp := "h/l o ←/→: pestaña  •  j/k o ↑/↓: navegar  •  enter: detalles  •  esc: ligas  •  r: recargar  •  q: salir"
-	if strings.Contains(m.statusMsg, "Reproduciendo") {
-		footerHelp = "h/l: pestaña  •  j/k: navegar  •  enter: detalles  •  x: parar señal  •  esc: ligas  •  q: salir"
+	footerHelp := cat.BrowseHelp
+	if m.isPlayingStatus() {
+		footerHelp = cat.BrowseHelpPlaying
 	}
 	footer := FooterHelpStyle.Render(footerHelp)
 
@@ -209,13 +212,13 @@ func renderBrowsing(m Model) string {
 		wave := pulseWaves[m.pulseStep%len(pulseWaves)]
 		feedName := m.streamFeed
 		if feedName == "" {
-			feedName = "Canal"
+			feedName = cat.FallbackChannel
 		}
 		bitrateInfo := m.bitrate
 		if bitrateInfo == "" {
-			bitrateInfo = "HLS Stream"
+			bitrateInfo = cat.FallbackBitrate
 		}
-		pulseText := fmt.Sprintf("%s Conectando con %s... %s\nBitrate: %s", m.spinner.View(), feedName, wave, bitrateInfo)
+		pulseText := cat.ConnectingPulse(m.spinner.View(), feedName, wave, bitrateInfo)
 		connectingBox := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("#38BDF8")).
@@ -224,16 +227,16 @@ func renderBrowsing(m Model) string {
 			Align(lipgloss.Center).
 			Render(ConnectingPulseStyle.Render(pulseText))
 		body = connectingBox
-		footer = FooterHelpStyle.Render("Conectando stream de video...  •  esc: volver  •  q: salir")
+		footer = FooterHelpStyle.Render(cat.ConnectingHelp)
 	} else {
 		switch m.state {
 		case StateLoading:
 			body = fmt.Sprintf("  %s %s", m.spinner.View(), m.loadingMsg)
-			footer = FooterHelpStyle.Render("esc: volver  •  q: salir")
+			footer = FooterHelpStyle.Render(cat.BackHelp)
 
 		case StateError:
-			body = StatusBarError.Render(fmt.Sprintf("  ✖ Error: %s", m.errorMsg))
-			footer = FooterHelpStyle.Render("r: recargar  •  esc: volver  •  q: salir")
+			body = StatusBarError.Render(cat.ErrorBody(m.errorMsg))
+			footer = FooterHelpStyle.Render(cat.ErrorHelp)
 
 		case StateChannelSelect:
 			selMatch, _ := m.CurrentSelectedMatch()
@@ -243,12 +246,12 @@ func renderBrowsing(m Model) string {
 				modalWidth = 74
 				modalBox = modalBox.Width(modalWidth + 6)
 			}
-			modalContent := renderChannelModal(selMatch, m.displayNow(), m.channels, m.channelCursor, m.modalTab, m.livePulse, m.spinner.View(), m.IsDetailsLoaded(selMatch.ID), m.channelsLoading, m.noEmoji, modalWidth, m.cat())
+			modalContent := renderChannelModal(selMatch, m.displayNow(), m.channels, m.channelCursor, m.modalTab, m.livePulse, m.spinner.View(), m.IsDetailsLoaded(selMatch.ID), m.channelsLoading, m.noEmoji, modalWidth, cat)
 			body = modalBox.Render(modalContent)
 			if m.modalTab == 0 {
-				footer = FooterHelpStyle.Render("h/l o ←/→: pestaña  •  j/k o ↑/↓: canal  •  enter: reproducir  •  esc: volver")
+				footer = FooterHelpStyle.Render(cat.ChannelModalHelp)
 			} else {
-				footer = FooterHelpStyle.Render("h/l o ←/→: pestaña  •  esc: volver  •  q: salir")
+				footer = FooterHelpStyle.Render(cat.ChannelModalHelpTabs)
 			}
 
 		default: // StateBrowsing, StatePlaying
@@ -288,20 +291,16 @@ func renderBrowsing(m Model) string {
 }
 
 func renderTabPartidos(m Model, curr model.League) string {
+	cat := m.cat()
 	// Safety valve: with no stream source configured at all, the visibility rule
 	// filters every fixture out. Never let that read as "no matches today" — point
 	// the user at the fix instead.
 	if m.noStreamsConfigured {
-		notice := strings.Join([]string{
-			"No hay señales configuradas.",
-			"Configura tus URLs de streaming en:",
-			"~/.config/kickoff/channels.json",
-		}, "\n")
-		return MatchBoxStyle.Render(EmptyStateStyle.Render(notice))
+		return MatchBoxStyle.Render(EmptyStateStyle.Render(cat.NoStreamsNotice))
 	}
 
 	if len(m.matches) == 0 {
-		emptyMsg := fmt.Sprintf("No hay próximos partidos programados para %s.", curr.Name)
+		emptyMsg := cat.NoUpcomingMatches(curr.Name)
 		return MatchBoxStyle.Render(EmptyStateStyle.Render(emptyMsg))
 	}
 
@@ -314,13 +313,15 @@ func renderTabPartidos(m Model, curr model.League) string {
 		}
 	}
 
-	headerText := fmt.Sprintf("PARTIDOS DE HOY (%d)", len(m.matches))
-	if !isTodayMatchday {
+	var headerText string
+	if isTodayMatchday {
+		headerText = cat.MatchesToday(len(m.matches))
+	} else {
 		firstDate := ""
 		if len(m.matches) > 0 && !m.matches[0].StartTime.IsZero() {
-			firstDate = fmt.Sprintf(" · %s", m.matches[0].StartTime.Format("02/01"))
+			firstDate = m.matches[0].StartTime.Format("02/01")
 		}
-		headerText = fmt.Sprintf("PRÓXIMOS PARTIDOS%s (%d)", firstDate, len(m.matches))
+		headerText = cat.UpcomingMatches(firstDate, len(m.matches))
 	}
 
 	cursor := m.matchCursor
@@ -331,7 +332,7 @@ func renderTabPartidos(m Model, curr model.League) string {
 		cursor = 0
 	}
 
-	headerText += fmt.Sprintf("  •  [%d/%d]", cursor+1, len(m.matches))
+	headerText += cat.PositionCounter(cursor+1, len(m.matches))
 
 	var lines []string
 	lines = append(lines, CategoryHeaderStyle.Render(headerText))
@@ -362,14 +363,14 @@ func renderTabPartidos(m Model, curr model.League) string {
 	}
 
 	if start > 0 {
-		upScroll := lipgloss.NewStyle().Foreground(ColorMuted).Width(56).Align(lipgloss.Center).Render(fmt.Sprintf("▲  %d partidos anteriores  ▲", start))
+		upScroll := lipgloss.NewStyle().Foreground(ColorMuted).Width(56).Align(lipgloss.Center).Render(cat.ScrollOlder(start))
 		lines = append(lines, upScroll, "")
 	}
 
 	for i := start; i < end; i++ {
 		match := m.matches[i]
 		isSelected := i == cursor
-		itemLines := renderMatchItem(match, m.displayNow(), isSelected, m.livePulse, m.cat())
+		itemLines := renderMatchItem(match, m.displayNow(), isSelected, m.livePulse, cat)
 		lines = append(lines, itemLines...)
 		if i < end-1 {
 			lines = append(lines, "")
@@ -378,7 +379,7 @@ func renderTabPartidos(m Model, curr model.League) string {
 
 	if end < len(m.matches) {
 		remaining := len(m.matches) - end
-		downScroll := lipgloss.NewStyle().Foreground(ColorMuted).Width(56).Align(lipgloss.Center).Render(fmt.Sprintf("▼  %d partidos más abajo  ▼", remaining))
+		downScroll := lipgloss.NewStyle().Foreground(ColorMuted).Width(56).Align(lipgloss.Center).Render(cat.ScrollNewer(remaining))
 		lines = append(lines, "", downScroll)
 	}
 
@@ -386,6 +387,7 @@ func renderTabPartidos(m Model, curr model.League) string {
 }
 
 func renderTabResumen(m Model, curr model.League) string {
+	cat := m.cat()
 	var lines []string
 
 	// 1. League Leader Highlight from Standings if available
@@ -393,9 +395,9 @@ func renderTabResumen(m Model, curr model.League) string {
 		leader := m.standings.Entries[0]
 		teamName := leader.TeamName
 		if teamName == "" {
-			teamName = m.cat().ColumnTeam
+			teamName = cat.ColumnTeam
 		}
-		leaderText := fmt.Sprintf("[1] Líder de Liga: %s (%s pts • %s PJ • DG %s)", teamName, leader.Points, leader.GamesPlayed, leader.PointDiff)
+		leaderText := cat.LeagueLeader(teamName, leader.Points, leader.GamesPlayed, leader.PointDiff)
 		lines = append(lines, lipgloss.NewStyle().Foreground(ColorHighlight).Bold(true).Render(leaderText))
 		lines = append(lines, "")
 	}
@@ -404,8 +406,8 @@ func renderTabResumen(m Model, curr model.League) string {
 	pastMatches := m.ResumenMatches()
 
 	if len(pastMatches) == 0 {
-		lines = append(lines, CategoryHeaderStyle.Render("RESULTADOS RECIENTES / JORNADA PASADA (0)"))
-		lines = append(lines, EmptyStateStyle.Render("No hay partidos finalizados recientemente."))
+		lines = append(lines, CategoryHeaderStyle.Render(cat.RecentResultsLastRound(0)))
+		lines = append(lines, EmptyStateStyle.Render(cat.NoRecentResults))
 		return MatchBoxStyle.Render(strings.Join(lines, "\n"))
 	}
 
@@ -417,7 +419,7 @@ func renderTabResumen(m Model, curr model.League) string {
 		cursor = 0
 	}
 
-	headerText := fmt.Sprintf("RESULTADOS RECIENTES (%d)  •  [%d/%d]", len(pastMatches), cursor+1, len(pastMatches))
+	headerText := cat.RecentResults(len(pastMatches), cursor+1)
 	lines = append(lines, CategoryHeaderStyle.Render(headerText))
 	lines = append(lines, "")
 
@@ -446,29 +448,28 @@ func renderTabResumen(m Model, curr model.League) string {
 	}
 
 	if start > 0 {
-		upScroll := lipgloss.NewStyle().Foreground(ColorMuted).Width(56).Align(lipgloss.Center).Render(fmt.Sprintf("▲  %d partidos anteriores  ▲", start))
+		upScroll := lipgloss.NewStyle().Foreground(ColorMuted).Width(56).Align(lipgloss.Center).Render(cat.ScrollOlder(start))
 		lines = append(lines, upScroll)
 	}
 
 	for i := start; i < end; i++ {
 		pm := pastMatches[i]
 		isSelected := i == cursor
-		lines = append(lines, renderResumenCard(pm, isSelected, m.cat()))
+		lines = append(lines, renderResumenCard(pm, isSelected, cat))
 	}
 
 	if end < len(pastMatches) {
 		remaining := len(pastMatches) - end
-		downScroll := lipgloss.NewStyle().Foreground(ColorMuted).Width(56).Align(lipgloss.Center).Render(fmt.Sprintf("▼  %d partidos más abajo  ▼", remaining))
+		downScroll := lipgloss.NewStyle().Foreground(ColorMuted).Width(56).Align(lipgloss.Center).Render(cat.ScrollNewer(remaining))
 		lines = append(lines, downScroll)
 	}
 
 	return MatchBoxStyle.Render(strings.Join(lines, "\n"))
 }
 
-func renderResumenCard(pm model.Match, isSelected bool, optCat ...*i18n.Catalog) string {
-	cat := i18n.Default()
-	if len(optCat) > 0 && optCat[0] != nil {
-		cat = optCat[0]
+func renderResumenCard(pm model.Match, isSelected bool, cat *i18n.Catalog) string {
+	if cat == nil {
+		cat = i18n.Default()
 	}
 
 	cardStyle := lipgloss.NewStyle().
@@ -521,7 +522,7 @@ func renderResumenCard(pm model.Match, isSelected bool, optCat ...*i18n.Catalog)
 		awayStyled = lipgloss.NewStyle().Width(14).Align(lipgloss.Left).Foreground(ColorHighlight).Bold(true).Render(awayTrunc)
 	}
 
-	statusBadge := StatusPostStyle.Render("[FINAL]")
+	statusBadge := StatusPostStyle.Render(cat.FinalBadge)
 
 	line1 := fmt.Sprintf("%s %s%s%s %s", dateCol, homeStyled, scoreStyled, awayStyled, statusBadge)
 
@@ -534,7 +535,7 @@ func renderResumenCard(pm model.Match, isSelected bool, optCat ...*i18n.Catalog)
 
 	var line2 string
 	if isSelected {
-		hintStyled := lipgloss.NewStyle().Foreground(ColorCategory).Render("Enter: detalles")
+		hintStyled := lipgloss.NewStyle().Foreground(ColorCategory).Render(cat.EnterDetailsHint)
 		line2 = fmt.Sprintf("        %-26s   %s", venueStyled, hintStyled)
 	} else {
 		line2 = fmt.Sprintf("        %s", venueStyled)
@@ -544,16 +545,17 @@ func renderResumenCard(pm model.Match, isSelected bool, optCat ...*i18n.Catalog)
 }
 
 func renderTabPosiciones(m Model, curr model.League) string {
+	cat := m.cat()
 	if m.standings == nil {
 		if m.standingsErr != nil {
-			return MatchBoxStyle.Render(StatusBarError.Render("No se pudieron cargar las posiciones de la liga."))
+			return MatchBoxStyle.Render(StatusBarError.Render(cat.StandingsLoadError))
 		}
-		return MatchBoxStyle.Render(fmt.Sprintf("  %s Cargando tabla de posiciones...", m.spinner.View()))
+		return MatchBoxStyle.Render(cat.StandingsLoading(m.spinner.View()))
 	}
 
 	var lines []string
 	var displayEntries []model.StandingsEntry
-	headerTitle := "TABLA DE POSICIONES · " + curr.Name
+	headerTitle := cat.StandingsHeader(curr.Name)
 
 	if len(m.standings.Groups) > 0 {
 		grpIdx := m.selectedGroup
@@ -563,21 +565,22 @@ func renderTabPosiciones(m Model, curr model.League) string {
 		currentGrp := m.standings.Groups[grpIdx]
 		displayEntries = currentGrp.Entries
 
-		groupNav := fmt.Sprintf("◄ %s (%d/%d) ►  [ [ / ] : grupo ]", currentGrp.Name, grpIdx+1, len(m.standings.Groups))
-		headerTitle = fmt.Sprintf("POSICIONES · %s", lipgloss.NewStyle().Foreground(ColorHighlight).Bold(true).Render(groupNav))
+		groupNav := cat.GroupNavigation(currentGrp.Name, grpIdx+1, len(m.standings.Groups))
+		headerTitle = cat.StandingsGroupHeader(lipgloss.NewStyle().Foreground(ColorHighlight).Bold(true).Render(groupNav))
 	} else {
 		displayEntries = m.standings.Entries
 	}
 
 	if len(displayEntries) == 0 {
-		return MatchBoxStyle.Render(EmptyStateStyle.Render("Tabla de posiciones no disponible para esta competición."))
+		return MatchBoxStyle.Render(EmptyStateStyle.Render(cat.StandingsUnavailable))
 	}
 
 	lines = append(lines, CategoryHeaderStyle.Render(headerTitle))
 	lines = append(lines, "")
 
 	// Table header: #  Equipo               PJ  G   E   P   DG  PTS
-	hdr := fmt.Sprintf(" %-2s  %-22s  %3s %3s %3s %3s %4s  %3s", "#", "Equipo", "PJ", "G", "E", "P", "DG", "PTS")
+	hdr := fmt.Sprintf(" %-2s  %-22s  %3s %3s %3s %3s %4s  %3s",
+		cat.ColumnRank, cat.ColumnTeam, cat.ColumnPlayed, cat.ColumnWon, cat.ColumnDrawn, cat.ColumnLost, cat.ColumnGoalDiff, cat.ColumnPoints)
 	lines = append(lines, lipgloss.NewStyle().Foreground(ColorCategory).Bold(true).Render(hdr))
 	lines = append(lines, lipgloss.NewStyle().Foreground(ColorBorder).Render("────────────────────────────────────────────────────────────"))
 
@@ -585,7 +588,7 @@ func renderTabPosiciones(m Model, curr model.League) string {
 		rankStr := fmt.Sprintf("%d", e.Rank)
 		teamName := e.TeamName
 		if teamName == "" {
-			teamName = m.cat().ColumnTeam
+			teamName = cat.ColumnTeam
 		}
 		teamCol := truncateModalText(teamName, 22)
 		row := fmt.Sprintf(" %-2s  %-22s  %3s %3s %3s %3s %4s  %3s", rankStr, teamCol, e.GamesPlayed, e.Wins, e.Ties, e.Losses, e.PointDiff, e.Points)
@@ -600,21 +603,22 @@ func renderTabPosiciones(m Model, curr model.League) string {
 }
 
 func renderTabGoleadores(m Model, curr model.League) string {
+	cat := m.cat()
 	if m.statistics == nil {
 		if m.statisticsErr != nil {
-			return MatchBoxStyle.Render(StatusBarError.Render("No se pudieron cargar las estadísticas de goleadores."))
+			return MatchBoxStyle.Render(StatusBarError.Render(cat.ScorersLoadError))
 		}
-		return MatchBoxStyle.Render(fmt.Sprintf("  %s Cargando máximos goleadores y asistentes...", m.spinner.View()))
+		return MatchBoxStyle.Render(cat.ScorersLoading(m.spinner.View()))
 	}
 
 	var lines []string
-	lines = append(lines, CategoryHeaderStyle.Render("MÁXIMOS GOLEADORES (TOP 5)"))
+	lines = append(lines, CategoryHeaderStyle.Render(cat.TopScorersHeader))
 	lines = append(lines, "")
 
 	if len(m.statistics.Scorers) == 0 {
-		lines = append(lines, EmptyStateStyle.Render("Estadísticas de goles no disponibles aún."))
+		lines = append(lines, EmptyStateStyle.Render(cat.NoScorerStats))
 	} else {
-		hdr := fmt.Sprintf(" %-2s  %-24s  %-18s  %4s", "#", "Jugador", "Equipo", "Goles")
+		hdr := fmt.Sprintf(" %-2s  %-24s  %-18s  %4s", cat.ColumnRank, cat.ColumnPlayer, cat.ColumnTeam, cat.ColumnGoals)
 		lines = append(lines, lipgloss.NewStyle().Foreground(ColorCategory).Bold(true).Render(hdr))
 		lines = append(lines, lipgloss.NewStyle().Foreground(ColorBorder).Render("────────────────────────────────────────────────────────────"))
 
@@ -626,7 +630,7 @@ func renderTabGoleadores(m Model, curr model.League) string {
 			s := m.statistics.Scorers[i]
 			playerName := s.PlayerName
 			if playerName == "" {
-				playerName = m.cat().FallbackPlayer
+				playerName = cat.FallbackPlayer
 			}
 			row := fmt.Sprintf(" %-2d  %-24s  %-18s  %4s", i+1, truncateModalText(playerName, 24), truncateModalText(s.TeamName, 18), s.Value)
 			if i < 3 {
@@ -638,13 +642,13 @@ func renderTabGoleadores(m Model, curr model.League) string {
 	}
 
 	lines = append(lines, "")
-	lines = append(lines, CategoryHeaderStyle.Render("MÁXIMOS ASISTENTES (TOP 5)"))
+	lines = append(lines, CategoryHeaderStyle.Render(cat.TopAssistsHeader))
 	lines = append(lines, "")
 
 	if len(m.statistics.Assists) == 0 {
-		lines = append(lines, EmptyStateStyle.Render("Estadísticas de asistencias no disponibles aún."))
+		lines = append(lines, EmptyStateStyle.Render(cat.NoAssistStats))
 	} else {
-		hdr := fmt.Sprintf(" %-2s  %-24s  %-18s  %4s", "#", "Jugador", "Equipo", "Asist.")
+		hdr := fmt.Sprintf(" %-2s  %-24s  %-18s  %4s", cat.ColumnRank, cat.ColumnPlayer, cat.ColumnTeam, cat.ColumnAssists)
 		lines = append(lines, lipgloss.NewStyle().Foreground(ColorCategory).Bold(true).Render(hdr))
 		lines = append(lines, lipgloss.NewStyle().Foreground(ColorBorder).Render("────────────────────────────────────────────────────────────"))
 
@@ -656,7 +660,7 @@ func renderTabGoleadores(m Model, curr model.League) string {
 			a := m.statistics.Assists[i]
 			playerName := a.PlayerName
 			if playerName == "" {
-				playerName = m.cat().FallbackPlayer
+				playerName = cat.FallbackPlayer
 			}
 			row := fmt.Sprintf(" %-2d  %-24s  %-18s  %4s", i+1, truncateModalText(playerName, 24), truncateModalText(a.TeamName, 18), a.Value)
 			if i < 3 {
@@ -670,10 +674,9 @@ func renderTabGoleadores(m Model, curr model.League) string {
 	return MatchBoxStyle.Render(strings.Join(lines, "\n"))
 }
 
-func renderMatchItem(match model.Match, now time.Time, isSelected bool, livePulse bool, optCat ...*i18n.Catalog) []string {
-	cat := i18n.Default()
-	if len(optCat) > 0 && optCat[0] != nil {
-		cat = optCat[0]
+func renderMatchItem(match model.Match, now time.Time, isSelected bool, livePulse bool, cat *i18n.Catalog) []string {
+	if cat == nil {
+		cat = i18n.Default()
 	}
 
 	timeStr := match.TimeStr
@@ -732,10 +735,10 @@ func renderMatchItem(match model.Match, now time.Time, isSelected bool, livePuls
 
 	case "post":
 		scoreLabel := ScoreStyle.Render(fmt.Sprintf("%s - %s", match.HomeTeam.Score, match.AwayTeam.Score))
-		line2 = fmt.Sprintf("%s%s  •  %s  •  %s", indent, StatusPostStyle.Render("FIN"), scoreLabel, VenueStyle.Render(venue))
+		line2 = fmt.Sprintf("%s%s  •  %s  •  %s", indent, StatusPostStyle.Render(cat.StatusPost), scoreLabel, VenueStyle.Render(venue))
 
 	default: // "pre"
-		line2 = fmt.Sprintf("%s%s  •  %s", indent, StatusPreStyle.Render("Por jugar"), VenueStyle.Render(venue))
+		line2 = fmt.Sprintf("%s%s  •  %s", indent, StatusPreStyle.Render(cat.StatusPre), VenueStyle.Render(venue))
 	}
 
 	return []string{line1, line2}
@@ -753,24 +756,25 @@ func calendarDayDiff(from, to time.Time) int {
 	return int(toDay.Sub(fromDay).Hours() / 24)
 }
 
-func renderChannelModal(match model.Match, now time.Time, channels []model.Channel, selectedIdx int, modalTab int, livePulse bool, spinnerStr string, detailsLoaded bool, channelsLoading bool, optArgs ...any) string {
-	noEmoji := false
-	modalContentWidth := 60
-	cat := i18n.Default()
-
-	for _, arg := range optArgs {
-		switch v := arg.(type) {
-		case *i18n.Catalog:
-			if v != nil {
-				cat = v
-			}
-		case bool:
-			noEmoji = v
-		case int:
-			if v > 0 {
-				modalContentWidth = v
-			}
-		}
+func renderChannelModal(
+	match model.Match,
+	now time.Time,
+	channels []model.Channel,
+	selectedIdx int,
+	modalTab int,
+	livePulse bool,
+	spinnerStr string,
+	detailsLoaded bool,
+	channelsLoading bool,
+	noEmoji bool,
+	modalContentWidth int,
+	cat *i18n.Catalog,
+) string {
+	if cat == nil {
+		cat = i18n.Default()
+	}
+	if modalContentWidth <= 0 {
+		modalContentWidth = 60
 	}
 	var modal strings.Builder
 
@@ -795,9 +799,9 @@ func renderChannelModal(match model.Match, now time.Time, channels []model.Chann
 		if match.Status.Detail != "" {
 			statusText = match.Status.Detail
 		}
-		statusPart = fmt.Sprintf("%s %s", dot, LiveTextStyle.Render("EN VIVO "+statusText))
+		statusPart = fmt.Sprintf("%s %s", dot, LiveTextStyle.Render(cat.LiveStatus(statusText)))
 	case "post":
-		statusPart = StatusPostStyle.Render("FINALIZADO")
+		statusPart = StatusPostStyle.Render(cat.StatusFinished)
 	default:
 		preText := match.TimeStr
 		if !match.StartTime.IsZero() {
@@ -805,11 +809,11 @@ func renderChannelModal(match model.Match, now time.Time, channels []model.Chann
 
 			switch daysDiff {
 			case 0:
-				preText = fmt.Sprintf("%s (Hoy)", match.TimeStr)
+				preText = cat.StatusToday(match.TimeStr)
 			case 1:
-				preText = fmt.Sprintf("%s (Mañana)", match.TimeStr)
+				preText = cat.StatusTomorrow(match.TimeStr)
 			case -1:
-				preText = fmt.Sprintf("%s (Ayer)", match.TimeStr)
+				preText = cat.StatusYesterday(match.TimeStr)
 			default:
 				preText = fmt.Sprintf("%s • %s", match.StartTime.Format("02/01"), match.TimeStr)
 			}
@@ -850,7 +854,7 @@ func renderChannelModal(match model.Match, now time.Time, channels []model.Chann
 	modal.WriteString(lipgloss.NewStyle().Width(modalContentWidth).Align(lipgloss.Center).Render(duel) + "\n\n")
 
 	// 2. Interactive Segmented Pill Tabs
-	tabNames := []string{"Resumen", "Estadísticas", "Alineaciones"}
+	tabNames := []string{cat.ModalTabSummary, cat.ModalTabStats, cat.ModalTabLineups}
 	pills := make([]string, 3)
 	for i := 0; i < 3; i++ {
 		if i == modalTab {
@@ -867,7 +871,7 @@ func renderChannelModal(match model.Match, now time.Time, channels []model.Chann
 	case 0:
 		// Tab 0: Resumen
 		if len(match.Events) > 0 {
-			tlStr := renderTimeline(match.Events, match.HomeTeam.ID, modalContentWidth, noEmoji)
+			tlStr := renderTimeline(match.Events, match.HomeTeam.ID, modalContentWidth, noEmoji, cat)
 			modal.WriteString(tlStr)
 			modal.WriteString("\n")
 		}
@@ -875,15 +879,15 @@ func renderChannelModal(match model.Match, now time.Time, channels []model.Chann
 		modal.WriteString(ModalDivider.Render("────────────────────────────────────────────────────────────") + "\n\n")
 
 		if match.Status.Completed || strings.ToLower(match.Status.State) == "post" {
-			finishedBadge := lipgloss.NewStyle().Width(modalContentWidth).Align(lipgloss.Center).Foreground(ColorMuted).Render("[ Transmisión finalizada • No hay señales activas ]")
+			finishedBadge := lipgloss.NewStyle().Width(modalContentWidth).Align(lipgloss.Center).Foreground(ColorMuted).Render(cat.BroadcastFinished)
 			modal.WriteString(finishedBadge + "\n")
 		} else if len(channels) == 0 {
-			emptyNoticeText := "[ Sin señales activas • La transmisión inicia cerca al partido ]"
+			emptyNoticeText := cat.NoSignalsBeforeMatch
 			if strings.ToLower(match.Status.State) == "in" {
-				emptyNoticeText = "[ Sin señales activas • No hay transmisión disponible en este momento ]"
+				emptyNoticeText = cat.NoSignalsLive
 			}
 			if channelsLoading {
-				emptyNoticeText = "Resolviendo señales de transmisión..."
+				emptyNoticeText = cat.ResolvingSignals
 				if spinnerStr != "" {
 					emptyNoticeText = fmt.Sprintf("%s  %s", spinnerStr, emptyNoticeText)
 				}
@@ -891,7 +895,7 @@ func renderChannelModal(match model.Match, now time.Time, channels []model.Chann
 			emptyNotice := lipgloss.NewStyle().Width(modalContentWidth).Align(lipgloss.Center).Foreground(ColorMuted).Render(emptyNoticeText)
 			modal.WriteString(emptyNotice + "\n")
 		} else {
-			modal.WriteString(ModalSectionHeader.Render("SEÑALES DE TRANSMISIÓN") + "\n\n")
+			modal.WriteString(ModalSectionHeader.Render(cat.SignalsSection) + "\n\n")
 			for i, ch := range channels {
 				prefix := "   "
 				if i == selectedIdx {
@@ -903,7 +907,7 @@ func renderChannelModal(match model.Match, now time.Time, channels []model.Chann
 					cleanName = cleanChannelName(ch.Name)
 				}
 				if cleanName == "" {
-					cleanName = "Canal"
+					cleanName = cat.FallbackChannel
 				}
 
 				nameCol := lipgloss.NewStyle().Width(22).MaxWidth(22).Render(truncateModalText(cleanName, 22))
@@ -928,7 +932,7 @@ func renderChannelModal(match model.Match, now time.Time, channels []model.Chann
 
 				recBadge := ""
 				if ch.Recommended {
-					recBadge = "  " + RecommendedBadge.Render("★ Recomendado")
+					recBadge = "  " + RecommendedBadge.Render(cat.Recommended)
 				}
 
 				itemLine := fmt.Sprintf("%s  %s%s", prefixAndName, badgeCol, recBadge)
@@ -937,7 +941,7 @@ func renderChannelModal(match model.Match, now time.Time, channels []model.Chann
 		}
 
 		if match.Referee != "" {
-			refereeText := fmt.Sprintf("Árbitro: %s", match.Referee)
+			refereeText := cat.Referee(match.Referee)
 			modal.WriteString("\n" + lipgloss.NewStyle().Width(modalContentWidth).Align(lipgloss.Center).Foreground(ColorMuted).Render(refereeText) + "\n")
 		}
 
@@ -946,19 +950,19 @@ func renderChannelModal(match model.Match, now time.Time, channels []model.Chann
 		if isStatsEmpty(match.Stats) {
 			isPre := strings.ToLower(strings.TrimSpace(match.Status.State)) == "pre"
 			if isPre || detailsLoaded || match.ID == "" {
-				emptyText := "[ Estadísticas no disponibles para este encuentro ]"
+				emptyText := cat.StatsUnavailable
 				modal.WriteString(lipgloss.NewStyle().Width(modalContentWidth).Align(lipgloss.Center).Foreground(ColorMuted).Render(emptyText) + "\n")
 			} else {
-				loadingText := "Consultando estadísticas del partido..."
+				loadingText := cat.StatsLoading
 				if spinnerStr != "" {
-					loadingText = fmt.Sprintf("%s  Consultando estadísticas del partido...", spinnerStr)
+					loadingText = fmt.Sprintf("%s  %s", spinnerStr, cat.StatsLoading)
 				}
 				modal.WriteString(lipgloss.NewStyle().Width(modalContentWidth).Align(lipgloss.Center).Foreground(ColorMuted).Render(loadingText) + "\n")
 			}
 		} else {
 			barLine := renderPossessionBar(match.Stats.HomePossession, match.Stats.AwayPossession, modalContentWidth)
 			modal.WriteString(barLine + "\n")
-			modal.WriteString(lipgloss.NewStyle().Width(modalContentWidth).Align(lipgloss.Center).Foreground(ColorCategory).Bold(true).Render("Posesión") + "\n\n")
+			modal.WriteString(lipgloss.NewStyle().Width(modalContentWidth).Align(lipgloss.Center).Foreground(ColorCategory).Bold(true).Render(cat.Possession) + "\n\n")
 
 			homeShots := match.Stats.HomeShots
 			if match.Stats.HomeShotsOnGoal != "" {
@@ -968,7 +972,7 @@ func renderChannelModal(match model.Match, now time.Time, channels []model.Chann
 			if match.Stats.AwayShotsOnGoal != "" {
 				awayShots = fmt.Sprintf("%s (%s)", match.Stats.AwayShots, match.Stats.AwayShotsOnGoal)
 			}
-			modal.WriteString(renderStatRow(homeShots, "Tiros (Al arco)", awayShots) + "\n")
+			modal.WriteString(renderStatRow(homeShots, cat.StatShots, awayShots) + "\n")
 
 			homePasses := match.Stats.HomePasses
 			if match.Stats.HomePassPct != "" {
@@ -978,12 +982,12 @@ func renderChannelModal(match model.Match, now time.Time, channels []model.Chann
 			if match.Stats.AwayPassPct != "" {
 				awayPasses = fmt.Sprintf("%s (%s)", match.Stats.AwayPasses, match.Stats.AwayPassPct)
 			}
-			modal.WriteString(renderStatRow(homePasses, "Pases (Precisión)", awayPasses) + "\n")
+			modal.WriteString(renderStatRow(homePasses, cat.StatPasses, awayPasses) + "\n")
 
-			modal.WriteString(renderStatRow(match.Stats.HomeFouls, "Faltas", match.Stats.AwayFouls) + "\n")
-			modal.WriteString(renderStatRow(match.Stats.HomeCorners, "Córners", match.Stats.AwayCorners) + "\n")
-			modal.WriteString(renderStatRow(match.Stats.HomeOffsides, "Fueras de juego", match.Stats.AwayOffsides) + "\n")
-			modal.WriteString(renderStatRow(match.Stats.HomeSaves, "Atajadas", match.Stats.AwaySaves) + "\n")
+			modal.WriteString(renderStatRow(match.Stats.HomeFouls, cat.StatFouls, match.Stats.AwayFouls) + "\n")
+			modal.WriteString(renderStatRow(match.Stats.HomeCorners, cat.StatCorners, match.Stats.AwayCorners) + "\n")
+			modal.WriteString(renderStatRow(match.Stats.HomeOffsides, cat.StatOffsides, match.Stats.AwayOffsides) + "\n")
+			modal.WriteString(renderStatRow(match.Stats.HomeSaves, cat.StatSaves, match.Stats.AwaySaves) + "\n")
 		}
 
 	case 2:
@@ -995,14 +999,13 @@ func renderChannelModal(match model.Match, now time.Time, channels []model.Chann
 }
 
 // renderCompactLineups renders the clean 2-column text list of player starters and substitutes.
-func renderCompactLineups(match model.Match, modalContentWidth int, noEmoji bool, optCat ...*i18n.Catalog) string {
-	cat := i18n.Default()
-	if len(optCat) > 0 && optCat[0] != nil {
-		cat = optCat[0]
+func renderCompactLineups(match model.Match, modalContentWidth int, noEmoji bool, cat *i18n.Catalog) string {
+	if cat == nil {
+		cat = i18n.Default()
 	}
 
 	if match.Lineups == nil || (len(match.Lineups.Home.Starters) == 0 && len(match.Lineups.Away.Starters) == 0) {
-		notice := "Alineaciones no disponibles aún para este encuentro."
+		notice := cat.LineupsUnavailable
 		return lipgloss.NewStyle().Width(modalContentWidth).Align(lipgloss.Center).Foreground(ColorMuted).Italic(true).Render(notice)
 	}
 
@@ -1049,11 +1052,11 @@ func renderCompactLineups(match model.Match, modalContentWidth int, noEmoji bool
 	if homeLineup.Coach != "" || awayLineup.Coach != "" {
 		dtLeft := ""
 		if homeLineup.Coach != "" {
-			dtLeft = "DT: " + homeLineup.Coach
+			dtLeft = cat.Coach(homeLineup.Coach)
 		}
 		dtRight := ""
 		if awayLineup.Coach != "" {
-			dtRight = "DT: " + awayLineup.Coach
+			dtRight = cat.Coach(awayLineup.Coach)
 		}
 		dtLeftStyled := lipgloss.NewStyle().Width(colW).Align(lipgloss.Left).Foreground(ColorMuted).Render(truncateModalText(dtLeft, colW))
 		dtRightStyled := lipgloss.NewStyle().Width(colW).Align(lipgloss.Left).Foreground(ColorMuted).Render(truncateModalText(dtRight, colW))
@@ -1062,8 +1065,8 @@ func renderCompactLineups(match model.Match, modalContentWidth int, noEmoji bool
 	sb.WriteString("\n")
 
 	// Starters
-	secLeft := lipgloss.NewStyle().Width(colW).Align(lipgloss.Left).Foreground(ColorCategory).Bold(true).Render("TITULARES")
-	secRight := lipgloss.NewStyle().Width(colW).Align(lipgloss.Left).Foreground(ColorCategory).Bold(true).Render("TITULARES")
+	secLeft := lipgloss.NewStyle().Width(colW).Align(lipgloss.Left).Foreground(ColorCategory).Bold(true).Render(cat.LineupStarters)
+	secRight := lipgloss.NewStyle().Width(colW).Align(lipgloss.Left).Foreground(ColorCategory).Bold(true).Render(cat.LineupStarters)
 	fmt.Fprintf(&sb, "%s    %s\n", secLeft, secRight)
 
 	formatPlayer := func(p model.Player) string {
@@ -1104,8 +1107,8 @@ func renderCompactLineups(match model.Match, modalContentWidth int, noEmoji bool
 	// Substitutes / Bench
 	if len(homeLineup.Bench) > 0 || len(awayLineup.Bench) > 0 {
 		sb.WriteString("\n")
-		subLeft := lipgloss.NewStyle().Width(colW).Align(lipgloss.Left).Foreground(ColorCategory).Bold(true).Render("SUPLENTES")
-		subRight := lipgloss.NewStyle().Width(colW).Align(lipgloss.Left).Foreground(ColorCategory).Bold(true).Render("SUPLENTES")
+		subLeft := lipgloss.NewStyle().Width(colW).Align(lipgloss.Left).Foreground(ColorCategory).Bold(true).Render(cat.LineupSubstitutes)
+		subRight := lipgloss.NewStyle().Width(colW).Align(lipgloss.Left).Foreground(ColorCategory).Bold(true).Render(cat.LineupSubstitutes)
 		fmt.Fprintf(&sb, "%s    %s\n", subLeft, subRight)
 
 		homeBench := homeLineup.Bench
@@ -1226,12 +1229,15 @@ func renderStatRow(leftVal, label, rightVal string) string {
 	return fmt.Sprintf("%s%s%s", leftStyle.Render(leftVal), labelStyle.Render(label), rightStyle.Render(rightVal))
 }
 
-func renderTimeline(events []model.MatchEvent, homeTeamID string, modalContentWidth int, noEmoji ...bool) string {
+func renderTimeline(events []model.MatchEvent, homeTeamID string, modalContentWidth int, noEmoji bool, cat *i18n.Catalog) string {
 	if len(events) == 0 {
 		return ""
 	}
+	if cat == nil {
+		cat = i18n.Default()
+	}
 
-	disableEmoji := len(noEmoji) > 0 && noEmoji[0]
+	disableEmoji := noEmoji
 
 	sortedEvents := make([]model.MatchEvent, len(events))
 	copy(sortedEvents, events)
@@ -1291,7 +1297,7 @@ func renderTimeline(events []model.MatchEvent, homeTeamID string, modalContentWi
 		}
 		if !htShown && sec > 45*60 {
 			leftBlank := strings.Repeat(" ", 24)
-			etText := " " + StatusPostStyle.Render("E.T") + " "
+			etText := " " + StatusPostStyle.Render(cat.ExtraTimeBadge) + " "
 			axis := spineStyle.Render("  │") + etText + spineStyle.Render("│  ")
 			rightBlank := strings.Repeat(" ", 25)
 			fmt.Fprintf(&b, "%s%s%s\n", leftBlank, axis, rightBlank)
@@ -1323,7 +1329,6 @@ func renderTimeline(events []model.MatchEvent, homeTeamID string, modalContentWi
 
 		pName := strings.TrimSpace(ev.PlayerName)
 		if pName == "" {
-			cat := i18n.Default()
 			if ev.IsYellow || ev.IsRedCard {
 				pName = cat.FallbackCoachStaff
 			} else if ev.IsOwnGoal {
@@ -1333,9 +1338,9 @@ func renderTimeline(events []model.MatchEvent, homeTeamID string, modalContentWi
 			}
 		}
 		if ev.IsPenalty {
-			pName += " (pen.)"
+			pName = cat.WithPenalty(pName)
 		} else if ev.IsOwnGoal {
-			pName += " (AG)"
+			pName = cat.WithOwnGoal(pName)
 		}
 
 		isHome := ev.TeamID == homeTeamID
