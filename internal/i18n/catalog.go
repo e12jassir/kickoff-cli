@@ -422,6 +422,28 @@ func (c *Catalog) CategoryName(catID string) string {
 	}
 }
 
+// LeagueName returns a localized name for a recognized league key when one exists,
+// or empty string if the default model name should be used.
+func (c *Catalog) LeagueName(key string) string {
+	if c == nil {
+		return ""
+	}
+	switch key {
+	case "eliminatorias":
+		if c.lang == EN {
+			return "CONMEBOL World Cup Qualifiers"
+		}
+		return "Eliminatorias CONMEBOL"
+	case "facup":
+		if c.lang == ES {
+			return "Copa FA de Inglaterra"
+		}
+		return "English FA Cup"
+	default:
+		return ""
+	}
+}
+
 // Header renders the league header for the browsing view.
 func (c *Catalog) Header(league string) string {
 	return interpolate(c.HeaderTemplate, map[string]string{"league": league})

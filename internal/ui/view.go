@@ -106,7 +106,7 @@ func renderMainMenu(m Model) string {
 					prefix = "   › "
 				}
 
-				itemText := fmt.Sprintf("%s%s", prefix, league.Name)
+				itemText := fmt.Sprintf("%s%s", prefix, m.leagueName(league))
 				if isLeagueSelected {
 					lines = append(lines, MenuItemSelected.Render(itemText))
 				} else {
@@ -160,7 +160,7 @@ func renderMainMenu(m Model) string {
 func renderBrowsing(m Model) string {
 	cat := m.cat()
 	curr := m.CurrentLeague()
-	headerText := cat.Header(curr.Name)
+	headerText := cat.Header(m.leagueName(curr))
 
 	var statusBadge string
 	if len(m.matches) > 0 && m.matches[0].IsOffline {

@@ -251,11 +251,13 @@ func TestRender_EnglishOutput(t *testing.T) {
 			WithI18n(cat)
 		m.width = 100
 		m.height = 30
+		m.expandedCats["national_teams"] = true
 		view := m.View()
 
 		assertContains(t, view, "Terminal Live Football")
 		assertContains(t, view, "INTERNATIONAL TOURNAMENTS")
 		assertContains(t, view, "EUROPEAN LEAGUES")
+		assertContains(t, view, "CONMEBOL World Cup Qualifiers")
 		assertContains(t, view, "navigate")
 		assertContains(t, view, "expand/enter")
 		assertContains(t, view, "quit")

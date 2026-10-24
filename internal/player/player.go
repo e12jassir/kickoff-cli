@@ -159,8 +159,10 @@ func BuildArgs(req model.PlayRequest, sockPath string) []string {
 		fmt.Sprintf("--user-agent=%s", userAgent),
 		fmt.Sprintf("--title=%s", title),
 		"--cache=yes",
-		"--demuxer-max-bytes=40M",
-		"--demuxer-readahead-secs=5",
+		"--demuxer-max-bytes=150M",
+		"--demuxer-readahead-secs=20",
+		"--cache-pause=yes",
+		"--cache-pause-wait=2",
 		fmt.Sprintf("--hls-bitrate=%s", bitrate),
 		"--network-timeout=20",
 	}

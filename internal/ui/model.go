@@ -264,6 +264,19 @@ func (m Model) categoryName(catID string) string {
 	return catID
 }
 
+// leagueName returns the localized display name for a league.
+func (m Model) leagueName(l model.League) string {
+	if cat := m.cat(); cat != nil {
+		if localized := cat.LeagueName(l.Key); localized != "" {
+			return localized
+		}
+	}
+	if l.Name != "" {
+		return l.Name
+	}
+	return l.Key
+}
+
 // WithClock overrides the wall clock and display timezone used by the view.
 // Tests use it to pin day boundaries; production keeps time.Now and the locale
 // resolver.
