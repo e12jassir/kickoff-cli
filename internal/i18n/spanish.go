@@ -9,15 +9,25 @@ package i18n
 func spanishCatalog() Catalog {
 	return Catalog{
 		// Application chrome.
-		WindowTooSmall:          "Terminal window is too small (min 60x15). Please resize.",
-		StartupSubtitle:         "Terminal Live Football • Cargando Competiciones...",
-		StartupLoaderTemplate:   "{spinner} Cargando Kickoff...",
-		StartupHint:             "Presiona cualquier tecla para continuar...",
-		MenuSubtitle:            "Terminal Live Football",
-		MenuHelp:                "↑/k ↓/j: navegar  •  enter/space: desplegar/entrar  •  ←/→: plegar/desplegar  •  q: salir",
-		MenuHelpPlaying:         "↑/k ↓/j: navegar  •  enter: entrar  •  x: parar señal  •  q: salir",
-		MenuHelpUpdateTemplate:  "↑/k ↓/j: navegar  •  enter: entrar  •  u: actualizar ({version})  •  q: salir",
-		UpdateBannerTemplate:    "{icon} ¡Actualización disponible ({version})! Presiona [u] para actualizar",
+		WindowTooSmall:         "Terminal window is too small (min 60x15). Please resize.",
+		StartupSubtitle:        "Terminal Live Football • Cargando Competiciones...",
+		StartupLoaderTemplate:  "{spinner} Cargando Kickoff...",
+		StartupHint:            "Presiona cualquier tecla para continuar...",
+		MenuSubtitle:           "Terminal Live Football",
+		MenuHelp:               "↑/k ↓/j: navegar  •  enter/space: desplegar/entrar  •  ←/→: plegar/desplegar  •  q: salir",
+		MenuHelpPlaying:        "↑/k ↓/j: navegar  •  enter: entrar  •  x: parar señal  •  q: salir",
+		MenuHelpUpdateTemplate: "↑/k ↓/j: navegar  •  enter: entrar  •  u: actualizar ({version})  •  q: salir",
+		UpdateBannerTemplate:   "{icon} ¡Actualización disponible ({version})! Presiona [u] para actualizar",
+
+		// Main menu categories.
+		CategoryInternational: "Torneos Internacionales",
+		CategoryNationalTeams: "Selecciones",
+		CategoryEuropean:      "Ligas Europeas",
+		CategoryDomesticCups:  "Copas Nacionales",
+		CategorySouthAmerican: "Ligas Sudamericanas",
+		CategoryAmericas:      "Ligas de América",
+		CategoryOther:         "Otras Competiciones",
+
 		HeaderTemplate:          "KICKOFF · {league}",
 		OfflineBadgeTemplate:    "[OFFLINE · cached at {time}]",
 		LiveBadge:               "[LIVE · 5s sync]",

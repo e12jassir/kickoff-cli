@@ -7,15 +7,25 @@ package i18n
 func englishCatalog() Catalog {
 	return Catalog{
 		// Application chrome.
-		WindowTooSmall:          "Terminal window is too small (min 60x15). Please resize.",
-		StartupSubtitle:         "Terminal Live Football • Loading Competitions...",
-		StartupLoaderTemplate:   "{spinner} Loading Kickoff...",
-		StartupHint:             "Press any key to continue...",
-		MenuSubtitle:            "Terminal Live Football",
-		MenuHelp:                "↑/k ↓/j: navigate  •  enter/space: expand/enter  •  ←/→: collapse/expand  •  q: quit",
-		MenuHelpPlaying:         "↑/k ↓/j: navigate  •  enter: enter  •  x: stop stream  •  q: quit",
-		MenuHelpUpdateTemplate:  "↑/k ↓/j: navigate  •  enter: enter  •  u: update ({version})  •  q: quit",
-		UpdateBannerTemplate:    "{icon} Update available ({version})! Press [u] to update",
+		WindowTooSmall:         "Terminal window is too small (min 60x15). Please resize.",
+		StartupSubtitle:        "Terminal Live Football • Loading Competitions...",
+		StartupLoaderTemplate:  "{spinner} Loading Kickoff...",
+		StartupHint:            "Press any key to continue...",
+		MenuSubtitle:           "Terminal Live Football",
+		MenuHelp:               "↑/k ↓/j: navigate  •  enter/space: expand/enter  •  ←/→: collapse/expand  •  q: quit",
+		MenuHelpPlaying:        "↑/k ↓/j: navigate  •  enter: enter  •  x: stop stream  •  q: quit",
+		MenuHelpUpdateTemplate: "↑/k ↓/j: navigate  •  enter: enter  •  u: update ({version})  •  q: quit",
+		UpdateBannerTemplate:   "{icon} Update available ({version})! Press [u] to update",
+
+		// Main menu categories.
+		CategoryInternational: "International Tournaments",
+		CategoryNationalTeams: "National Teams",
+		CategoryEuropean:      "European Leagues",
+		CategoryDomesticCups:  "Domestic Cups",
+		CategorySouthAmerican: "South American Leagues",
+		CategoryAmericas:      "Americas Leagues",
+		CategoryOther:         "Other Competitions",
+
 		HeaderTemplate:          "KICKOFF · {league}",
 		OfflineBadgeTemplate:    "[OFFLINE · cached at {time}]",
 		LiveBadge:               "[LIVE · 5s sync]",

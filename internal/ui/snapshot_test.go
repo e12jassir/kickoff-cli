@@ -254,6 +254,8 @@ func TestRender_EnglishOutput(t *testing.T) {
 		view := m.View()
 
 		assertContains(t, view, "Terminal Live Football")
+		assertContains(t, view, "INTERNATIONAL TOURNAMENTS")
+		assertContains(t, view, "EUROPEAN LEAGUES")
 		assertContains(t, view, "navigate")
 		assertContains(t, view, "expand/enter")
 		assertContains(t, view, "quit")

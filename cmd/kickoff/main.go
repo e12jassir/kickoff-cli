@@ -116,6 +116,7 @@ func main() {
 			if !launch {
 				os.Exit(0)
 			}
+			cat = i18n.Default()
 		case "bar":
 			if err := RunBar(os.Args[2:], nil, nil, os.Stdout, cat); err != nil {
 				if errors.Is(err, ErrNoLiveMatches) {
@@ -167,7 +168,11 @@ func main() {
 	resolver := catalog.NewResolver()
 	play := player.NewController()
 
-	initialModel := ui.NewModel(client, resolver, play).WithVersion(version).WithNoEmoji(noEmoji).WithInitialState(ui.StateStartup)
+	initialModel := ui.NewModel(client, resolver, play).
+		WithVersion(version).
+		WithNoEmoji(noEmoji).
+		WithI18n(cat).
+		WithInitialState(ui.StateStartup)
 	program := tea.NewProgram(initialModel, tea.WithAltScreen())
 
 	if _, err := program.Run(); err != nil {

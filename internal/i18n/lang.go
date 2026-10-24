@@ -63,6 +63,12 @@ func Language() Lang {
 	return cachedLang
 }
 
+// SetLanguage overrides the cached process language and updates Default().
+func SetLanguage(l Lang) {
+	cachedLang = l
+	langOnce.Do(func() {})
+}
+
 // ResolveLanguage walks the closed precedence chain on every call, so it stays
 // testable with different environment values:
 //

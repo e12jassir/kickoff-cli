@@ -248,8 +248,18 @@ func (m Model) currentCategoryID() (string, bool) {
 // categoryName returns the localized label for a category ID. It falls back to
 // the ID itself so an unknown category still renders something meaningful.
 func (m Model) categoryName(catID string) string {
+	if cat := m.cat(); cat != nil && cat.Lang() == i18n.EN {
+		if localized := cat.CategoryName(catID); localized != "" && localized != catID {
+			return localized
+		}
+	}
 	if name := m.categoryNames[catID]; name != "" {
 		return name
+	}
+	if cat := m.cat(); cat != nil {
+		if localized := cat.CategoryName(catID); localized != "" && localized != catID {
+			return localized
+		}
 	}
 	return catID
 }

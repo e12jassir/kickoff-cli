@@ -45,15 +45,25 @@ type Catalog struct {
 	lang Lang
 
 	// Application chrome.
-	WindowTooSmall          string // terminal too small to draw the interface
-	StartupSubtitle         string // startup screen subtitle
-	StartupLoaderTemplate   string // startup spinner line
-	StartupHint             string // startup dismissal hint
-	MenuSubtitle            string // main menu subtitle
-	MenuHelp                string // main menu footer
-	MenuHelpPlaying         string // main menu footer while a stream plays
-	MenuHelpUpdateTemplate  string // main menu footer advertising an update
-	UpdateBannerTemplate    string // banner announcing an available update
+	WindowTooSmall         string // terminal too small to draw the interface
+	StartupSubtitle        string // startup screen subtitle
+	StartupLoaderTemplate  string // startup spinner line
+	StartupHint            string // startup dismissal hint
+	MenuSubtitle           string // main menu subtitle
+	MenuHelp               string // main menu footer
+	MenuHelpPlaying        string // main menu footer while a stream plays
+	MenuHelpUpdateTemplate string // main menu footer advertising an update
+	UpdateBannerTemplate   string // banner announcing an available update
+
+	// Main menu categories.
+	CategoryInternational string // "Torneos Internacionales" / "International Tournaments"
+	CategoryNationalTeams string // "Selecciones" / "National Teams"
+	CategoryEuropean      string // "Ligas Europeas" / "European Leagues"
+	CategoryDomesticCups  string // "Copas Nacionales" / "Domestic Cups"
+	CategorySouthAmerican string // "Ligas Sudamericanas" / "South American Leagues"
+	CategoryAmericas      string // "Ligas de América" / "Americas Leagues"
+	CategoryOther         string // "Otras Competiciones" / "Other Competitions"
+
 	HeaderTemplate          string // league header
 	OfflineBadgeTemplate    string // cached-data badge
 	LiveBadge               string // live-sync badge
@@ -377,6 +387,39 @@ func (c *Catalog) MenuHelpUpdate(version string) string {
 // UpdateBanner renders the available-update banner.
 func (c *Catalog) UpdateBanner(icon, version string) string {
 	return interpolate(c.UpdateBannerTemplate, map[string]string{"icon": icon, "version": version})
+}
+
+// Lang returns the language of the catalog.
+func (c *Catalog) Lang() Lang {
+	if c == nil {
+		return ES
+	}
+	return c.lang
+}
+
+// CategoryName returns the localized display name for a category ID.
+func (c *Catalog) CategoryName(catID string) string {
+	if c == nil {
+		return catID
+	}
+	switch catID {
+	case "international":
+		return c.CategoryInternational
+	case "national_teams":
+		return c.CategoryNationalTeams
+	case "european":
+		return c.CategoryEuropean
+	case "domestic_cups":
+		return c.CategoryDomesticCups
+	case "south_american":
+		return c.CategorySouthAmerican
+	case "americas":
+		return c.CategoryAmericas
+	case "other":
+		return c.CategoryOther
+	default:
+		return catID
+	}
 }
 
 // Header renders the league header for the browsing view.

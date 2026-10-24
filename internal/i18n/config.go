@@ -68,6 +68,7 @@ func WriteConfigLanguage(l Lang) error {
 	if err := fsutil.AtomicWriteFile(path, data, 0o644); err != nil {
 		return fmt.Errorf("could not write %s: %w", path, err)
 	}
+	SetLanguage(l)
 	return nil
 }
 
