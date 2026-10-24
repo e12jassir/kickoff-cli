@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/e12jassir/kickoff-cli/internal/i18n"
 )
 
 const defaultChannelsTemplate = `{
@@ -71,7 +73,12 @@ func getConfigDir() (string, error) {
 // RunInit initializes the channels.json configuration file.
 // If channels.json already exists and force is false, it prints a message and exits without overwriting.
 // If force is true or the file does not exist, it creates the directory and writes the starter template.
-func RunInit(force bool) error {
+func RunInit(force bool, optCat ...*i18n.Catalog) error {
+	cat := i18n.Default()
+	if len(optCat) > 0 && optCat[0] != nil {
+		cat = optCat[0]
+	}
+
 	cfgDir, err := getConfigDir()
 	if err != nil {
 		return err
@@ -85,7 +92,7 @@ func RunInit(force bool) error {
 	}
 
 	if exists && !force {
-		fmt.Printf("Configuration file already exists at: %s\nUse 'kickoff init --force' to overwrite.\n", targetFile)
+		fmt.Print(cat.CLIInitFileExists(targetFile))
 		return nil
 	}
 
@@ -98,9 +105,9 @@ func RunInit(force bool) error {
 	}
 
 	if exists {
-		fmt.Printf("File channels.json successfully overwritten at: %s\n", targetFile)
+		fmt.Print(cat.CLIInitFileOverwritten(targetFile))
 	} else {
-		fmt.Printf("File channels.json successfully initialized at: %s\n", targetFile)
+		fmt.Print(cat.CLIInitFileCreated(targetFile))
 	}
 
 	return nil

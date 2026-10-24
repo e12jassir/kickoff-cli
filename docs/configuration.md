@@ -142,14 +142,79 @@ action, even when the broadcast metadata names them.
 
 ---
 
+## Application Preferences (`config.json`)
+
+Kickoff stores user preferences separate from channel streams in:
+
+* **Linux & macOS**: `~/.config/kickoff/config.json`
+* **Windows**: `%APPDATA%\kickoff\config.json` (or `$XDG_CONFIG_HOME/kickoff/config.json`)
+
+This file is automatically created and updated when toggling options in the `kickoff setup` wizard, or it can be configured manually.
+
+### Schema (`config.json`)
+
+```json
+{
+  "lang": "es"
+}
+```
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `lang` | `string` *(optional)* | Preferred user interface language: `"es"` (Spanish) or `"en"` (English). Sits at precedence layer 2, below `KICKOFF_LANG`. |
+
+---
+
 ## Environment Variables
 
-For temporary overrides or containerized environments:
+For temporary overrides, containerized environments, or advanced workflows:
 
 | Variable | Description |
 | :--- | :--- |
+| `KICKOFF_LANG` | Preferred UI language (`"es"` or `"en"`). Highest precedence layer. |
+| `KICKOFF_TZ` | IANA time zone name for match kick-off time conversions (defaults to `America/Bogota`). |
+| `KICKOFF_CHANNELS_PATH` | Custom filesystem path to the `channels.json` stream configuration file. |
+| `KICKOFF_SIGNALS_URL` | Remote URL (M3U or JSON) for automated channel provisioning during installation or setup. |
 | `KICKOFF_STREAM_CBSSN` | Custom HLS stream URL for CBS Sports Network |
 | `KICKOFF_STREAM_GOLAZO` | Custom HLS stream URL for CBS Sports Golazo Network |
+
+### Language Resolution Precedence (`KICKOFF_LANG`)
+
+Kickoff resolves the active interface language following a deterministic, closed precedence chain:
+
+1. **`KICKOFF_LANG` environment variable**: If set to a supported language (`"es"` or `"en"`), this value always wins.
+2. **`config.json` configuration file**: The `"lang"` key in `~/.config/kickoff/config.json`.
+3. **`LC_ALL` environment variable**: System locale override.
+4. **`LC_MESSAGES` environment variable**: Message localization locale.
+5. **`LANG` environment variable**: Default system locale.
+6. **Default fallback**: Spanish (`"es"`).
+
+#### System Locale Detection (`LANG` / `LC_*`)
+
+When reading system locale variables (`LC_ALL`, `LC_MESSAGES`, `LANG`), Kickoff automatically extracts the two-letter language code from standard locale strings:
+- `en_US.UTF-8`, `en_GB`, `en-US` → resolves to `"en"` (English)
+- `es_CO.UTF-8`, `es_ES`, `es-419` → resolves to `"es"` (Spanish)
+
+If an invalid or unsupported language code is encountered (for example, `KICKOFF_LANG="fr"` or `LANG=de_DE.UTF-8`), Kickoff prints a single non-fatal warning to `stderr` and falls through gracefully to the next layer in the precedence chain, ultimately defaulting to Spanish. The application never aborts or crashes due to locale resolution.
+
+### Timezone Configuration (`KICKOFF_TZ`)
+
+By default, Kickoff displays all match start times in Colombia Standard Time (`America/Bogota`, UTC-5). You can customize this by setting `KICKOFF_TZ` to any valid IANA Time Zone database name:
+
+```bash
+# Display matches in Eastern Time (New York)
+export KICKOFF_TZ="America/New_York"
+
+# Display matches in Central European Time (Madrid)
+export KICKOFF_TZ="Europe/Madrid"
+
+# Display matches in Coordinated Universal Time
+export KICKOFF_TZ="UTC"
+```
+
+- If `KICKOFF_TZ` is unset or empty, it defaults to `America/Bogota`.
+- If an invalid or unparseable time zone name is supplied (e.g. `KICKOFF_TZ="Invalid/Zone"`), Kickoff logs a single non-fatal warning to `stderr` and falls back to `America/Bogota`.
+- `KICKOFF_TZ` operates completely independently of `KICKOFF_LANG` (e.g., choosing `America/New_York` does not change the UI language to English, and choosing `en` does not alter match time zones).
 
 ---
 

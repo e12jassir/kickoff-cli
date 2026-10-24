@@ -17,7 +17,9 @@ func TestRender_NeutralSpanishUnchanged(t *testing.T) {
 
 	// 1. Startup view (StateStartup)
 	t.Run("Startup view", func(t *testing.T) {
-		m := NewModel(&mockClient{}, &mockCatalog{}, &mockPlayer{}).WithInitialState(StateStartup)
+		m := NewModel(&mockClient{}, &mockCatalog{}, &mockPlayer{}).
+			WithInitialState(StateStartup).
+			WithI18n(cat)
 		m.width = 100
 		m.height = 30
 		view := m.View()
@@ -29,7 +31,9 @@ func TestRender_NeutralSpanishUnchanged(t *testing.T) {
 
 	// 2. Main menu view (StateMainMenu)
 	t.Run("Main menu view", func(t *testing.T) {
-		m := NewModel(&mockClient{}, &mockCatalog{}, &mockPlayer{}).WithInitialState(StateMainMenu)
+		m := NewModel(&mockClient{}, &mockCatalog{}, &mockPlayer{}).
+			WithInitialState(StateMainMenu).
+			WithI18n(cat)
 		m.width = 100
 		m.height = 30
 		view := m.View()
@@ -43,7 +47,9 @@ func TestRender_NeutralSpanishUnchanged(t *testing.T) {
 	// 3. TabPartidos (TabPartidos) with sample matches (both populated and fallbacks)
 	t.Run("TabPartidos with sample match and fallbacks", func(t *testing.T) {
 		now := time.Now()
-		m := NewModel(&mockClient{}, &mockCatalog{}, &mockPlayer{}).WithInitialState(StateBrowsing)
+		m := NewModel(&mockClient{}, &mockCatalog{}, &mockPlayer{}).
+			WithInitialState(StateBrowsing).
+			WithI18n(cat)
 		m.width = 100
 		m.height = 30
 		m.leagueTab = TabPartidos
@@ -79,7 +85,9 @@ func TestRender_NeutralSpanishUnchanged(t *testing.T) {
 
 	// 4. TabResumen (TabResumen) with sample leader and past matches
 	t.Run("TabResumen with leader and past matches", func(t *testing.T) {
-		m := NewModel(&mockClient{}, &mockCatalog{}, &mockPlayer{}).WithInitialState(StateBrowsing)
+		m := NewModel(&mockClient{}, &mockCatalog{}, &mockPlayer{}).
+			WithInitialState(StateBrowsing).
+			WithI18n(cat)
 		m.width = 100
 		m.height = 30
 		m.leagueTab = TabResumen
@@ -116,7 +124,9 @@ func TestRender_NeutralSpanishUnchanged(t *testing.T) {
 
 	// 5. TabPosiciones (TabPosiciones) with sample standings table
 	t.Run("TabPosiciones with standings table", func(t *testing.T) {
-		m := NewModel(&mockClient{}, &mockCatalog{}, &mockPlayer{}).WithInitialState(StateBrowsing)
+		m := NewModel(&mockClient{}, &mockCatalog{}, &mockPlayer{}).
+			WithInitialState(StateBrowsing).
+			WithI18n(cat)
 		m.width = 100
 		m.height = 30
 		m.leagueTab = TabPosiciones
@@ -147,7 +157,9 @@ func TestRender_NeutralSpanishUnchanged(t *testing.T) {
 
 	// 6. TabGoleadores (TabGoleadores) with sample statistics
 	t.Run("TabGoleadores with statistics", func(t *testing.T) {
-		m := NewModel(&mockClient{}, &mockCatalog{}, &mockPlayer{}).WithInitialState(StateBrowsing)
+		m := NewModel(&mockClient{}, &mockCatalog{}, &mockPlayer{}).
+			WithInitialState(StateBrowsing).
+			WithI18n(cat)
 		m.width = 100
 		m.height = 30
 		m.leagueTab = TabGoleadores
@@ -196,7 +208,9 @@ func TestRender_NeutralSpanishUnchanged(t *testing.T) {
 
 	// 8. Error state (StateError)
 	t.Run("Error state", func(t *testing.T) {
-		m := NewModel(&mockClient{}, &mockCatalog{}, &mockPlayer{}).WithInitialState(StateBrowsing)
+		m := NewModel(&mockClient{}, &mockCatalog{}, &mockPlayer{}).
+			WithInitialState(StateBrowsing).
+			WithI18n(cat)
 		m.width = 100
 		m.height = 30
 		m.state = StateError
@@ -210,10 +224,224 @@ func TestRender_NeutralSpanishUnchanged(t *testing.T) {
 	})
 }
 
+// TestRender_EnglishOutput tests that every view and tab rendered under the
+// English catalog produces the expected idiomatic English output when
+// WithI18n(i18n.New(i18n.EN)) is used.
+func TestRender_EnglishOutput(t *testing.T) {
+	cat := i18n.New(i18n.EN)
+
+	// 1. Startup view (StateStartup)
+	t.Run("Startup view", func(t *testing.T) {
+		m := NewModel(&mockClient{}, &mockCatalog{}, &mockPlayer{}).
+			WithInitialState(StateStartup).
+			WithI18n(cat)
+		m.width = 100
+		m.height = 30
+		view := m.View()
+
+		assertContains(t, view, "Terminal Live Football")
+		assertContains(t, view, "Loading Competitions...")
+		assertContains(t, view, "Press any key to continue...")
+	})
+
+	// 2. Main menu view (StateMainMenu)
+	t.Run("Main menu view", func(t *testing.T) {
+		m := NewModel(&mockClient{}, &mockCatalog{}, &mockPlayer{}).
+			WithInitialState(StateMainMenu).
+			WithI18n(cat)
+		m.width = 100
+		m.height = 30
+		view := m.View()
+
+		assertContains(t, view, "Terminal Live Football")
+		assertContains(t, view, "navigate")
+		assertContains(t, view, "expand/enter")
+		assertContains(t, view, "quit")
+	})
+
+	// 3. TabPartidos (TabPartidos) with sample matches (both populated and fallbacks)
+	t.Run("TabPartidos with sample match and fallbacks", func(t *testing.T) {
+		now := time.Now()
+		m := NewModel(&mockClient{}, &mockCatalog{}, &mockPlayer{}).
+			WithInitialState(StateBrowsing).
+			WithI18n(cat)
+		m.width = 100
+		m.height = 30
+		m.leagueTab = TabPartidos
+		m.matches = []model.Match{
+			{
+				ID:        "m-today",
+				StartTime: now,
+				HomeTeam:  model.Competitor{DisplayName: "Arsenal", Score: "2"},
+				AwayTeam:  model.Competitor{DisplayName: "Chelsea", Score: "1"},
+				Venue:     "Emirates Stadium",
+				Status:    model.MatchStatus{State: "post", Description: "FT", Completed: true},
+			},
+			{
+				ID:        "m-fallback",
+				StartTime: now.Add(24 * time.Hour),
+				HomeTeam:  model.Competitor{DisplayName: ""},
+				AwayTeam:  model.Competitor{DisplayName: ""},
+				Venue:     "",
+				Status:    model.MatchStatus{State: "pre", Description: ""},
+			},
+		}
+		view := m.View()
+
+		assertContains(t, view, "MATCHES TODAY")
+		assertContains(t, view, "Matches")
+		assertContains(t, view, "enter: details")
+		// Assert fallback texts when competitor names/venues are empty
+		assertContains(t, view, "Home")
+		assertContains(t, view, "Away")
+		assertContains(t, view, "Upcoming")
+		assertContains(t, view, "Main Stadium")
+	})
+
+	// 4. TabResumen (TabResumen) with sample leader and past matches
+	t.Run("TabResumen with leader and past matches", func(t *testing.T) {
+		m := NewModel(&mockClient{}, &mockCatalog{}, &mockPlayer{}).
+			WithInitialState(StateBrowsing).
+			WithI18n(cat)
+		m.width = 100
+		m.height = 30
+		m.leagueTab = TabResumen
+		m.standings = &model.LeagueStandings{
+			LeagueKey: "premierleague",
+			Entries: []model.StandingsEntry{
+				{
+					Rank:        1,
+					TeamName:    "Arsenal",
+					Points:      "30",
+					GamesPlayed: "12",
+					PointDiff:   "+8",
+				},
+			},
+		}
+		m.matches = []model.Match{
+			{
+				ID:        "m-past",
+				StartTime: time.Now().Add(-24 * time.Hour),
+				HomeTeam:  model.Competitor{DisplayName: "Arsenal", Score: "3"},
+				AwayTeam:  model.Competitor{DisplayName: "Tottenham", Score: "0"},
+				Status:    model.MatchStatus{State: "post", Completed: true},
+			},
+		}
+		view := m.View()
+
+		assertContains(t, view, "Summary")
+		assertContains(t, view, "League Leader")
+		assertContains(t, view, "MP")
+		assertContains(t, view, "GD")
+		assertContains(t, view, "RECENT RESULTS")
+		assertContains(t, view, "Enter: details")
+	})
+
+	// 5. TabPosiciones (TabPosiciones) with sample standings table
+	t.Run("TabPosiciones with standings table", func(t *testing.T) {
+		m := NewModel(&mockClient{}, &mockCatalog{}, &mockPlayer{}).
+			WithInitialState(StateBrowsing).
+			WithI18n(cat)
+		m.width = 100
+		m.height = 30
+		m.leagueTab = TabPosiciones
+		m.standings = &model.LeagueStandings{
+			LeagueKey: "premierleague",
+			Entries: []model.StandingsEntry{
+				{
+					Rank:        1,
+					TeamName:    "Arsenal",
+					GamesPlayed: "10",
+					Wins:        "8",
+					Ties:        "1",
+					Losses:      "1",
+					PointDiff:   "+15",
+					Points:      "25",
+				},
+			},
+		}
+		view := m.View()
+
+		assertContains(t, view, "Standings")
+		assertContains(t, view, "STANDINGS TABLE")
+		assertContains(t, view, "Team")
+		assertContains(t, view, "P")
+		assertContains(t, view, "PTS")
+		assertContains(t, view, "GD")
+	})
+
+	// 6. TabGoleadores (TabGoleadores) with sample statistics
+	t.Run("TabGoleadores with statistics", func(t *testing.T) {
+		m := NewModel(&mockClient{}, &mockCatalog{}, &mockPlayer{}).
+			WithInitialState(StateBrowsing).
+			WithI18n(cat)
+		m.width = 100
+		m.height = 30
+		m.leagueTab = TabGoleadores
+		m.statistics = &model.LeagueStatistics{
+			LeagueKey: "premierleague",
+			Scorers: []model.ScorerEntry{
+				{Rank: 1, PlayerName: "E. Haaland", TeamName: "Man City", Value: "10"},
+			},
+			Assists: []model.ScorerEntry{
+				{Rank: 1, PlayerName: "B. Saka", TeamName: "Arsenal", Value: "6"},
+			},
+		}
+		view := m.View()
+
+		assertContains(t, view, "Top Scorers")
+		assertContains(t, view, "TOP SCORERS")
+		assertContains(t, view, "TOP ASSISTS")
+		assertContains(t, view, "Player")
+		assertContains(t, view, "Goals")
+		assertContains(t, view, "Assists")
+	})
+
+	// 7. Channel modal (renderChannelModal)
+	t.Run("Channel modal with signals and fallbacks", func(t *testing.T) {
+		modalMatch := model.Match{
+			HomeTeam: model.Competitor{DisplayName: ""},
+			AwayTeam: model.Competitor{DisplayName: ""},
+			Venue:    "",
+			Status:   model.MatchStatus{State: "pre", Description: ""},
+		}
+		channels := []model.Channel{
+			{Name: "Sky Sports Main Event", DisplayName: "Sky Sports Main Event", BitrateMode: "1080p"},
+		}
+		modalView := renderChannelModal(modalMatch, time.Now(), channels, 0, 0, false, "", true, false, false, 70, cat)
+
+		assertContains(t, modalView, "Home")
+		assertContains(t, modalView, "Away")
+		assertContains(t, modalView, "Main Stadium")
+		assertContains(t, modalView, "Scheduled")
+		assertContains(t, modalView, "BROADCAST SIGNALS")
+		assertContains(t, modalView, "Summary")
+		assertContains(t, modalView, "Statistics")
+		assertContains(t, modalView, "Lineups")
+	})
+
+	// 8. Error state (StateError)
+	t.Run("Error state", func(t *testing.T) {
+		m := NewModel(&mockClient{}, &mockCatalog{}, &mockPlayer{}).
+			WithInitialState(StateBrowsing).
+			WithI18n(cat)
+		m.width = 100
+		m.height = 30
+		m.state = StateError
+		m.errorMsg = cat.FormatError(model.ErrPlayerTimeout)
+		view := m.View()
+
+		assertContains(t, view, "✖ Error: player timed out waiting to respond")
+		assertContains(t, view, "reload")
+		assertContains(t, view, "back")
+		assertContains(t, view, "quit")
+	})
+}
+
 // TestModel_DomainErrorMapping verifies that Update properly formats domain errors
 // using the model's catalog on matchesLoadedMsg, playbackErrMsg, and updateFinishedMsg.
 func TestModel_DomainErrorMapping(t *testing.T) {
-	m := NewModel(&mockClient{}, &mockCatalog{}, &mockPlayer{})
+	m := NewModel(&mockClient{}, &mockCatalog{}, &mockPlayer{}).WithI18n(i18n.New(i18n.ES))
 
 	// 1. matchesLoadedMsg with model.ErrCorruptedPayload
 	newM, _ := m.Update(matchesLoadedMsg{
@@ -243,6 +471,45 @@ func TestModel_DomainErrorMapping(t *testing.T) {
 	newM, _ = m.Update(updateFinishedMsg{err: model.ErrUpdateFailed})
 	m = newM.(Model)
 	wantUpdateErr := "Error al actualizar: no se pudo instalar la actualización"
+	if m.errorMsg != wantUpdateErr {
+		t.Errorf("expected errorMsg %q, got %q", wantUpdateErr, m.errorMsg)
+	}
+}
+
+// TestModel_DomainErrorMapping_English verifies that Update properly formats domain errors
+// using the model's English catalog on matchesLoadedMsg, playbackErrMsg, and updateFinishedMsg.
+func TestModel_DomainErrorMapping_English(t *testing.T) {
+	cat := i18n.New(i18n.EN)
+	m := NewModel(&mockClient{}, &mockCatalog{}, &mockPlayer{}).WithI18n(cat)
+
+	// 1. matchesLoadedMsg with model.ErrCorruptedPayload
+	newM, _ := m.Update(matchesLoadedMsg{
+		gen:       m.loadGen,
+		leagueKey: m.CurrentLeague().Key,
+		err:       model.ErrCorruptedPayload,
+	})
+	m = newM.(Model)
+	if m.state != StateError {
+		t.Fatalf("expected StateError, got %d", m.state)
+	}
+	if got, want := m.errorMsg, "corrupted or invalid payload from server"; got != want {
+		t.Errorf("expected errorMsg %q, got %q", want, got)
+	}
+	viewStr := m.View()
+	assertContains(t, viewStr, "corrupted or invalid payload from server")
+
+	// 2. playbackErrMsg with model.ErrPlayerTimeout
+	newM, _ = m.Update(playbackErrMsg{err: model.ErrPlayerTimeout})
+	m = newM.(Model)
+	wantPlaybackErr := "Playback error: player timed out waiting to respond"
+	if m.errorMsg != wantPlaybackErr {
+		t.Errorf("expected errorMsg %q, got %q", wantPlaybackErr, m.errorMsg)
+	}
+
+	// 3. updateFinishedMsg with model.ErrUpdateFailed
+	newM, _ = m.Update(updateFinishedMsg{err: model.ErrUpdateFailed})
+	m = newM.(Model)
+	wantUpdateErr := "Update error: failed to install update"
 	if m.errorMsg != wantUpdateErr {
 		t.Errorf("expected errorMsg %q, got %q", wantUpdateErr, m.errorMsg)
 	}

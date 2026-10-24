@@ -11,9 +11,7 @@
 // LANG, then Spanish. An unusable value never aborts the program; it produces a
 // single warning per process.
 //
-// Fase 2 compiles the catalog in Spanish so the migration is invisible to the
-// user. New(EN) therefore returns the same Spanish base today; translating it is
-// Fase 3 work.
+// Fase 3 compiles the English catalog so callers can select between ES and EN.
 package i18n
 
 import (
@@ -32,8 +30,7 @@ const (
 	// ES is Spanish, the language the catalog is compiled in.
 	ES Lang = "es"
 
-	// EN is English. Fase 2 does not translate yet: New(EN) returns the Spanish
-	// base so the interface stays byte-identical. Fase 3 fills the fields in.
+	// EN is English. New(EN) returns the compiled English catalog.
 	EN Lang = "en"
 )
 
@@ -188,6 +185,120 @@ type Catalog struct {
 	AssistWithTemplate       string // assist line naming the assistant
 	GoalBodyTemplate         string // notification body with score and assist
 
+	// Setup wizard.
+	SetupTitleTemplate                   string // setup screen title
+	SetupMenuHeader                      string // setup menu header
+	SetupOptionInstall                   string // setup menu option: install
+	SetupOptionDoctor                    string // setup menu option: doctor
+	SetupOptionTestStream                string // setup menu option: test stream
+	SetupOptionImportChannels            string // setup menu option: import channels
+	SetupOptionLanguageTemplate          string // setup menu option: language toggle
+	SetupOptionCheckUpdates              string // setup menu option: check updates
+	SetupOptionLaunch                    string // setup menu option: launch kickoff
+	SetupOptionUninstall                 string // setup menu option: uninstall kickoff
+	SetupOptionExit                      string // setup menu option: exit setup
+	SetupMenuFooter                      string // setup menu footer keybinding hints
+	SetupDoctorHeader                    string // setup doctor screen header
+	SetupDoctorActions                   string // setup doctor actions list
+	SetupInstallingHeader                string // setup installing screen header
+	SetupInstallComplete                 string // setup installing complete banner
+	SetupInstallAbortPrompt              string // setup installing abort confirmation banner
+	SetupInstallFooter                   string // setup installing progress footer
+	SetupInstallAbortFooter              string // setup installing abort footer
+	SetupInstallCompleteFooter           string // setup installing complete footer
+	SetupUpdateHeader                    string // setup update prompt header
+	SetupUpdatePromptTemplate            string // setup update prompt question
+	SetupUpdateOptions                   string // setup update prompt options
+	SetupUpdateFooter                    string // setup update prompt footer
+	SetupUninstallHeader                 string // setup uninstall prompt header
+	SetupUninstallWarning                string // setup uninstall warning text
+	SetupUninstallOptions                string // setup uninstall options
+	SetupUninstallFooter                 string // setup uninstall footer
+	SetupUninstallDone                   string // setup uninstalled exit message
+	SetupStatusHealthy                   string // setup status: dependencies installed
+	SetupStatusTestingMpv                string // setup status: testing mpv
+	SetupStatusImportingChannels         string // setup status: importing channels
+	SetupStatusCheckingUpdates           string // setup status: checking updates
+	SetupStatusUpdatingTemplate          string // setup status: updating kickoff
+	SetupStatusUpdatedTemplate           string // setup status: kickoff updated
+	SetupStatusUpdateFailedTemplate      string // setup status: update failed
+	SetupStatusUpdateCheckFailedTemplate string // setup status: update check failed
+	SetupStatusUpToDateTemplate          string // setup status: up to date
+	SetupStatusDevBuildTemplate          string // setup status: dev build
+	SetupStatusCacheClearedTemplate      string // setup status: cache cleared
+	SetupStatusCacheEmpty                string // setup status: cache empty
+	SetupStatusCacheErrorTemplate        string // setup status: cache error
+	SetupStatusDiagnosticsRefreshed      string // setup status: diagnostics refreshed
+	SetupStatusInstallAborted            string // setup status: installation aborted
+	SetupStatusInstallComplete           string // setup status: installation complete return prompt
+	SetupStatusInstallAbortPrompt        string // setup status: installation abort confirm hint
+	SetupStatusLangChanged               string // setup status: language changed confirmation
+	SetupStepOS                          string // setup install step: detect os
+	SetupStepMpv                         string // setup install step: verify mpv
+	SetupStepFont                        string // setup install step: verify font
+	SetupStepChannels                    string // setup install step: fetch channels
+	SetupStepFinalize                    string // setup install step: finalize
+	SetupStepOSDetectedTemplate          string // setup install detail: os detected
+	SetupStepMpvInstalledTemplate        string // setup install detail: mpv installed
+	SetupStepMpvNotFound                 string // setup install detail: mpv not found
+	SetupStepFontVerified                string // setup install detail: font verified
+	SetupStepFontWindows                 string // setup install detail: font verified windows
+	SetupStepChannelsImportedTemplate    string // setup install detail: channels imported
+	SetupStepAllVerified                 string // setup install detail: all verified
+	SetupMpvNotFoundPath                 string // setup doctor: mpv not found on path
+	SetupMpvOperationalTemplate          string // setup doctor: mpv operational
+	SetupMpvErrorTemplate                string // setup doctor: mpv error
+
+	// CLI and non-TUI surfaces.
+	CLIHelpHeaderTemplate          string // CLI help header with version
+	CLIHelpCommandsHeader          string // CLI help "Commands:" header
+	CLIHelpCommandKickoff          string // CLI help kickoff command description
+	CLIHelpCommandDemo             string // CLI help kickoff demo description
+	CLIHelpCommandBar              string // CLI help kickoff bar description
+	CLIHelpCommandInit             string // CLI help kickoff init description
+	CLIHelpCommandConfigImport     string // CLI help kickoff config import description
+	CLIHelpCommandImport           string // CLI help kickoff import description
+	CLIHelpCommandUpdate           string // CLI help kickoff update description
+	CLIHelpCommandSetup            string // CLI help kickoff setup description
+	CLIHelpCommandVersion          string // CLI help kickoff version description
+	CLIHelpFlagsHeader             string // CLI help "Flags:" header
+	CLIFlagDemo                    string // CLI flag -demo description
+	CLIFlagNoEmoji                 string // CLI flag -no-emoji description
+	CLIFlagVersion                 string // CLI flag -version description
+	CLIFlagVersionShort            string // CLI flag -v description
+	CLIUsageConfigImport           string // CLI usage error for config import
+	CLIUsageImport                 string // CLI usage error for import
+	CLIUnknownConfigCommand        string // CLI unknown config command error
+	CLIInitForceFlag               string // CLI init flag -force description
+	CLIInitForceFlagShort          string // CLI init flag -f description
+	CLIInitFileExistsTemplate      string // CLI init file already exists message
+	CLIInitFileOverwrittenTemplate string // CLI init file overwritten message
+	CLIInitFileCreatedTemplate     string // CLI init file created message
+	CLIImportM3USuccessTemplate    string // CLI import M3U success message
+	CLIImportJSONSuccessTemplate   string // CLI import JSON success message
+	CLIImportPlaylistSavedTemplate string // CLI import playlist saved message
+	CLIImportConfigSavedTemplate   string // CLI import config saved message
+	CLIBarFlagFormat               string // CLI bar flag -format description
+	CLIBarFlagFormatShort          string // CLI bar flag -f description
+	CLIBarFlagWatch                string // CLI bar flag -watch description
+	CLIBarFlagWatchShort           string // CLI bar flag -w description
+	CLIBarFlagInterval             string // CLI bar flag -interval description
+	CLIBarFlagIntervalShort        string // CLI bar flag -i description
+	CLIBarFlagLeague               string // CLI bar flag -league description
+	CLIBarFlagLeagueShort          string // CLI bar flag -l description
+	CLIBarFlagTeam                 string // CLI bar flag -team description
+	CLIBarFlagTeamShort            string // CLI bar flag -t description
+	CLIBarFlagNotify               string // CLI bar flag -notify description
+	CLIBarFlagNotifyShort          string // CLI bar flag -n description
+	CLIBarFlagHasLive              string // CLI bar flag -has-live description
+	CLIBarFlagNoEmoji              string // CLI bar flag -no-emoji description
+	CLIBarFlagDemo                 string // CLI bar flag -demo description
+
+	// Status bar.
+	BarNoMatches     string // status bar empty match list
+	BarVenueLabel    string // status bar tooltip venue label
+	BarChannelsLabel string // status bar tooltip channels label
+
 	// Domain errors.
 	ErrPlayerTimeout    string // player initialization timed out
 	ErrPlayerExited     string // player exited prematurely
@@ -201,7 +312,13 @@ type Catalog struct {
 // catalog; an unsupported code falls back to the Spanish base rather than to a
 // half-empty struct, which keeps New total.
 func New(l Lang) *Catalog {
-	c := spanishCatalog()
+	var c Catalog
+	switch l {
+	case EN:
+		c = englishCatalog()
+	default:
+		c = spanishCatalog()
+	}
 	c.lang = l
 	return &c
 }
@@ -532,6 +649,126 @@ func (c *Catalog) AssistWith(name string) string {
 // GoalBody renders the notification body: the score line, then the assist line.
 func (c *Catalog) GoalBody(score, assist string) string {
 	return interpolate(c.GoalBodyTemplate, map[string]string{"score": score, "assist": assist})
+}
+
+// SetupTitle renders the setup screen title.
+func (c *Catalog) SetupTitle(version string) string {
+	return interpolate(c.SetupTitleTemplate, map[string]string{"version": version})
+}
+
+// SetupOptionLanguage renders the language toggle option.
+func (c *Catalog) SetupOptionLanguage(langName string) string {
+	return interpolate(c.SetupOptionLanguageTemplate, map[string]string{"lang": langName})
+}
+
+// SetupUpdatePrompt renders the update prompt text.
+func (c *Catalog) SetupUpdatePrompt(current, latest string) string {
+	return interpolate(c.SetupUpdatePromptTemplate, map[string]string{"current": current, "latest": latest})
+}
+
+// SetupStatusUpdating renders the updating kickoff message.
+func (c *Catalog) SetupStatusUpdating(version string) string {
+	return interpolate(c.SetupStatusUpdatingTemplate, map[string]string{"version": version})
+}
+
+// SetupStatusUpdated renders the updated kickoff message.
+func (c *Catalog) SetupStatusUpdated(version string) string {
+	return interpolate(c.SetupStatusUpdatedTemplate, map[string]string{"version": version})
+}
+
+// SetupStatusUpdateFailed renders the update failed message.
+func (c *Catalog) SetupStatusUpdateFailed(err string) string {
+	return interpolate(c.SetupStatusUpdateFailedTemplate, map[string]string{"error": err})
+}
+
+// SetupStatusUpdateCheckFailed renders the update check failed message.
+func (c *Catalog) SetupStatusUpdateCheckFailed(err string) string {
+	return interpolate(c.SetupStatusUpdateCheckFailedTemplate, map[string]string{"error": err})
+}
+
+// SetupStatusUpToDate renders the up to date message.
+func (c *Catalog) SetupStatusUpToDate(version string) string {
+	return interpolate(c.SetupStatusUpToDateTemplate, map[string]string{"version": version})
+}
+
+// SetupStatusDevBuild renders the development build message.
+func (c *Catalog) SetupStatusDevBuild(version string) string {
+	return interpolate(c.SetupStatusDevBuildTemplate, map[string]string{"version": version})
+}
+
+// SetupStatusCacheCleared renders the cache cleared message.
+func (c *Catalog) SetupStatusCacheCleared(count int) string {
+	return interpolate(c.SetupStatusCacheClearedTemplate, map[string]string{"count": strconv.Itoa(count)})
+}
+
+// SetupStatusCacheError renders the cache error message.
+func (c *Catalog) SetupStatusCacheError(err string) string {
+	return interpolate(c.SetupStatusCacheErrorTemplate, map[string]string{"error": err})
+}
+
+// SetupStepOSDetected renders the detected OS and architecture detail.
+func (c *Catalog) SetupStepOSDetected(osName, arch string) string {
+	return interpolate(c.SetupStepOSDetectedTemplate, map[string]string{"os": osName, "arch": arch})
+}
+
+// SetupStepMpvInstalled renders the installed mpv version detail.
+func (c *Catalog) SetupStepMpvInstalled(version string) string {
+	return interpolate(c.SetupStepMpvInstalledTemplate, map[string]string{"version": version})
+}
+
+// SetupStepChannelsImported renders the imported channels count and file detail.
+func (c *Catalog) SetupStepChannelsImported(count int, file string) string {
+	return interpolate(c.SetupStepChannelsImportedTemplate, map[string]string{"count": strconv.Itoa(count), "file": file})
+}
+
+// SetupMpvOperational renders the mpv operational status message.
+func (c *Catalog) SetupMpvOperational(version string) string {
+	return interpolate(c.SetupMpvOperationalTemplate, map[string]string{"version": version})
+}
+
+// SetupMpvError renders the mpv error status message.
+func (c *Catalog) SetupMpvError(err string) string {
+	return interpolate(c.SetupMpvErrorTemplate, map[string]string{"error": err})
+}
+
+// CLIHelpHeader renders the CLI help header line.
+func (c *Catalog) CLIHelpHeader(version string) string {
+	return interpolate(c.CLIHelpHeaderTemplate, map[string]string{"version": version})
+}
+
+// CLIInitFileExists renders the init file exists message.
+func (c *Catalog) CLIInitFileExists(path string) string {
+	return interpolate(c.CLIInitFileExistsTemplate, map[string]string{"path": path})
+}
+
+// CLIInitFileOverwritten renders the init file overwritten message.
+func (c *Catalog) CLIInitFileOverwritten(path string) string {
+	return interpolate(c.CLIInitFileOverwrittenTemplate, map[string]string{"path": path})
+}
+
+// CLIInitFileCreated renders the init file created message.
+func (c *Catalog) CLIInitFileCreated(path string) string {
+	return interpolate(c.CLIInitFileCreatedTemplate, map[string]string{"path": path})
+}
+
+// CLIImportM3USuccess renders the import M3U success message.
+func (c *Catalog) CLIImportM3USuccess(count int) string {
+	return interpolate(c.CLIImportM3USuccessTemplate, map[string]string{"count": strconv.Itoa(count)})
+}
+
+// CLIImportJSONSuccess renders the import JSON success message.
+func (c *Catalog) CLIImportJSONSuccess(count int) string {
+	return interpolate(c.CLIImportJSONSuccessTemplate, map[string]string{"count": strconv.Itoa(count)})
+}
+
+// CLIImportPlaylistSaved renders the import playlist saved message.
+func (c *Catalog) CLIImportPlaylistSaved(path string) string {
+	return interpolate(c.CLIImportPlaylistSavedTemplate, map[string]string{"path": path})
+}
+
+// CLIImportConfigSaved renders the import config saved message.
+func (c *Catalog) CLIImportConfigSaved(path string) string {
+	return interpolate(c.CLIImportConfigSavedTemplate, map[string]string{"path": path})
 }
 
 // interpolate substitutes every {name} placeholder in template with its value.

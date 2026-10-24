@@ -408,11 +408,14 @@ func FormatMatchSingle(m model.Match, format Format, noEmoji bool) string {
 }
 
 // BuildTooltip constructs rich tooltip details for Waybar.
-func BuildTooltip(matches []model.Match, resolver model.Resolver) string {
-	if len(matches) == 0 {
-		return "No matches"
-	}
+func BuildTooltip(matches []model.Match, resolver model.Resolver, optCat ...*i18n.Catalog) string {
 	cat := i18n.Default()
+	if len(optCat) > 0 && optCat[0] != nil {
+		cat = optCat[0]
+	}
+	if len(matches) == 0 {
+		return cat.BarNoMatches
+	}
 
 	var blocks []string
 	for _, m := range matches {
@@ -470,7 +473,7 @@ func BuildTooltip(matches []model.Match, resolver model.Resolver) string {
 			venue = cat.FallbackVenue
 		}
 
-		block := fmt.Sprintf("%s: %s\nVenue: %s", league, lineScore, venue)
+		block := fmt.Sprintf("%s: %s\n%s: %s", league, lineScore, cat.BarVenueLabel, venue)
 
 		var channelNames []string
 		if resolver != nil {
@@ -490,7 +493,7 @@ func BuildTooltip(matches []model.Match, resolver model.Resolver) string {
 		}
 
 		if len(channelNames) > 0 {
-			block += fmt.Sprintf("\nChannels: %s", strings.Join(channelNames, ", "))
+			block += fmt.Sprintf("\n%s: %s", cat.BarChannelsLabel, strings.Join(channelNames, ", "))
 		}
 
 		blocks = append(blocks, block)
@@ -500,7 +503,12 @@ func BuildTooltip(matches []model.Match, resolver model.Resolver) string {
 }
 
 // FormatMatches formats a list of matches according to the chosen Options.
-func FormatMatches(matches []model.Match, opts Options, resolver model.Resolver) (string, error) {
+func FormatMatches(matches []model.Match, opts Options, resolver model.Resolver, optCat ...*i18n.Catalog) (string, error) {
+	cat := i18n.Default()
+	if len(optCat) > 0 && optCat[0] != nil {
+		cat = optCat[0]
+	}
+
 	var liveMatches []model.Match
 	var upcomingMatches []model.Match
 	var finishedMatches []model.Match
@@ -592,7 +600,7 @@ func FormatMatches(matches []model.Match, opts Options, resolver model.Resolver)
 			text = ""
 		}
 
-		tooltip := BuildTooltip(matches, resolver)
+		tooltip := BuildTooltip(matches, resolver, cat)
 		wOut := WaybarOutput{
 			Text:    text,
 			Tooltip: tooltip,

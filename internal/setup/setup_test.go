@@ -1,17 +1,28 @@
 package setup
 
 import (
+	"os"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/e12jassir/kickoff-cli/internal/i18n"
 	"github.com/e12jassir/kickoff-cli/internal/updater"
 )
 
+func isolateConfigHome(t *testing.T) string {
+	t.Helper()
+	tempRoot := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tempRoot)
+	t.Setenv("HOME", tempRoot)
+	t.Setenv("AppData", tempRoot)
+	return tempRoot
+}
+
 func TestSetup_NewModel_And_Diagnostics(t *testing.T) {
 	m := NewModel("v0.2.4")
-	if len(m.options) != 8 {
-		t.Fatalf("expected 8 options, got %d", len(m.options))
+	if len(m.options) != 9 {
+		t.Fatalf("expected 9 options, got %d", len(m.options))
 	}
 	if len(m.checks) == 0 {
 		t.Fatalf("expected system checks to be populated")
@@ -79,7 +90,7 @@ func TestSetup_QuitKey(t *testing.T) {
 }
 
 func TestSetup_View_Rendering(t *testing.T) {
-	m := NewModel("v0.2.4")
+	m := NewModel("v0.2.4").WithLanguage(i18n.EN)
 	m.width = 84
 	m.height = 35
 
@@ -124,8 +135,26 @@ func TestSetup_View_Rendering(t *testing.T) {
 	}
 }
 
+func TestSetup_View_Rendering_Spanish(t *testing.T) {
+	m := NewModel("v0.2.4").WithLanguage(i18n.ES)
+	m.width = 84
+	m.height = 35
+
+	view := m.View()
+
+	if !strings.Contains(view, "Configuración y Setup") {
+		t.Errorf("expected Spanish view to contain 'Configuración y Setup'")
+	}
+	if !strings.Contains(view, "> Instalar dependencias y configurar") {
+		t.Errorf("expected Spanish view to show first option in Spanish")
+	}
+	if !strings.Contains(view, "enter: seleccionar") || !strings.Contains(view, "q/esc: salir") {
+		t.Errorf("expected Spanish footer keybindings in view")
+	}
+}
+
 func TestSetup_Doctor_View(t *testing.T) {
-	m := NewModel("v0.2.4")
+	m := NewModel("v0.2.4").WithLanguage(i18n.EN)
 	m.width = 84
 	m.height = 35
 	m.state = stateDoctor
@@ -151,7 +180,7 @@ func TestSetup_Doctor_View(t *testing.T) {
 }
 
 func TestSetup_Installing_View(t *testing.T) {
-	m := NewModel("v0.2.4")
+	m := NewModel("v0.2.4").WithLanguage(i18n.EN)
 	m.width = 84
 	m.height = 35
 	m.state = stateInstalling
@@ -173,7 +202,7 @@ func TestSetup_Installing_View(t *testing.T) {
 }
 
 func TestSetup_UpdatePrompt_View(t *testing.T) {
-	m := NewModel("v0.2.3")
+	m := NewModel("v0.2.3").WithLanguage(i18n.EN)
 	m.width = 84
 	m.height = 35
 	m.state = stateUpdatePrompt
@@ -195,7 +224,7 @@ func TestSetup_UpdatePrompt_View(t *testing.T) {
 }
 
 func TestSetup_UninstallPrompt_View(t *testing.T) {
-	m := NewModel("v0.2.4")
+	m := NewModel("v0.2.4").WithLanguage(i18n.EN)
 	m.width = 84
 	m.height = 35
 	m.state = stateUninstallPrompt
@@ -322,14 +351,134 @@ func TestSetup_Installing_AbortConfirmation(t *testing.T) {
 }
 
 func TestSetup_Installing_AbortPrompt_View(t *testing.T) {
-	m := NewModel("v0.2.4")
-	m.width = 84
-	m.height = 35
-	m.state = stateInstalling
-	m.abortPrompt = true
+	// English view
+	mEN := NewModel("v0.2.4").WithLanguage(i18n.EN)
+	mEN.width = 84
+	mEN.height = 35
+	mEN.state = stateInstalling
+	mEN.abortPrompt = true
 
-	view := m.View()
-	if !strings.Contains(view, "Abort installation?") {
-		t.Errorf("expected installing view to show the abort confirmation")
+	viewEN := mEN.View()
+	if !strings.Contains(viewEN, "Abort installation?") {
+		t.Errorf("expected English installing view to show the abort confirmation")
+	}
+
+	// Spanish view
+	mES := NewModel("v0.2.4").WithLanguage(i18n.ES)
+	mES.width = 84
+	mES.height = 35
+	mES.state = stateInstalling
+	mES.abortPrompt = true
+
+	viewES := mES.View()
+	if !strings.Contains(viewES, "¿Abortar instalación?") {
+		t.Errorf("expected Spanish installing view to show the abort confirmation")
+	}
+}
+
+func TestSetup_LanguageOSPreSelection(t *testing.T) {
+	isolateConfigHome(t)
+
+	// Explicit English in env
+	t.Setenv(i18n.EnvVar, "en")
+	mEN := NewModel("v0.2.4")
+	if mEN.lang != i18n.EN {
+		t.Errorf("expected EN language pre-selected, got %v", mEN.lang)
+	}
+
+	// Explicit Spanish in env
+	t.Setenv(i18n.EnvVar, "es")
+	mES := NewModel("v0.2.4")
+	if mES.lang != i18n.ES {
+		t.Errorf("expected ES language pre-selected, got %v", mES.lang)
+	}
+}
+
+func TestSetup_LanguageOptionToggling(t *testing.T) {
+	isolateConfigHome(t)
+	t.Setenv(i18n.EnvVar, "") // Ensure KICKOFF_LANG does not override
+
+	m := NewModel("v0.2.4").WithLanguage(i18n.ES)
+	if m.lang != i18n.ES {
+		t.Fatalf("expected initial ES language, got %v", m.lang)
+	}
+	if !strings.Contains(m.options[4], "Idioma / Language: Español") {
+		t.Errorf("expected option to show Español, got %q", m.options[4])
+	}
+
+	// Move cursor to language option (index 4) and press enter
+	m.cursor = 4
+	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newM.(Model)
+
+	if m.lang != i18n.EN {
+		t.Errorf("expected language toggled to EN, got %v", m.lang)
+	}
+	if !strings.Contains(m.options[4], "Idioma / Language: English") {
+		t.Errorf("expected option to show English, got %q", m.options[4])
+	}
+	if !strings.Contains(m.options[0], "Install dependencies & setup") {
+		t.Errorf("expected option 0 localized to English, got %q", m.options[0])
+	}
+
+	// Press Enter again to toggle back to ES
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newM.(Model)
+
+	if m.lang != i18n.ES {
+		t.Errorf("expected language toggled back to ES, got %v", m.lang)
+	}
+	if !strings.Contains(m.options[4], "Idioma / Language: Español") {
+		t.Errorf("expected option to show Español, got %q", m.options[4])
+	}
+	if !strings.Contains(m.options[0], "Instalar dependencias y configurar") {
+		t.Errorf("expected option 0 localized to Spanish, got %q", m.options[0])
+	}
+
+	// Toggle using keyboard shortcut 'l'
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	m = newM.(Model)
+	if m.lang != i18n.EN {
+		t.Errorf("expected 'l' shortcut to toggle language to EN, got %v", m.lang)
+	}
+}
+
+func TestSetup_LanguagePersistence(t *testing.T) {
+	isolateConfigHome(t)
+	t.Setenv(i18n.EnvVar, "") // Unset KICKOFF_LANG so config file layer is exercised
+	t.Setenv("LC_ALL", "")
+	t.Setenv("LC_MESSAGES", "")
+	t.Setenv("LANG", "es_CO.UTF-8") // OS default is Spanish
+
+	m := NewModel("v0.2.4")
+	if m.lang != i18n.ES {
+		t.Fatalf("expected initial language ES from OS, got %v", m.lang)
+	}
+
+	// Toggle to English
+	m.cursor = 4
+	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newM.(Model)
+	if m.lang != i18n.EN {
+		t.Fatalf("expected toggled language EN, got %v", m.lang)
+	}
+
+	// Verify config.json on disk
+	cfgPath, err := i18n.ConfigPath()
+	if err != nil {
+		t.Fatalf("ConfigPath error: %v", err)
+	}
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("failed to read config.json at %s: %v", cfgPath, err)
+	}
+	if !strings.Contains(string(data), `"lang":"en"`) && !strings.Contains(string(data), `"lang": "en"`) {
+		t.Errorf("expected config.json to contain en, got: %s", string(data))
+	}
+
+	// Start a brand new NewModel instance: it should resolve EN from the persisted config.json!
+	freshModel := NewModel("v0.2.4")
+	if freshModel.lang != i18n.EN {
+		t.Errorf("expected fresh NewModel to load persisted language EN, got %v", freshModel.lang)
 	}
 }

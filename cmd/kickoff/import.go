@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/e12jassir/kickoff-cli/internal/catalog"
+	"github.com/e12jassir/kickoff-cli/internal/i18n"
 )
 
 func backupExistingConfig(targetFile string) error {
@@ -67,7 +68,12 @@ func readSourceContent(source string) ([]byte, error) {
 }
 
 // RunConfigImport imports a channels.json configuration or M3U playlist from a local path or HTTP URL.
-func RunConfigImport(source string) error {
+func RunConfigImport(source string, optCat ...*i18n.Catalog) error {
+	cat := i18n.Default()
+	if len(optCat) > 0 && optCat[0] != nil {
+		cat = optCat[0]
+	}
+
 	source = strings.TrimSpace(source)
 	if source == "" {
 		return fmt.Errorf("source cannot be empty")
@@ -131,9 +137,9 @@ func RunConfigImport(source string) error {
 			return fmt.Errorf("could not write channels configuration: %w", err)
 		}
 
-		fmt.Printf("Successfully imported M3U playlist with %d entries!\n", len(channels))
-		fmt.Printf("Playlist saved to: %s\n", playlistFile)
-		fmt.Printf("Configuration saved to: %s\n", channelsPath)
+		fmt.Print(cat.CLIImportM3USuccess(len(channels)))
+		fmt.Print(cat.CLIImportPlaylistSaved(playlistFile))
+		fmt.Print(cat.CLIImportConfigSaved(channelsPath))
 		return nil
 	}
 
@@ -157,7 +163,7 @@ func RunConfigImport(source string) error {
 		return fmt.Errorf("could not write channels configuration: %w", err)
 	}
 
-	fmt.Printf("Successfully imported configuration with %d configured stream endpoints!\n", len(ext.Streams))
-	fmt.Printf("Configuration saved to: %s\n", channelsPath)
+	fmt.Print(cat.CLIImportJSONSuccess(len(ext.Streams)))
+	fmt.Print(cat.CLIImportConfigSaved(channelsPath))
 	return nil
 }

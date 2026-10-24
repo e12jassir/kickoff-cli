@@ -18,6 +18,7 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/e12jassir/kickoff-cli/internal/i18n"
 	"github.com/e12jassir/kickoff-cli/internal/updater"
 )
 
@@ -76,19 +77,24 @@ type installStep struct {
 	Detail string
 }
 
-func initialInstallSteps() []installStep {
+func initialInstallSteps(cat *i18n.Catalog) []installStep {
+	if cat == nil {
+		cat = i18n.Default()
+	}
 	return []installStep{
-		{Name: "Detect operating system & architecture", Status: "pending"},
-		{Name: "Verify video player engine (mpv)", Status: "pending"},
-		{Name: "Verify terminal font & glyphs", Status: "pending"},
-		{Name: "Fetch & configure signals channel pack", Status: "pending"},
-		{Name: "Finalize & verify installation", Status: "pending"},
+		{Name: cat.SetupStepOS, Status: "pending"},
+		{Name: cat.SetupStepMpv, Status: "pending"},
+		{Name: cat.SetupStepFont, Status: "pending"},
+		{Name: cat.SetupStepChannels, Status: "pending"},
+		{Name: cat.SetupStepFinalize, Status: "pending"},
 	}
 }
 
 // Model represents the Bubble Tea model for the setup and diagnostics screen.
 type Model struct {
 	version          string
+	lang             i18n.Lang
+	cat              *i18n.Catalog
 	width            int
 	height           int
 	cursor           int
@@ -138,21 +144,55 @@ type selfUpdateDoneMsg struct {
 	err error
 }
 
+func (m Model) catalog() *i18n.Catalog {
+	if m.cat != nil {
+		return m.cat
+	}
+	if m.lang != "" {
+		return i18n.New(m.lang)
+	}
+	return i18n.Default()
+}
+
+func (m Model) languageOptionText() string {
+	cat := m.catalog()
+	langName := "Español"
+	if m.lang == i18n.EN {
+		langName = "English"
+	}
+	return cat.SetupOptionLanguage(langName)
+}
+
+func (m Model) buildOptions() []string {
+	cat := m.catalog()
+	return []string{
+		cat.SetupOptionInstall,
+		cat.SetupOptionDoctor,
+		cat.SetupOptionTestStream,
+		cat.SetupOptionImportChannels,
+		m.languageOptionText(),
+		cat.SetupOptionCheckUpdates,
+		cat.SetupOptionLaunch,
+		cat.SetupOptionUninstall,
+		cat.SetupOptionExit,
+	}
+}
+
+// WithLanguage returns a copy of the model configured for lang.
+func (m Model) WithLanguage(lang i18n.Lang) Model {
+	m.lang = lang
+	m.cat = i18n.New(lang)
+	m.options = m.buildOptions()
+	m.installSteps = initialInstallSteps(m.cat)
+	return m
+}
+
 // NewModel creates a new setup screen model.
 func NewModel(version string) Model {
 	cfgPath := getChannelsConfigPath()
 	cacheDir := getCacheDirPath()
-
-	options := []string{
-		"Install dependencies & setup",
-		"System doctor (diagnostics)",
-		"Test stream playback",
-		"Import channels pack",
-		"Check for updates",
-		"Launch Kickoff",
-		"Uninstall Kickoff",
-		"Exit setup",
-	}
+	lang := i18n.ResolveLanguage()
+	cat := i18n.New(lang)
 
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
@@ -160,17 +200,19 @@ func NewModel(version string) Model {
 
 	m := Model{
 		version:      version,
+		lang:         lang,
+		cat:          cat,
 		width:        84,
 		height:       30,
 		cursor:       0,
 		state:        stateMenu,
-		options:      options,
 		cfgPath:      cfgPath,
 		cacheDir:     cacheDir,
 		checks:       runDiagnostics(cfgPath, cacheDir),
 		spinner:      sp,
-		installSteps: initialInstallSteps(),
+		installSteps: initialInstallSteps(cat),
 	}
+	m.options = m.buildOptions()
 	return m
 }
 
@@ -421,7 +463,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case updateCheckDoneMsg:
 		if msg.err != nil {
-			m.statusMsg = fmt.Sprintf("Update check failed: %v", msg.err)
+			m.statusMsg = m.catalog().SetupStatusUpdateCheckFailed(msg.err.Error())
 			m.statusColor = ColorLove
 			return m, nil
 		}
@@ -433,19 +475,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		cleanCurr := strings.TrimPrefix(m.version, "v")
 		if cleanCurr == "dev" {
-			m.statusMsg = fmt.Sprintf("Running development build (dev). Latest release is %s.", msg.rel.TagName)
+			m.statusMsg = m.catalog().SetupStatusDevBuild(msg.rel.TagName)
 		} else {
-			m.statusMsg = fmt.Sprintf("Kickoff is up to date (%s).", m.version)
+			m.statusMsg = m.catalog().SetupStatusUpToDate(m.version)
 		}
 		m.statusColor = ColorCyan
 		return m, nil
 
 	case selfUpdateDoneMsg:
 		if msg.err != nil {
-			m.statusMsg = fmt.Sprintf("Update failed: %v", msg.err)
+			m.statusMsg = m.catalog().SetupStatusUpdateFailed(msg.err.Error())
 			m.statusColor = ColorLove
 		} else {
-			m.statusMsg = fmt.Sprintf("Kickoff updated to %s! Restart to apply.", m.latestRelease.TagName)
+			m.statusMsg = m.catalog().SetupStatusUpdated(m.latestRelease.TagName)
 			m.statusColor = ColorCyan
 		}
 		m.state = stateMenu
@@ -468,7 +510,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.runInstallStep(msg.nextStep)
 		}
 		m.installComplete = true
-		m.statusMsg = "Installation completed! Press enter to return to menu."
+		m.statusMsg = m.catalog().SetupStatusInstallComplete
 		m.statusColor = ColorCyan
 		m.checks = runDiagnostics(m.cfgPath, m.cacheDir)
 		return m, nil
@@ -477,6 +519,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKey(msg)
 	}
 
+	return m, nil
+}
+
+func (m Model) toggleLanguage() (tea.Model, tea.Cmd) {
+	if m.lang == i18n.EN {
+		m.lang = i18n.ES
+	} else {
+		m.lang = i18n.EN
+	}
+	if err := i18n.WriteConfigLanguage(m.lang); err != nil {
+		m.statusMsg = fmt.Sprintf("Error saving language: %v", err)
+		m.statusColor = ColorLove
+	} else {
+		m.statusMsg = m.catalog().SetupStatusLangChanged
+		m.statusColor = ColorCyan
+	}
+	m.cat = i18n.New(m.lang)
+	m.options = m.buildOptions()
 	return m, nil
 }
 
@@ -506,6 +566,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
+		case "l", "L":
+			return m.toggleLanguage()
+
 		case "r":
 			// Shortcut to force reinstallation
 			return m.startInstallation(true)
@@ -521,7 +584,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case "t":
-			m.statusMsg = "Testing mpv stream playback..."
+			m.statusMsg = m.catalog().SetupStatusTestingMpv
 			m.statusColor = ColorIris
 			return m, m.testMpvCmd()
 
@@ -530,7 +593,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 		case "r":
 			m.checks = runDiagnostics(m.cfgPath, m.cacheDir)
-			m.statusMsg = "Diagnostics refreshed."
+			m.statusMsg = m.catalog().SetupStatusDiagnosticsRefreshed
 			m.statusColor = ColorCyan
 			return m, nil
 		}
@@ -542,7 +605,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.abortPrompt = false
 				if !m.installComplete {
 					m.installCancelled = true
-					m.statusMsg = "Installation aborted."
+					m.statusMsg = m.catalog().SetupStatusInstallAborted
 					m.statusColor = ColorGold
 				}
 				m.state = stateMenu
@@ -567,7 +630,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch key {
 		case "ctrl+c", "q", "esc":
 			m.abortPrompt = true
-			m.statusMsg = "Abort installation? Press y to confirm, any other key to continue."
+			m.statusMsg = m.catalog().SetupStatusInstallAbortPrompt
 			m.statusColor = ColorGold
 			return m, nil
 		}
@@ -575,7 +638,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case stateUpdatePrompt:
 		switch key {
 		case "y", "Y", "enter":
-			m.statusMsg = fmt.Sprintf("Updating Kickoff to %s...", m.latestRelease.TagName)
+			m.statusMsg = m.catalog().SetupStatusUpdating(m.latestRelease.TagName)
 			m.statusColor = ColorIris
 			return m, m.runSelfUpdateCmd()
 
@@ -600,7 +663,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m *Model) startInstallation(force bool) (tea.Model, tea.Cmd) {
 	if !force && m.isSystemHealthy() {
-		m.statusMsg = "All dependencies are already installed and operational. Press [r] to force reinstall."
+		m.statusMsg = m.catalog().SetupStatusHealthy
 		m.statusColor = ColorCyan
 		return *m, nil
 	}
@@ -608,7 +671,7 @@ func (m *Model) startInstallation(force bool) (tea.Model, tea.Cmd) {
 	m.installComplete = false
 	m.abortPrompt = false
 	m.installCancelled = false
-	m.installSteps = initialInstallSteps()
+	m.installSteps = initialInstallSteps(m.catalog())
 	m.installSteps[0].Status = "running"
 	m.statusMsg = ""
 	return *m, m.installCommand()
@@ -631,31 +694,34 @@ func (m Model) handleSelect() (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case 2: // Test stream playback
-		m.statusMsg = "Testing mpv stream player..."
+		m.statusMsg = m.catalog().SetupStatusTestingMpv
 		m.statusColor = ColorIris
 		return m, m.testMpvCmd()
 
 	case 3: // Import channels pack
-		m.statusMsg = "Importing verified channel pack..."
+		m.statusMsg = m.catalog().SetupStatusImportingChannels
 		m.statusColor = ColorIris
 		return m, m.importChannelsCmd()
 
-	case 4: // Check for updates
-		m.statusMsg = "Checking GitHub releases for updates..."
+	case 4: // Language selection
+		return m.toggleLanguage()
+
+	case 5: // Check for updates
+		m.statusMsg = m.catalog().SetupStatusCheckingUpdates
 		m.statusColor = ColorIris
 		return m, m.checkForUpdatesCmd()
 
-	case 5: // Launch Kickoff
+	case 6: // Launch Kickoff
 		m.launchKickoff = true
 		m.quitting = true
 		return m, tea.Quit
 
-	case 6: // Uninstall Kickoff
+	case 7: // Uninstall Kickoff
 		m.state = stateUninstallPrompt
 		m.statusMsg = ""
 		return m, nil
 
-	case 7: // Exit setup
+	case 8: // Exit setup
 		m.quitting = true
 		return m, tea.Quit
 	}
@@ -665,6 +731,7 @@ func (m Model) handleSelect() (tea.Model, tea.Cmd) {
 
 func (m Model) runInstallStep(step int) tea.Cmd {
 	cfgPath := m.cfgPath
+	cat := m.catalog()
 
 	return func() tea.Msg {
 		time.Sleep(200 * time.Millisecond) // Smooth UX pacing
@@ -676,7 +743,7 @@ func (m Model) runInstallStep(step int) tea.Cmd {
 			return installStepMsg{
 				stepIndex: 0,
 				success:   true,
-				detail:    fmt.Sprintf("%s/%s detected", osName, archName),
+				detail:    cat.SetupStepOSDetected(osName, archName),
 				nextStep:  1,
 			}
 
@@ -701,7 +768,7 @@ func (m Model) runInstallStep(step int) tea.Cmd {
 				return installStepMsg{
 					stepIndex: 1,
 					success:   true,
-					detail:    fmt.Sprintf("Installed: %s", strings.TrimSpace(firstLine)),
+					detail:    cat.SetupStepMpvInstalled(strings.TrimSpace(firstLine)),
 					nextStep:  2,
 				}
 			}
@@ -725,7 +792,7 @@ func (m Model) runInstallStep(step int) tea.Cmd {
 			return installStepMsg{
 				stepIndex: 1,
 				success:   false,
-				detail:    "mpv not found (install via apt, pacman, or brew)",
+				detail:    cat.SetupStepMpvNotFound,
 				nextStep:  2,
 			}
 
@@ -734,14 +801,14 @@ func (m Model) runInstallStep(step int) tea.Cmd {
 				return installStepMsg{
 					stepIndex: 2,
 					success:   true,
-					detail:    "JetBrains Mono Nerd Font verified in system registry",
+					detail:    cat.SetupStepFontWindows,
 					nextStep:  3,
 				}
 			}
 			return installStepMsg{
 				stepIndex: 2,
 				success:   true,
-				detail:    "Unicode glyph & terminal braille support verified",
+				detail:    cat.SetupStepFontVerified,
 				nextStep:  3,
 			}
 
@@ -763,7 +830,7 @@ func (m Model) runInstallStep(step int) tea.Cmd {
 			return installStepMsg{
 				stepIndex: 3,
 				success:   true,
-				detail:    fmt.Sprintf("Imported %d channels into %s", count, filepath.Base(cfgPath)),
+				detail:    cat.SetupStepChannelsImported(count, filepath.Base(cfgPath)),
 				nextStep:  4,
 			}
 
@@ -771,7 +838,7 @@ func (m Model) runInstallStep(step int) tea.Cmd {
 			return installStepMsg{
 				stepIndex: 4,
 				success:   true,
-				detail:    "All components verified and operational",
+				detail:    cat.SetupStepAllVerified,
 				nextStep:  5,
 			}
 		}
@@ -887,6 +954,7 @@ func downloadAndSaveChannels(url, cfgPath string) (int, error) {
 }
 
 func (m Model) testMpvCmd() tea.Cmd {
+	cat := m.catalog()
 	return func() tea.Msg {
 		mpvPath, err := exec.LookPath("mpv")
 		if err != nil && runtime.GOOS == "windows" {
@@ -899,21 +967,22 @@ func (m Model) testMpvCmd() tea.Cmd {
 			}
 		}
 		if err != nil {
-			return actionDoneMsg{msg: "mpv not found on system PATH.", color: ColorLove}
+			return actionDoneMsg{msg: cat.SetupMpvNotFoundPath, color: ColorLove}
 		}
 
 		cmd := exec.Command(mpvPath, "--version")
 		out, err := cmd.CombinedOutput()
 		if err != nil {
-			return actionDoneMsg{msg: fmt.Sprintf("mpv error: %v", err), color: ColorLove}
+			return actionDoneMsg{msg: cat.SetupMpvError(err.Error()), color: ColorLove}
 		}
 		firstLine := strings.Split(string(out), "\n")[0]
-		return actionDoneMsg{msg: fmt.Sprintf("mpv operational: %s", strings.TrimSpace(firstLine)), color: ColorCyan}
+		return actionDoneMsg{msg: cat.SetupMpvOperational(strings.TrimSpace(firstLine)), color: ColorCyan}
 	}
 }
 
 func (m Model) importChannelsCmd() tea.Cmd {
 	cfgPath := m.cfgPath
+	cat := m.catalog()
 	return func() tea.Msg {
 		url := os.Getenv("KICKOFF_SIGNALS_URL")
 		if url == "" {
@@ -923,19 +992,20 @@ func (m Model) importChannelsCmd() tea.Cmd {
 		if err != nil {
 			return actionDoneMsg{msg: fmt.Sprintf("Channel import failed: %v", err), color: ColorLove}
 		}
-		return actionDoneMsg{msg: fmt.Sprintf("Imported %d channels into %s", count, cfgPath), color: ColorCyan}
+		return actionDoneMsg{msg: cat.SetupStepChannelsImported(count, cfgPath), color: ColorCyan}
 	}
 }
 
 func (m Model) clearCacheCmd() tea.Cmd {
 	cacheDir := m.cacheDir
+	cat := m.catalog()
 	return func() tea.Msg {
 		if cacheDir == "" {
-			return actionDoneMsg{msg: "Cache directory not configured.", color: ColorMuted}
+			return actionDoneMsg{msg: cat.SetupStatusCacheEmpty, color: ColorMuted}
 		}
 		entries, err := os.ReadDir(cacheDir)
 		if err != nil {
-			return actionDoneMsg{msg: fmt.Sprintf("Error reading cache: %v", err), color: ColorLove}
+			return actionDoneMsg{msg: cat.SetupStatusCacheError(err.Error()), color: ColorLove}
 		}
 		deleted := 0
 		for _, e := range entries {
@@ -945,7 +1015,7 @@ func (m Model) clearCacheCmd() tea.Cmd {
 			}
 		}
 		return actionDoneMsg{
-			msg:   fmt.Sprintf("API cache cleared (%d temporary files removed).", deleted),
+			msg:   cat.SetupStatusCacheCleared(deleted),
 			color: ColorCyan,
 		}
 	}
@@ -1008,7 +1078,7 @@ func (m Model) executeUninstall() (tea.Model, tea.Cmd) {
 func (m Model) View() string {
 	if m.quitting {
 		if m.uninstallDone {
-			return "Kickoff has been uninstalled.\n"
+			return m.catalog().SetupUninstallDone
 		}
 		return ""
 	}
@@ -1022,6 +1092,7 @@ func (m Model) View() string {
 	}
 
 	var content strings.Builder
+	cat := m.catalog()
 
 	// 1. Kickoff ANSI Shadow Block Header with Vertical Gradient
 	for i, line := range asciiLogoLines {
@@ -1039,7 +1110,7 @@ func (m Model) View() string {
 	if !strings.HasPrefix(cleanVer, "v") && cleanVer != "" {
 		cleanVer = "v" + cleanVer
 	}
-	title := fmt.Sprintf("Kickoff %s — CLI Football Experience & Streaming Hub", cleanVer)
+	title := cat.SetupTitle(cleanVer)
 	titleStyled := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(ColorText).
@@ -1071,7 +1142,7 @@ func (m Model) View() string {
 		menuHeader := lipgloss.NewStyle().
 			Bold(true).
 			Foreground(ColorRose).
-			Render("  Configuration & Setup")
+			Render(cat.SetupMenuHeader)
 		content.WriteString(menuHeader + "\n\n")
 
 		for i, opt := range m.options {
@@ -1099,14 +1170,14 @@ func (m Model) View() string {
 			Foreground(ColorMuted).
 			Width(targetWidth).
 			Align(lipgloss.Center).
-			Render("↑/↓ / j/k: move • enter: select • r: force reinstall • q/esc: exit")
+			Render(cat.SetupMenuFooter)
 		content.WriteString("\n" + footerHint)
 
 	case stateInstalling:
 		installHeader := lipgloss.NewStyle().
 			Bold(true).
 			Foreground(ColorRose).
-			Render("  Installing Kickoff Dependencies")
+			Render(cat.SetupInstallingHeader)
 		content.WriteString(installHeader + "\n\n")
 
 		for _, step := range m.installSteps {
@@ -1135,25 +1206,25 @@ func (m Model) View() string {
 			statusLine := lipgloss.NewStyle().
 				Foreground(ColorCyan).
 				Bold(true).
-				Render("\n  [ Installation completed successfully! Press enter to return ]")
+				Render("\n" + cat.SetupInstallComplete)
 			content.WriteString(statusLine + "\n")
 			footer := lipgloss.NewStyle().
 				Foreground(ColorMuted).
 				Width(targetWidth).
 				Align(lipgloss.Center).
-				Render("enter/esc: back to menu")
+				Render(cat.SetupInstallCompleteFooter)
 			content.WriteString("\n" + footer)
 		} else if m.abortPrompt {
 			statusLine := lipgloss.NewStyle().
 				Foreground(ColorGold).
 				Bold(true).
-				Render("\n  [ Abort installation? Press y to confirm ]")
+				Render("\n" + cat.SetupInstallAbortPrompt)
 			content.WriteString(statusLine + "\n")
 			footer := lipgloss.NewStyle().
 				Foreground(ColorMuted).
 				Width(targetWidth).
 				Align(lipgloss.Center).
-				Render("y: abort • n/esc: keep installing")
+				Render(cat.SetupInstallAbortFooter)
 			content.WriteString("\n" + footer)
 		} else {
 			content.WriteString("\n")
@@ -1161,7 +1232,7 @@ func (m Model) View() string {
 				Foreground(ColorMuted).
 				Width(targetWidth).
 				Align(lipgloss.Center).
-				Render("Installing components... • ctrl+c/q/esc: abort")
+				Render(cat.SetupInstallFooter)
 			content.WriteString("\n" + footer)
 		}
 
@@ -1169,7 +1240,7 @@ func (m Model) View() string {
 		docHeader := lipgloss.NewStyle().
 			Bold(true).
 			Foreground(ColorRose).
-			Render("  System Doctor (Diagnostics)")
+			Render(cat.SetupDoctorHeader)
 		content.WriteString(docHeader + "\n\n")
 
 		for _, chk := range m.checks {
@@ -1184,7 +1255,7 @@ func (m Model) View() string {
 
 		subActions := lipgloss.NewStyle().
 			Foreground(ColorText).
-			Render("\n  Doctor Actions:\n    [t] Test stream playback\n    [c] Clear API cache\n    [r] Refresh diagnostics\n    [esc] Back to menu")
+			Render(cat.SetupDoctorActions)
 		content.WriteString(subActions + "\n")
 
 		if m.statusMsg != "" {
@@ -1199,7 +1270,7 @@ func (m Model) View() string {
 		updHeader := lipgloss.NewStyle().
 			Bold(true).
 			Foreground(ColorRose).
-			Render("  Software Update Available")
+			Render(cat.SetupUpdateHeader)
 		content.WriteString(updHeader + "\n\n")
 
 		latestVer := "latest"
@@ -1207,10 +1278,10 @@ func (m Model) View() string {
 			latestVer = m.latestRelease.TagName
 		}
 
-		info := fmt.Sprintf("    Current version:  %s\n    Latest version:   %s\n\n    Would you like to download and install this update now?", m.version, latestVer)
+		info := cat.SetupUpdatePrompt(m.version, latestVer)
 		content.WriteString(lipgloss.NewStyle().Foreground(ColorText).Render(info) + "\n\n")
 
-		options := "    > [y] Yes, update now\n      [n] No, cancel and return"
+		options := cat.SetupUpdateOptions
 		content.WriteString(lipgloss.NewStyle().Foreground(ColorIris).Bold(true).Render(options) + "\n")
 
 		if m.statusMsg != "" {
@@ -1225,31 +1296,27 @@ func (m Model) View() string {
 			Foreground(ColorMuted).
 			Width(targetWidth).
 			Align(lipgloss.Center).
-			Render("y: update • n/esc: cancel")
+			Render(cat.SetupUpdateFooter)
 		content.WriteString("\n" + footerHint)
 
 	case stateUninstallPrompt:
 		unHeader := lipgloss.NewStyle().
 			Bold(true).
 			Foreground(ColorLove).
-			Render("  Uninstall Kickoff")
+			Render(cat.SetupUninstallHeader)
 		content.WriteString(unHeader + "\n\n")
 
-		warning := "    This will completely remove Kickoff from your system:\n" +
-			"      • Executable binary\n" +
-			"      • Configuration & channels directory\n" +
-			"      • Local cache directory\n\n" +
-			"    Are you sure you want to proceed?"
+		warning := cat.SetupUninstallWarning
 		content.WriteString(lipgloss.NewStyle().Foreground(ColorText).Render(warning) + "\n\n")
 
-		options := "    > [y] Confirm uninstall\n      [n] Cancel and return"
+		options := cat.SetupUninstallOptions
 		content.WriteString(lipgloss.NewStyle().Foreground(ColorLove).Bold(true).Render(options) + "\n")
 
 		footerHint := lipgloss.NewStyle().
 			Foreground(ColorMuted).
 			Width(targetWidth).
 			Align(lipgloss.Center).
-			Render("y: confirm • n/esc: cancel")
+			Render(cat.SetupUninstallFooter)
 		content.WriteString("\n" + footerHint)
 	}
 
