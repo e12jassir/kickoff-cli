@@ -13,6 +13,8 @@ var (
 	ErrPlayerTimeout    = errors.New("player initialization timed out")
 	ErrPlayerExited     = errors.New("player exited prematurely")
 	ErrInvalidURL       = errors.New("invalid stream url")
+	ErrUpdateFailed     = errors.New("update installation failed")
+	ErrNetwork          = errors.New("network request failed")
 )
 
 type contextKey string

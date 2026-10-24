@@ -148,5 +148,13 @@ func spanishCatalog() Catalog {
 		AssistNone:               "Asistencia: Sin asistencia",
 		AssistWithTemplate:       "Asistencia: {name}",
 		GoalBodyTemplate:         "{score}\n{assist}",
+
+		// Domain errors.
+		ErrPlayerTimeout:    "el reproductor tardó demasiado en responder",
+		ErrPlayerExited:     "el reproductor se cerró de forma inesperada",
+		ErrInvalidURL:       "la URL de la transmisión no es válida",
+		ErrCorruptedPayload: "datos corruptos o inválidos del servidor",
+		ErrUpdateFailed:     "no se pudo instalar la actualización",
+		ErrNetwork:          "error en la solicitud de red",
 	}
 }

@@ -1,9 +1,13 @@
 package i18n
 
 import (
+	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/e12jassir/kickoff-cli/internal/model"
 )
 
 // TestCatalogParity enforces the rule that both compiled catalogs are complete.
@@ -234,5 +238,172 @@ func TestNewUnknownLanguageFallsBackToSpanish(t *testing.T) {
 	}
 	if got, want := unknown.WindowTooSmall, New(ES).WindowTooSmall; got != want {
 		t.Errorf("unknown language rendered %q, want the es base %q", got, want)
+	}
+}
+
+// TestFormatError proves domain errors map to localized catalog strings,
+// support wrapped errors via errors.Is, fall back to err.Error() when unrecognized,
+// and return "" when nil.
+func TestFormatError(t *testing.T) {
+	cat := New(ES)
+
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{
+			name: "nil error returns empty string",
+			err:  nil,
+			want: "",
+		},
+		{
+			name: "ErrPlayerTimeout",
+			err:  model.ErrPlayerTimeout,
+			want: "el reproductor tardó demasiado en responder",
+		},
+		{
+			name: "wrapped ErrPlayerTimeout",
+			err:  fmt.Errorf("mpv launch failed: %w", model.ErrPlayerTimeout),
+			want: "el reproductor tardó demasiado en responder",
+		},
+		{
+			name: "ErrPlayerExited",
+			err:  model.ErrPlayerExited,
+			want: "el reproductor se cerró de forma inesperada",
+		},
+		{
+			name: "wrapped ErrPlayerExited",
+			err:  fmt.Errorf("subsystem failure: %w", model.ErrPlayerExited),
+			want: "el reproductor se cerró de forma inesperada",
+		},
+		{
+			name: "ErrInvalidURL",
+			err:  model.ErrInvalidURL,
+			want: "la URL de la transmisión no es válida",
+		},
+		{
+			name: "wrapped ErrInvalidURL",
+			err:  fmt.Errorf("parse error: %w", model.ErrInvalidURL),
+			want: "la URL de la transmisión no es válida",
+		},
+		{
+			name: "ErrCorruptedPayload",
+			err:  model.ErrCorruptedPayload,
+			want: "datos corruptos o inválidos del servidor",
+		},
+		{
+			name: "wrapped ErrCorruptedPayload",
+			err:  fmt.Errorf("json decoding: %w", model.ErrCorruptedPayload),
+			want: "datos corruptos o inválidos del servidor",
+		},
+		{
+			name: "ErrUpdateFailed",
+			err:  model.ErrUpdateFailed,
+			want: "no se pudo instalar la actualización",
+		},
+		{
+			name: "wrapped ErrUpdateFailed",
+			err:  fmt.Errorf("checksum mismatch: %w", model.ErrUpdateFailed),
+			want: "no se pudo instalar la actualización",
+		},
+		{
+			name: "ErrNetwork",
+			err:  model.ErrNetwork,
+			want: "error en la solicitud de red",
+		},
+		{
+			name: "wrapped ErrNetwork",
+			err:  fmt.Errorf("dial tcp timeout: %w", model.ErrNetwork),
+			want: "error en la solicitud de red",
+		},
+		{
+			name: "unrecognized error falls back to err.Error()",
+			err:  errors.New("unrecognized custom failure"),
+			want: "unrecognized custom failure",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := cat.FormatError(tc.err)
+			if got != tc.want {
+				t.Errorf("FormatError(%v) = %q, want %q", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestFormatPlaybackError tests that domain errors are localized and formatted
+// through PlaybackErrorTemplate.
+func TestFormatPlaybackError(t *testing.T) {
+	cat := New(ES)
+
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{
+			name: "nil error returns empty string",
+			err:  nil,
+			want: "",
+		},
+		{
+			name: "domain error",
+			err:  model.ErrPlayerTimeout,
+			want: "Error de reproducción: el reproductor tardó demasiado en responder",
+		},
+		{
+			name: "unrecognized error",
+			err:  errors.New("mpv crashed"),
+			want: "Error de reproducción: mpv crashed",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := cat.FormatPlaybackError(tc.err)
+			if got != tc.want {
+				t.Errorf("FormatPlaybackError(%v) = %q, want %q", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestFormatUpdateError tests that update errors are localized and formatted
+// through UpdateErrorTemplate.
+func TestFormatUpdateError(t *testing.T) {
+	cat := New(ES)
+
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{
+			name: "nil error returns empty string",
+			err:  nil,
+			want: "",
+		},
+		{
+			name: "domain error",
+			err:  model.ErrUpdateFailed,
+			want: "Error al actualizar: no se pudo instalar la actualización",
+		},
+		{
+			name: "unrecognized error",
+			err:  errors.New("permission denied"),
+			want: "Error al actualizar: permission denied",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := cat.FormatUpdateError(tc.err)
+			if got != tc.want {
+				t.Errorf("FormatUpdateError(%v) = %q, want %q", tc.err, got, tc.want)
+			}
+		})
 	}
 }

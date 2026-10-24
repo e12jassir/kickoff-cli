@@ -17,9 +17,12 @@
 package i18n
 
 import (
+	"errors"
 	"reflect"
 	"strconv"
 	"strings"
+
+	"github.com/e12jassir/kickoff-cli/internal/model"
 )
 
 // Lang identifies a supported interface language.
@@ -184,6 +187,14 @@ type Catalog struct {
 	AssistNone               string // no-assist line
 	AssistWithTemplate       string // assist line naming the assistant
 	GoalBodyTemplate         string // notification body with score and assist
+
+	// Domain errors.
+	ErrPlayerTimeout    string // player initialization timed out
+	ErrPlayerExited     string // player exited prematurely
+	ErrInvalidURL       string // invalid stream url
+	ErrCorruptedPayload string // corrupted or invalid payload
+	ErrUpdateFailed     string // update installation failed
+	ErrNetwork          string // network request failed
 }
 
 // New returns the catalog for l. Every supported language yields a complete
@@ -416,9 +427,61 @@ func (c *Catalog) PlaybackError(message string) string {
 	return interpolate(c.PlaybackErrorTemplate, map[string]string{"message": message})
 }
 
+// FormatPlaybackError maps err to a localized message and formats it using
+// PlaybackErrorTemplate. A nil error returns "".
+func (c *Catalog) FormatPlaybackError(err error) string {
+	if err == nil {
+		return ""
+	}
+	if c == nil {
+		return err.Error()
+	}
+	return c.PlaybackError(c.FormatError(err))
+}
+
 // UpdateError renders the update failure prefix around a message.
 func (c *Catalog) UpdateError(message string) string {
 	return interpolate(c.UpdateErrorTemplate, map[string]string{"message": message})
+}
+
+// FormatUpdateError maps err to a localized message and formats it using
+// UpdateErrorTemplate. A nil error returns "".
+func (c *Catalog) FormatUpdateError(err error) string {
+	if err == nil {
+		return ""
+	}
+	if c == nil {
+		return err.Error()
+	}
+	return c.UpdateError(c.FormatError(err))
+}
+
+// FormatError maps err to a localized message. Domain errors defined in
+// internal/model are recognized via errors.Is and mapped to their catalog
+// text; unrecognized errors fall back to err.Error(). A nil error returns "".
+func (c *Catalog) FormatError(err error) string {
+	if err == nil {
+		return ""
+	}
+	if c == nil {
+		return err.Error()
+	}
+	switch {
+	case errors.Is(err, model.ErrPlayerTimeout):
+		return c.ErrPlayerTimeout
+	case errors.Is(err, model.ErrPlayerExited):
+		return c.ErrPlayerExited
+	case errors.Is(err, model.ErrInvalidURL):
+		return c.ErrInvalidURL
+	case errors.Is(err, model.ErrCorruptedPayload):
+		return c.ErrCorruptedPayload
+	case errors.Is(err, model.ErrUpdateFailed):
+		return c.ErrUpdateFailed
+	case errors.Is(err, model.ErrNetwork):
+		return c.ErrNetwork
+	default:
+		return err.Error()
+	}
 }
 
 // UpdateSucceeded renders the update-finished status message.

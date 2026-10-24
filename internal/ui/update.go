@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"sort"
@@ -450,7 +451,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 				m.state = StateError
-				m.errorMsg = msg.err.Error()
+				m.errorMsg = m.cat().FormatError(msg.err)
 				m.statusMsg = ""
 			} else {
 				var prevSelectedID string
@@ -686,7 +687,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case playbackErrMsg:
 		m.connecting = false
-		m.errorMsg = m.cat().PlaybackError(msg.err.Error())
+		m.errorMsg = m.cat().FormatPlaybackError(msg.err)
 		m.statusMsg = ""
 		return m, nil
 
@@ -696,7 +697,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case updateFinishedMsg:
 		if msg.err != nil {
-			m.errorMsg = m.cat().UpdateError(msg.err.Error())
+			m.errorMsg = m.cat().FormatUpdateError(msg.err)
 		} else {
 			m.statusMsg = m.cat().UpdateSucceeded(m.updateAvailable)
 			m.updateAvailable = ""
@@ -740,7 +741,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						c.Stdout = os.Stdout
 						c.Stderr = os.Stderr
 						return m, tea.ExecProcess(c, func(err error) tea.Msg {
-							return updateFinishedMsg{err: err}
+							if err != nil {
+								return updateFinishedMsg{err: fmt.Errorf("%w: %v", model.ErrUpdateFailed, err)}
+							}
+							return updateFinishedMsg{err: nil}
 						})
 					}
 				}
