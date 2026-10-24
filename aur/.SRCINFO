@@ -1,6 +1,6 @@
 pkgbase = kickoff-bin
 	pkgdesc = An elegant, lightning-fast football TUI and live broadcast launcher for the terminal (binary release)
-	pkgver = 0.4.2
+	pkgver = 0.4.0
 	pkgrel = 1
 	url = https://github.com/e12jassir/kickoff-cli
 	arch = x86_64
@@ -14,9 +14,9 @@ pkgbase = kickoff-bin
 	conflicts = kickoff
 	conflicts = kickoff-cli
 	conflicts = kickoff-cli-bin
-	source_x86_64 = kickoff-bin-0.4.2-x86_64.tar.gz::https://github.com/e12jassir/kickoff-cli/releases/download/v0.4.2/kickoff_0.4.2_linux_amd64.tar.gz
-	sha256sums_x86_64 = 1f2366abaa1285c19597b2676072f52a636fe4c9d3dec17de50302bbf2b7c9c4
-	source_aarch64 = kickoff-bin-0.4.2-aarch64.tar.gz::https://github.com/e12jassir/kickoff-cli/releases/download/v0.4.2/kickoff_0.4.2_linux_arm64.tar.gz
-	sha256sums_aarch64 = f9c56bda27f02a8b409928d4b1d7c3aaad91f1b9e3d08edd7d6bcf0323379353
+	source_x86_64 = kickoff-bin-0.4.0-x86_64.tar.gz::https://github.com/e12jassir/kickoff-cli/releases/download/v0.4.0/kickoff_0.4.0_linux_amd64.tar.gz
+	sha256sums_x86_64 = ac392d725cc0cb0c567598594f925050ac8fa4833334ff723db00530244936cf
+	source_aarch64 = kickoff-bin-0.4.0-aarch64.tar.gz::https://github.com/e12jassir/kickoff-cli/releases/download/v0.4.0/kickoff_0.4.0_linux_arm64.tar.gz
+	sha256sums_aarch64 = 3f23493fb10dc2768b9f33fd70798f089c391875b0f01bc12d330c935f39120a
 
 pkgname = kickoff-bin
