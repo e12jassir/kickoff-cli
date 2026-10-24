@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/e12jassir/kickoff-cli/internal/espn"
+	"github.com/e12jassir/kickoff-cli/internal/i18n"
 	"github.com/e12jassir/kickoff-cli/internal/model"
 )
 
@@ -784,5 +785,55 @@ func TestNewNotifier(t *testing.T) {
 	err := notifier.NotifyGoal(m, "2", "1", nil)
 	if err != nil {
 		t.Errorf("unexpected error from notifier: %v", err)
+	}
+}
+
+func TestBuildTooltip_PresentationFallbacks(t *testing.T) {
+	cat := i18n.Default()
+	matches := []model.Match{
+		{
+			LeagueKey: "laliga",
+			HomeTeam:  model.Competitor{DisplayName: ""},
+			AwayTeam:  model.Competitor{DisplayName: ""},
+			Venue:     "",
+			Status:    model.MatchStatus{State: "pre"},
+		},
+	}
+
+	tooltip := BuildTooltip(matches, nil)
+	if !strings.Contains(tooltip, cat.FallbackHome) {
+		t.Errorf("expected tooltip to contain FallbackHome %q, got:\n%s", cat.FallbackHome, tooltip)
+	}
+	if !strings.Contains(tooltip, cat.FallbackAway) {
+		t.Errorf("expected tooltip to contain FallbackAway %q, got:\n%s", cat.FallbackAway, tooltip)
+	}
+	if !strings.Contains(tooltip, cat.FallbackVenue) {
+		t.Errorf("expected tooltip to contain FallbackVenue %q, got:\n%s", cat.FallbackVenue, tooltip)
+	}
+}
+
+func TestFormatGoalNotification_PresentationFallbacks(t *testing.T) {
+	cat := i18n.Default()
+	m := model.Match{
+		HomeTeam: model.Competitor{DisplayName: ""},
+		AwayTeam: model.Competitor{DisplayName: ""},
+	}
+
+	title, body := FormatGoalNotification(m, "1", "0", nil)
+	if !strings.Contains(title, cat.FallbackHome) || !strings.Contains(title, cat.FallbackAway) {
+		t.Errorf("expected title to contain home/away fallbacks, got %q", title)
+	}
+	if !strings.Contains(body, cat.FallbackHome) || !strings.Contains(body, cat.FallbackAway) {
+		t.Errorf("expected body to contain home/away fallbacks, got %q", body)
+	}
+
+	ev := &model.MatchEvent{
+		Clock:      "45'",
+		PlayerName: "",
+		IsScoring:  true,
+	}
+	titleEv, _ := FormatGoalNotification(m, "1", "0", ev)
+	if !strings.Contains(titleEv, cat.FallbackPlayer) {
+		t.Errorf("expected title with empty player to contain %q, got %q", cat.FallbackPlayer, titleEv)
 	}
 }

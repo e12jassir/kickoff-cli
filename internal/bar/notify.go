@@ -3,6 +3,7 @@ package bar
 import (
 	"fmt"
 
+	"github.com/e12jassir/kickoff-cli/internal/i18n"
 	"github.com/e12jassir/kickoff-cli/internal/model"
 )
 
@@ -12,13 +13,17 @@ type Notifier interface {
 }
 
 // FormatGoalNotification creates a formatted title and body text for goal notifications.
-func FormatGoalNotification(match model.Match, homeScore, awayScore string, event *model.MatchEvent) (string, string) {
+func FormatGoalNotification(match model.Match, homeScore, awayScore string, event *model.MatchEvent, optCat ...*i18n.Catalog) (string, string) {
+	cat := i18n.Default()
+	if len(optCat) > 0 && optCat[0] != nil {
+		cat = optCat[0]
+	}
 	home := match.HomeTeam.DisplayName
 	if home == "" {
 		home = match.HomeTeam.Name
 	}
 	if home == "" {
-		home = "Local"
+		home = cat.FallbackHome
 	}
 
 	away := match.AwayTeam.DisplayName
@@ -26,7 +31,7 @@ func FormatGoalNotification(match model.Match, homeScore, awayScore string, even
 		away = match.AwayTeam.Name
 	}
 	if away == "" {
-		away = "Visitante"
+		away = cat.FallbackAway
 	}
 
 	scoreLine := fmt.Sprintf("%s %s - %s %s", home, homeScore, awayScore, away)
@@ -37,35 +42,35 @@ func FormatGoalNotification(match model.Match, homeScore, awayScore string, even
 	if event != nil {
 		clock := event.Clock
 		if clock == "" {
-			clock = "LIVE"
+			clock = cat.FallbackClock
 		}
 
 		playerName := event.PlayerName
 		if playerName == "" {
-			playerName = "Jugador"
+			playerName = cat.FallbackPlayer
 		}
 
 		if event.IsPenalty {
-			title = fmt.Sprintf("¡GOL de %s! (pen. %s)", playerName, clock)
-			assistLine = "Asistencia: Penal"
+			title = cat.GoalPenaltyTitle(playerName, clock)
+			assistLine = cat.AssistPenalty
 		} else if event.IsOwnGoal {
-			title = fmt.Sprintf("¡GOL en propia puerta de %s! (%s)", playerName, clock)
-			assistLine = "Asistencia: Autogol"
+			title = cat.GoalOwnGoalTitle(playerName, clock)
+			assistLine = cat.AssistOwnGoal
 		} else {
-			title = fmt.Sprintf("¡GOL de %s! (%s)", playerName, clock)
+			title = cat.GoalTitle(playerName, clock)
 			if event.AssistName != "" {
-				assistLine = fmt.Sprintf("Asistencia: %s", event.AssistName)
+				assistLine = cat.AssistWith(event.AssistName)
 			} else {
-				assistLine = "Asistencia: Sin asistencia"
+				assistLine = cat.AssistNone
 			}
 		}
 	} else {
-		title = fmt.Sprintf("¡GOL! %s", scoreLine)
+		title = cat.GoalScoreTitle(scoreLine)
 	}
 
 	body := scoreLine
 	if assistLine != "" {
-		body = fmt.Sprintf("%s\n%s", scoreLine, assistLine)
+		body = cat.GoalBody(scoreLine, assistLine)
 	}
 
 	return title, body

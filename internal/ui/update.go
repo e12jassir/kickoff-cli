@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"sort"
@@ -450,7 +451,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 				m.state = StateError
-				m.errorMsg = msg.err.Error()
+				m.errorMsg = m.cat().FormatError(msg.err)
 				m.statusMsg = ""
 			} else {
 				var prevSelectedID string
@@ -671,7 +672,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case playbackStartedMsg:
 		if msg.playbackID == m.playbackID {
 			m.connecting = false
-			m.statusMsg = "✓ Reproduciendo: " + msg.channel.Name + " • x: parar señal"
+			m.statusMsg = m.cat().NowPlaying(msg.channel.Name)
 			m.errorMsg = ""
 			return m, waitForPlaybackCmd(m.player, msg.playbackID)
 		}
@@ -686,7 +687,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case playbackErrMsg:
 		m.connecting = false
-		m.errorMsg = "Error de reproducción: " + msg.err.Error()
+		m.errorMsg = m.cat().FormatPlaybackError(msg.err)
 		m.statusMsg = ""
 		return m, nil
 
@@ -696,9 +697,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case updateFinishedMsg:
 		if msg.err != nil {
-			m.errorMsg = "Error al actualizar: " + msg.err.Error()
+			m.errorMsg = m.cat().FormatUpdateError(msg.err)
 		} else {
-			m.statusMsg = "✓ kickoff actualizado a " + m.updateAvailable + ". ¡Reinicia la app!"
+			m.statusMsg = m.cat().UpdateSucceeded(m.updateAvailable)
 			m.updateAvailable = ""
 		}
 		return m, nil
@@ -729,7 +730,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.playbackID++
 				m.connecting = false
-				m.statusMsg = "⏹ Señal detenida"
+				m.statusMsg = m.cat().StreamStopped
 				return m, nil
 			case "u":
 				if m.updateAvailable != "" {
@@ -740,7 +741,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						c.Stdout = os.Stdout
 						c.Stderr = os.Stderr
 						return m, tea.ExecProcess(c, func(err error) tea.Msg {
-							return updateFinishedMsg{err: err}
+							if err != nil {
+								return updateFinishedMsg{err: fmt.Errorf("%w: %v", model.ErrUpdateFailed, err)}
+							}
+							return updateFinishedMsg{err: nil}
 						})
 					}
 				}
@@ -895,7 +899,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.loadGen++
 					gen := m.loadGen
 					league := m.CurrentLeague()
-					m.loadingMsg = "Consultando partidos de hoy (" + league.Name + ")..."
+					m.loadingMsg = m.cat().LoadingMatches(league.Name)
 					return m, tea.Batch(
 						m.spinner.Tick,
 						fetchMatchesCmd(m.client, league.Key, gen),
@@ -1058,7 +1062,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.playbackID++
 				m.connecting = false
-				m.statusMsg = "⏹ Señal detenida"
+				m.statusMsg = m.cat().StreamStopped
 				return m, nil
 			case "esc", "backspace":
 				if m.connecting {
@@ -1081,7 +1085,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.channelsLoading = false
 				m.channelCursor = 0
 				m.modalTab = 0
-				if !strings.Contains(m.statusMsg, "Reproduciendo") {
+				if !m.isPlayingStatus() {
 					m.statusMsg = ""
 				}
 				m.errorMsg = ""
@@ -1091,7 +1095,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.selectedMatchID = ""
 				m.detailsLoaded = make(map[string]bool)
 				league := m.CurrentLeague()
-				m.loadingMsg = "Recargando datos (" + league.Name + ")..."
+				m.loadingMsg = m.cat().ReloadingData(league.Name)
 				m.errorMsg = ""
 				m.loadGen++
 				gen := m.loadGen
@@ -1146,7 +1150,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						bitrateStr += " • " + selectedChannel.Resolution
 					}
 					m.bitrate = bitrateStr
-					m.statusMsg = "Conectando con " + selectedChannel.Name + "..."
+					m.statusMsg = m.cat().Connecting(selectedChannel.Name)
 					m.errorMsg = ""
 					m.playbackID++
 					req := model.PlayRequest{
@@ -1175,7 +1179,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.playbackID++
 				m.connecting = false
-				m.statusMsg = "⏹ Señal detenida"
+				m.statusMsg = m.cat().StreamStopped
 				return m, nil
 			case "esc", "backspace":
 				m.state = StateBrowsing
@@ -1195,7 +1199,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.playbackID++
 				m.connecting = false
-				m.statusMsg = "⏹ Señal detenida"
+				m.statusMsg = m.cat().StreamStopped
 				return m, nil
 			case "esc", "backspace", "h":
 				if m.connecting && m.player != nil {
@@ -1216,7 +1220,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.channelsLoading = false
 				m.channelCursor = 0
 				m.modalTab = 0
-				if !strings.Contains(m.statusMsg, "Reproduciendo") {
+				if !m.isPlayingStatus() {
 					m.statusMsg = ""
 				}
 				m.errorMsg = ""
@@ -1224,7 +1228,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "r":
 				m.state = StateLoading
 				league := m.CurrentLeague()
-				m.loadingMsg = "Recargando datos (" + league.Name + ")..."
+				m.loadingMsg = m.cat().ReloadingData(league.Name)
 				m.errorMsg = ""
 				m.loadGen++
 				gen := m.loadGen

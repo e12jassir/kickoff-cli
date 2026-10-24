@@ -896,9 +896,6 @@ func (c *Client) FetchMatches(ctx context.Context, leagueKey string) ([]model.Ma
 			if dispName == "" {
 				dispName = name
 			}
-			if dispName == "" {
-				dispName = "Unknown"
-			}
 			dispName = normalizeTeamDisplayName(dispName)
 
 			abbrev := ""
@@ -927,20 +924,19 @@ func (c *Client) FetchMatches(ctx context.Context, leagueKey string) ([]model.Ma
 		}
 
 		if !hasHome {
-			homeComp = model.Competitor{DisplayName: "Local", IsHome: true}
+			homeComp = model.Competitor{DisplayName: "", IsHome: true}
 		}
 		if !hasAway {
-			awayComp = model.Competitor{DisplayName: "Visitante", IsHome: false}
+			awayComp = model.Competitor{DisplayName: "", IsHome: false}
 		}
 
-		venueName := "Estadio Principal"
+		venueName := ""
 		if comp.Venue != nil && comp.Venue.FullName != "" {
 			venueName = comp.Venue.FullName
 		}
 
 		status := model.MatchStatus{
-			Description: "Programado",
-			State:       "pre",
+			State: "pre",
 		}
 		// ESPN scoreboard responses carry the status inside the competition.
 		// Some payloads duplicate it at event level, so keep that as fallback.
@@ -1770,7 +1766,7 @@ func (c *Client) FetchStandings(ctx context.Context, leagueKey string) (*model.L
 	parseEntries := func(rawEntries []rawStandingsEntry, groupName string) []model.StandingsEntry {
 		var list []model.StandingsEntry
 		for _, re := range rawEntries {
-			teamName := "Equipo"
+			teamName := ""
 			if re.Team != nil {
 				if re.Team.DisplayName != "" {
 					teamName = re.Team.DisplayName

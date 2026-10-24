@@ -1030,6 +1030,116 @@ func TestClient_FetchStatistics_MissingAthleteName(t *testing.T) {
 	}
 }
 
+func TestClient_ParseEvent_NoPresentationFallbacks(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{
+			"events": [
+				{
+					"id": "test1",
+					"date": "2026-10-24T18:00Z",
+					"competitions": [
+						{
+							"competitors": [
+								{"homeAway": "home", "team": {}},
+								{"homeAway": "away", "team": {}}
+							],
+							"status": {
+								"type": {"state": "pre"}
+							}
+						}
+					]
+				}
+			]
+		}`)
+	}))
+	defer server.Close()
+
+	client := NewClient(
+		WithBaseURL(server.URL),
+		WithCacheDir(t.TempDir()),
+		WithRetryBackoff(func() time.Duration { return 0 }),
+	)
+
+	matches, err := client.FetchMatches(context.Background(), "laliga")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("expected 1 match, got %d", len(matches))
+	}
+	m := matches[0]
+	if m.HomeTeam.DisplayName != "" {
+		t.Errorf("expected empty HomeTeam.DisplayName, got %q", m.HomeTeam.DisplayName)
+	}
+	if m.AwayTeam.DisplayName != "" {
+		t.Errorf("expected empty AwayTeam.DisplayName, got %q", m.AwayTeam.DisplayName)
+	}
+	if m.Venue != "" {
+		t.Errorf("expected empty Venue, got %q", m.Venue)
+	}
+	if m.Status.Description != "" {
+		t.Errorf("expected empty Status.Description, got %q", m.Status.Description)
+	}
+}
+
+func TestClient_FetchStandings_MissingTeamName(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{
+			"children": [
+				{
+					"standings": {
+						"entries": [
+							{
+								"stats": [{"name": "points", "displayValue": "10"}]
+							}
+						]
+					}
+				}
+			]
+		}`)
+	}))
+	defer server.Close()
+
+	client := NewClient(
+		WithBaseURL(server.URL),
+		WithCacheDir(t.TempDir()),
+		WithRetryBackoff(func() time.Duration { return 0 }),
+	)
+
+	st, err := client.FetchStandings(context.Background(), "premier")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(st.Entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(st.Entries))
+	}
+	if got := st.Entries[0].TeamName; got != "" {
+		t.Errorf("expected empty team name, got %q", got)
+	}
+}
+
+func TestDemoClient_PreFixture_NoHardcodedStatus(t *testing.T) {
+	demo := NewDemoClient()
+	matches, err := demo.FetchMatches(context.Background(), "laliga")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	foundPre := false
+	for _, m := range matches {
+		if m.Status.State == "pre" {
+			foundPre = true
+			if m.Status.Description != "" {
+				t.Errorf("expected empty status description for pre fixture in demo client, got %q", m.Status.Description)
+			}
+		}
+	}
+	if !foundPre {
+		t.Error("expected at least one pre fixture in demo client")
+	}
+}
+
 func TestClient_AtomicCacheWrites(t *testing.T) {
 	tempDir := t.TempDir()
 	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
