@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -163,7 +164,11 @@ func TestConfigFilePerm(t *testing.T) {
 	if err != nil {
 		t.Fatalf("could not stat the written config: %v", err)
 	}
-	if got := info.Mode().Perm(); got != 0o644 {
-		t.Errorf("config.json perm = %#o, want %#o", got, 0o644)
+	// Windows synthesizes the reported mode from the read-only attribute, so the
+	// POSIX bits requested here cannot be observed there.
+	if runtime.GOOS != "windows" {
+		if got := info.Mode().Perm(); got != 0o644 {
+			t.Errorf("config.json perm = %#o, want %#o", got, 0o644)
+		}
 	}
 }
