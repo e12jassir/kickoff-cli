@@ -185,6 +185,70 @@ type Catalog struct {
 	AssistWithTemplate       string // assist line naming the assistant
 	GoalBodyTemplate         string // notification body with score and assist
 
+	// Setup wizard.
+	SetupTitleTemplate                   string // setup screen title
+	SetupMenuHeader                      string // setup menu header
+	SetupOptionInstall                   string // setup menu option: install
+	SetupOptionDoctor                    string // setup menu option: doctor
+	SetupOptionTestStream                string // setup menu option: test stream
+	SetupOptionImportChannels            string // setup menu option: import channels
+	SetupOptionLanguageTemplate          string // setup menu option: language toggle
+	SetupOptionCheckUpdates              string // setup menu option: check updates
+	SetupOptionLaunch                    string // setup menu option: launch kickoff
+	SetupOptionUninstall                 string // setup menu option: uninstall kickoff
+	SetupOptionExit                      string // setup menu option: exit setup
+	SetupMenuFooter                      string // setup menu footer keybinding hints
+	SetupDoctorHeader                    string // setup doctor screen header
+	SetupDoctorActions                   string // setup doctor actions list
+	SetupInstallingHeader                string // setup installing screen header
+	SetupInstallComplete                 string // setup installing complete banner
+	SetupInstallAbortPrompt              string // setup installing abort confirmation banner
+	SetupInstallFooter                   string // setup installing progress footer
+	SetupInstallAbortFooter              string // setup installing abort footer
+	SetupInstallCompleteFooter           string // setup installing complete footer
+	SetupUpdateHeader                    string // setup update prompt header
+	SetupUpdatePromptTemplate            string // setup update prompt question
+	SetupUpdateOptions                   string // setup update prompt options
+	SetupUpdateFooter                    string // setup update prompt footer
+	SetupUninstallHeader                 string // setup uninstall prompt header
+	SetupUninstallWarning                string // setup uninstall warning text
+	SetupUninstallOptions                string // setup uninstall options
+	SetupUninstallFooter                 string // setup uninstall footer
+	SetupUninstallDone                   string // setup uninstalled exit message
+	SetupStatusHealthy                   string // setup status: dependencies installed
+	SetupStatusTestingMpv                string // setup status: testing mpv
+	SetupStatusImportingChannels         string // setup status: importing channels
+	SetupStatusCheckingUpdates           string // setup status: checking updates
+	SetupStatusUpdatingTemplate          string // setup status: updating kickoff
+	SetupStatusUpdatedTemplate           string // setup status: kickoff updated
+	SetupStatusUpdateFailedTemplate      string // setup status: update failed
+	SetupStatusUpdateCheckFailedTemplate string // setup status: update check failed
+	SetupStatusUpToDateTemplate          string // setup status: up to date
+	SetupStatusDevBuildTemplate          string // setup status: dev build
+	SetupStatusCacheClearedTemplate      string // setup status: cache cleared
+	SetupStatusCacheEmpty                string // setup status: cache empty
+	SetupStatusCacheErrorTemplate        string // setup status: cache error
+	SetupStatusDiagnosticsRefreshed      string // setup status: diagnostics refreshed
+	SetupStatusInstallAborted            string // setup status: installation aborted
+	SetupStatusInstallComplete           string // setup status: installation complete return prompt
+	SetupStatusInstallAbortPrompt        string // setup status: installation abort confirm hint
+	SetupStatusLangChanged               string // setup status: language changed confirmation
+	SetupStepOS                          string // setup install step: detect os
+	SetupStepMpv                         string // setup install step: verify mpv
+	SetupStepFont                        string // setup install step: verify font
+	SetupStepChannels                    string // setup install step: fetch channels
+	SetupStepFinalize                    string // setup install step: finalize
+	SetupStepOSDetectedTemplate          string // setup install detail: os detected
+	SetupStepMpvInstalledTemplate        string // setup install detail: mpv installed
+	SetupStepMpvNotFound                 string // setup install detail: mpv not found
+	SetupStepFontVerified                string // setup install detail: font verified
+	SetupStepFontWindows                 string // setup install detail: font verified windows
+	SetupStepChannelsImportedTemplate    string // setup install detail: channels imported
+	SetupStepAllVerified                 string // setup install detail: all verified
+	SetupMpvNotFoundPath                 string // setup doctor: mpv not found on path
+	SetupMpvOperationalTemplate          string // setup doctor: mpv operational
+	SetupMpvErrorTemplate                string // setup doctor: mpv error
+
 	// Domain errors.
 	ErrPlayerTimeout    string // player initialization timed out
 	ErrPlayerExited     string // player exited prematurely
@@ -535,6 +599,86 @@ func (c *Catalog) AssistWith(name string) string {
 // GoalBody renders the notification body: the score line, then the assist line.
 func (c *Catalog) GoalBody(score, assist string) string {
 	return interpolate(c.GoalBodyTemplate, map[string]string{"score": score, "assist": assist})
+}
+
+// SetupTitle renders the setup screen title.
+func (c *Catalog) SetupTitle(version string) string {
+	return interpolate(c.SetupTitleTemplate, map[string]string{"version": version})
+}
+
+// SetupOptionLanguage renders the language toggle option.
+func (c *Catalog) SetupOptionLanguage(langName string) string {
+	return interpolate(c.SetupOptionLanguageTemplate, map[string]string{"lang": langName})
+}
+
+// SetupUpdatePrompt renders the update prompt text.
+func (c *Catalog) SetupUpdatePrompt(current, latest string) string {
+	return interpolate(c.SetupUpdatePromptTemplate, map[string]string{"current": current, "latest": latest})
+}
+
+// SetupStatusUpdating renders the updating kickoff message.
+func (c *Catalog) SetupStatusUpdating(version string) string {
+	return interpolate(c.SetupStatusUpdatingTemplate, map[string]string{"version": version})
+}
+
+// SetupStatusUpdated renders the updated kickoff message.
+func (c *Catalog) SetupStatusUpdated(version string) string {
+	return interpolate(c.SetupStatusUpdatedTemplate, map[string]string{"version": version})
+}
+
+// SetupStatusUpdateFailed renders the update failed message.
+func (c *Catalog) SetupStatusUpdateFailed(err string) string {
+	return interpolate(c.SetupStatusUpdateFailedTemplate, map[string]string{"error": err})
+}
+
+// SetupStatusUpdateCheckFailed renders the update check failed message.
+func (c *Catalog) SetupStatusUpdateCheckFailed(err string) string {
+	return interpolate(c.SetupStatusUpdateCheckFailedTemplate, map[string]string{"error": err})
+}
+
+// SetupStatusUpToDate renders the up to date message.
+func (c *Catalog) SetupStatusUpToDate(version string) string {
+	return interpolate(c.SetupStatusUpToDateTemplate, map[string]string{"version": version})
+}
+
+// SetupStatusDevBuild renders the development build message.
+func (c *Catalog) SetupStatusDevBuild(version string) string {
+	return interpolate(c.SetupStatusDevBuildTemplate, map[string]string{"version": version})
+}
+
+// SetupStatusCacheCleared renders the cache cleared message.
+func (c *Catalog) SetupStatusCacheCleared(count int) string {
+	return interpolate(c.SetupStatusCacheClearedTemplate, map[string]string{"count": strconv.Itoa(count)})
+}
+
+// SetupStatusCacheError renders the cache error message.
+func (c *Catalog) SetupStatusCacheError(err string) string {
+	return interpolate(c.SetupStatusCacheErrorTemplate, map[string]string{"error": err})
+}
+
+// SetupStepOSDetected renders the detected OS and architecture detail.
+func (c *Catalog) SetupStepOSDetected(osName, arch string) string {
+	return interpolate(c.SetupStepOSDetectedTemplate, map[string]string{"os": osName, "arch": arch})
+}
+
+// SetupStepMpvInstalled renders the installed mpv version detail.
+func (c *Catalog) SetupStepMpvInstalled(version string) string {
+	return interpolate(c.SetupStepMpvInstalledTemplate, map[string]string{"version": version})
+}
+
+// SetupStepChannelsImported renders the imported channels count and file detail.
+func (c *Catalog) SetupStepChannelsImported(count int, file string) string {
+	return interpolate(c.SetupStepChannelsImportedTemplate, map[string]string{"count": strconv.Itoa(count), "file": file})
+}
+
+// SetupMpvOperational renders the mpv operational status message.
+func (c *Catalog) SetupMpvOperational(version string) string {
+	return interpolate(c.SetupMpvOperationalTemplate, map[string]string{"version": version})
+}
+
+// SetupMpvError renders the mpv error status message.
+func (c *Catalog) SetupMpvError(err string) string {
+	return interpolate(c.SetupMpvErrorTemplate, map[string]string{"error": err})
 }
 
 // interpolate substitutes every {name} placeholder in template with its value.

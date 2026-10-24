@@ -126,6 +126,18 @@ func TestInterpolationNamedArgs(t *testing.T) {
 		{"goal score title", cat.GoalScoreTitle("A 1 - 0 B"), "¡GOL! A 1 - 0 B"},
 		{"assist with name", cat.AssistWith("Juan"), "Asistencia: Juan"},
 		{"goal body", cat.GoalBody("A 1 - 0 B", "Asistencia: Juan"), "A 1 - 0 B\nAsistencia: Juan"},
+		{"setup title", cat.SetupTitle("v1.0"), "Kickoff v1.0 — Experiencia de fútbol CLI y centro de transmisión"},
+		{"setup option language", cat.SetupOptionLanguage("Español"), "Idioma / Language: Español"},
+		{"setup update prompt", cat.SetupUpdatePrompt("v1.0", "v1.1"), "    Versión actual:   v1.0\n    Última versión:   v1.1\n\n    ¿Deseas descargar e instalar esta actualización ahora?"},
+		{"setup status updating", cat.SetupStatusUpdating("v1.1"), "Actualizando Kickoff a v1.1..."},
+		{"setup status updated", cat.SetupStatusUpdated("v1.1"), "¡Kickoff actualizado a v1.1! Reinicia la app para aplicar."},
+		{"setup status update failed", cat.SetupStatusUpdateFailed("network"), "Error al actualizar: network"},
+		{"setup status up to date", cat.SetupStatusUpToDate("v1.0"), "Kickoff está actualizado (v1.0)."},
+		{"setup status cache cleared", cat.SetupStatusCacheCleared(5), "Caché de API limpiada (5 archivos temporales eliminados)."},
+		{"setup step os detected", cat.SetupStepOSDetected("linux", "amd64"), "linux/amd64 detectado"},
+		{"setup step mpv installed", cat.SetupStepMpvInstalled("v0.38"), "Instalado: v0.38"},
+		{"setup step channels imported", cat.SetupStepChannelsImported(12, "channels.json"), "Se importaron 12 canales en channels.json"},
+		{"setup mpv operational", cat.SetupMpvOperational("v0.38"), "mpv operativo: v0.38"},
 	}
 
 	for _, tc := range cases {
