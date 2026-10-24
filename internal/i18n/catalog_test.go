@@ -407,3 +407,143 @@ func TestFormatUpdateError(t *testing.T) {
 		})
 	}
 }
+
+// TestEnglishCatalogTranslations tests that New(EN) returns natural, idiomatic
+// English translations for all key fields and that it does not return Spanish text.
+func TestEnglishCatalogTranslations(t *testing.T) {
+	cat := New(EN)
+	esCat := New(ES)
+
+	// Distinct translations must not match Spanish base.
+	distinctFields := []struct {
+		name string
+		en   string
+		es   string
+		want string
+	}{
+		{"TabResumen", cat.TabResumen, esCat.TabResumen, "1 Summary"},
+		{"TabPartidos", cat.TabPartidos, esCat.TabPartidos, "2 Matches"},
+		{"TabPosiciones", cat.TabPosiciones, esCat.TabPosiciones, "3 Standings"},
+		{"TabGoleadores", cat.TabGoleadores, esCat.TabGoleadores, "4 Top Scorers"},
+		{"FallbackHome", cat.FallbackHome, esCat.FallbackHome, "Home"},
+		{"FallbackAway", cat.FallbackAway, esCat.FallbackAway, "Away"},
+		{"FallbackVenue", cat.FallbackVenue, esCat.FallbackVenue, "Main Stadium"},
+		{"FallbackPlayer", cat.FallbackPlayer, esCat.FallbackPlayer, "Player"},
+		{"FallbackCoachStaff", cat.FallbackCoachStaff, esCat.FallbackCoachStaff, "Coaching Staff"},
+		{"FallbackOwnGoal", cat.FallbackOwnGoal, esCat.FallbackOwnGoal, "Own Goal"},
+		{"FallbackGoal", cat.FallbackGoal, esCat.FallbackGoal, "Goal"},
+		{"FallbackChannel", cat.FallbackChannel, esCat.FallbackChannel, "Channel"},
+		{"StatusPre", cat.StatusPre, esCat.StatusPre, "Upcoming"},
+		{"StatusPost", cat.StatusPost, esCat.StatusPost, "FT"},
+		{"StatusFinished", cat.StatusFinished, esCat.StatusFinished, "FINISHED"},
+		{"StatusScheduled", cat.StatusScheduled, esCat.StatusScheduled, "Scheduled"},
+		{"ColumnTeam", cat.ColumnTeam, esCat.ColumnTeam, "Team"},
+		{"ColumnPlayed", cat.ColumnPlayed, esCat.ColumnPlayed, "P"},
+		{"ColumnWon", cat.ColumnWon, esCat.ColumnWon, "W"},
+		{"ColumnDrawn", cat.ColumnDrawn, esCat.ColumnDrawn, "D"},
+		{"ColumnLost", cat.ColumnLost, esCat.ColumnLost, "L"},
+		{"ColumnGoalDiff", cat.ColumnGoalDiff, esCat.ColumnGoalDiff, "GD"},
+		{"ColumnPlayer", cat.ColumnPlayer, esCat.ColumnPlayer, "Player"},
+		{"ColumnGoals", cat.ColumnGoals, esCat.ColumnGoals, "Goals"},
+		{"ColumnAssists", cat.ColumnAssists, esCat.ColumnAssists, "Assists"},
+		{"ModalTabSummary", cat.ModalTabSummary, esCat.ModalTabSummary, "Summary"},
+		{"ModalTabStats", cat.ModalTabStats, esCat.ModalTabStats, "Statistics"},
+		{"ModalTabLineups", cat.ModalTabLineups, esCat.ModalTabLineups, "Lineups"},
+		{"SignalsSection", cat.SignalsSection, esCat.SignalsSection, "BROADCAST SIGNALS"},
+		{"Recommended", cat.Recommended, esCat.Recommended, "★ Recommended"},
+		{"Possession", cat.Possession, esCat.Possession, "Possession"},
+		{"StatShots", cat.StatShots, esCat.StatShots, "Shots (On target)"},
+		{"StatPasses", cat.StatPasses, esCat.StatPasses, "Passes (Accuracy)"},
+		{"StatFouls", cat.StatFouls, esCat.StatFouls, "Fouls"},
+		{"StatCorners", cat.StatCorners, esCat.StatCorners, "Corners"},
+		{"StatOffsides", cat.StatOffsides, esCat.StatOffsides, "Offsides"},
+		{"StatSaves", cat.StatSaves, esCat.StatSaves, "Saves"},
+		{"LineupStarters", cat.LineupStarters, esCat.LineupStarters, "STARTERS"},
+		{"LineupSubstitutes", cat.LineupSubstitutes, esCat.LineupSubstitutes, "SUBSTITUTES"},
+		{"TopScorersHeader", cat.TopScorersHeader, esCat.TopScorersHeader, "TOP SCORERS (TOP 5)"},
+		{"TopAssistsHeader", cat.TopAssistsHeader, esCat.TopAssistsHeader, "TOP ASSISTS (TOP 5)"},
+		{"StreamStopped", cat.StreamStopped, esCat.StreamStopped, "⏹ Stream stopped"},
+		{"ErrPlayerTimeout", cat.ErrPlayerTimeout, esCat.ErrPlayerTimeout, "player timed out waiting to respond"},
+		{"ErrPlayerExited", cat.ErrPlayerExited, esCat.ErrPlayerExited, "player exited unexpectedly"},
+		{"ErrInvalidURL", cat.ErrInvalidURL, esCat.ErrInvalidURL, "invalid streaming URL"},
+		{"ErrCorruptedPayload", cat.ErrCorruptedPayload, esCat.ErrCorruptedPayload, "corrupted or invalid payload from server"},
+		{"ErrUpdateFailed", cat.ErrUpdateFailed, esCat.ErrUpdateFailed, "failed to install update"},
+		{"ErrNetwork", cat.ErrNetwork, esCat.ErrNetwork, "network request failed"},
+	}
+
+	for _, tc := range distinctFields {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.en == tc.es {
+				t.Errorf("%s in English equals Spanish: %q", tc.name, tc.en)
+			}
+			if tc.en != tc.want {
+				t.Errorf("%s got %q, want %q", tc.name, tc.en, tc.want)
+			}
+		})
+	}
+
+	// Verify formatted helpers and domain errors under English catalog.
+	if got, want := cat.FormatError(model.ErrPlayerTimeout), "player timed out waiting to respond"; got != want {
+		t.Errorf("FormatError(ErrPlayerTimeout) = %q, want %q", got, want)
+	}
+	if got, want := cat.FormatPlaybackError(model.ErrPlayerTimeout), "Playback error: player timed out waiting to respond"; got != want {
+		t.Errorf("FormatPlaybackError(ErrPlayerTimeout) = %q, want %q", got, want)
+	}
+	if got, want := cat.FormatUpdateError(model.ErrUpdateFailed), "Update error: failed to install update"; got != want {
+		t.Errorf("FormatUpdateError(ErrUpdateFailed) = %q, want %q", got, want)
+	}
+	if got, want := cat.Referee("Oliver"), "Referee: Oliver"; got != want {
+		t.Errorf("Referee = %q, want %q", got, want)
+	}
+	if got, want := cat.Coach("Arteta"), "Manager: Arteta"; got != want {
+		t.Errorf("Coach = %q, want %q", got, want)
+	}
+	if got, want := cat.WithPenalty("Saka"), "Saka (pen.)"; got != want {
+		t.Errorf("WithPenalty = %q, want %q", got, want)
+	}
+	if got, want := cat.WithOwnGoal("Saka"), "Saka (OG)"; got != want {
+		t.Errorf("WithOwnGoal = %q, want %q", got, want)
+	}
+	if got, want := cat.MatchesToday(3), "MATCHES TODAY (3)"; got != want {
+		t.Errorf("MatchesToday = %q, want %q", got, want)
+	}
+	if got, want := cat.UpcomingMatches("02/01", 3), "UPCOMING MATCHES · 02/01 (3)"; got != want {
+		t.Errorf("UpcomingMatches = %q, want %q", got, want)
+	}
+	if got, want := cat.ScrollOlder(1), "▲  1 previous match  ▲"; got != want {
+		t.Errorf("ScrollOlder(1) = %q, want %q", got, want)
+	}
+	if got, want := cat.ScrollOlder(3), "▲  3 previous matches  ▲"; got != want {
+		t.Errorf("ScrollOlder(3) = %q, want %q", got, want)
+	}
+	if got, want := cat.ScrollNewer(1), "▼  1 more match below  ▼"; got != want {
+		t.Errorf("ScrollNewer(1) = %q, want %q", got, want)
+	}
+	if got, want := cat.ScrollNewer(3), "▼  3 more matches below  ▼"; got != want {
+		t.Errorf("ScrollNewer(3) = %q, want %q", got, want)
+	}
+	if got, want := cat.LeagueLeader("Arsenal", "30", "12", "+8"), "[1] League Leader: Arsenal (30 pts • 12 MP • GD +8)"; got != want {
+		t.Errorf("LeagueLeader = %q, want %q", got, want)
+	}
+	if got, want := cat.NowPlaying("Sky"), "✓ Now playing: Sky • x: stop stream"; got != want {
+		t.Errorf("NowPlaying = %q, want %q", got, want)
+	}
+	if got, want := cat.GoalPenaltyTitle("Saka", "45'"), "GOAL by Saka! (pen. 45')"; got != want {
+		t.Errorf("GoalPenaltyTitle = %q, want %q", got, want)
+	}
+	if got, want := cat.GoalOwnGoalTitle("Saka", "45'"), "OWN GOAL by Saka! (45')"; got != want {
+		t.Errorf("GoalOwnGoalTitle = %q, want %q", got, want)
+	}
+	if got, want := cat.GoalTitle("Saka", "45'"), "GOAL by Saka! (45')"; got != want {
+		t.Errorf("GoalTitle = %q, want %q", got, want)
+	}
+	if got, want := cat.GoalScoreTitle("ARS 1 - 0 CHE"), "GOAL! ARS 1 - 0 CHE"; got != want {
+		t.Errorf("GoalScoreTitle = %q, want %q", got, want)
+	}
+	if got, want := cat.AssistWith("Odegaard"), "Assist: Odegaard"; got != want {
+		t.Errorf("AssistWith = %q, want %q", got, want)
+	}
+	if got, want := cat.GoalBody("ARS 1 - 0 CHE", "Assist: Odegaard"), "ARS 1 - 0 CHE\nAssist: Odegaard"; got != want {
+		t.Errorf("GoalBody = %q, want %q", got, want)
+	}
+}

@@ -707,6 +707,7 @@ func TestFormatClock_ByStatusCode(t *testing.T) {
 }
 
 func TestFormatGoalNotification(t *testing.T) {
+	cat := i18n.New(i18n.ES)
 	m := sampleLiveMatch()
 	ev := &model.MatchEvent{
 		PlayerName: "Vinícius Jr.",
@@ -715,7 +716,7 @@ func TestFormatGoalNotification(t *testing.T) {
 		IsScoring:  true,
 	}
 
-	title, body := FormatGoalNotification(m, "2", "1", ev)
+	title, body := FormatGoalNotification(m, "2", "1", ev, cat)
 	if strings.Contains(title, "⚽") {
 		t.Errorf("title should not contain emojis, got: %q", title)
 	}
@@ -736,7 +737,7 @@ func TestFormatGoalNotification(t *testing.T) {
 		IsScoring:  true,
 		IsPenalty:  true,
 	}
-	titlePen, bodyPen := FormatGoalNotification(m, "3", "1", evPen)
+	titlePen, bodyPen := FormatGoalNotification(m, "3", "1", evPen, cat)
 	if strings.Contains(titlePen, "⚽") {
 		t.Errorf("penalty title should not contain emojis, got: %q", titlePen)
 	}
@@ -748,7 +749,7 @@ func TestFormatGoalNotification(t *testing.T) {
 	}
 
 	// Without event
-	titleNoEv, bodyNoEv := FormatGoalNotification(m, "2", "1", nil)
+	titleNoEv, bodyNoEv := FormatGoalNotification(m, "2", "1", nil, cat)
 	if strings.Contains(titleNoEv, "⚽") {
 		t.Errorf("no-event title should not contain emojis, got: %q", titleNoEv)
 	}
@@ -761,6 +762,7 @@ func TestFormatGoalNotification(t *testing.T) {
 }
 
 func TestFormatGoalNotification_NoAthleteFallback(t *testing.T) {
+	cat := i18n.New(i18n.ES)
 	m := sampleLiveMatch()
 	ev := &model.MatchEvent{
 		Clock:     "60'",
@@ -768,9 +770,64 @@ func TestFormatGoalNotification_NoAthleteFallback(t *testing.T) {
 		IsOwnGoal: true,
 	}
 
-	title, _ := FormatGoalNotification(m, "2", "1", ev)
+	title, _ := FormatGoalNotification(m, "2", "1", ev, cat)
 	if !strings.Contains(title, "Jugador") {
 		t.Errorf("own goal without athlete should keep the presentation fallback, got %q", title)
+	}
+}
+
+func TestFormatGoalNotification_English(t *testing.T) {
+	cat := i18n.New(i18n.EN)
+	m := sampleLiveMatch()
+	ev := &model.MatchEvent{
+		PlayerName: "Vinícius Jr.",
+		AssistName: "Jude Bellingham",
+		Clock:      "72'",
+		IsScoring:  true,
+	}
+
+	title, body := FormatGoalNotification(m, "2", "1", ev, cat)
+	if !strings.Contains(title, "GOAL by Vinícius Jr.! (72')") {
+		t.Errorf("unexpected english title: %q", title)
+	}
+	if !strings.Contains(body, "Real Madrid 2 - 1 Barcelona\nAssist: Jude Bellingham") {
+		t.Errorf("unexpected english body: %q", body)
+	}
+
+	// Penalty goal
+	evPen := &model.MatchEvent{
+		PlayerName: "Kylian Mbappé",
+		Clock:      "88'",
+		IsScoring:  true,
+		IsPenalty:  true,
+	}
+	titlePen, bodyPen := FormatGoalNotification(m, "3", "1", evPen, cat)
+	if !strings.Contains(titlePen, "GOAL by Kylian Mbappé! (pen. 88')") {
+		t.Errorf("unexpected english penalty title: %q", titlePen)
+	}
+	if !strings.Contains(bodyPen, "Assist: Penalty") {
+		t.Errorf("unexpected english penalty body: %q", bodyPen)
+	}
+
+	// Own goal
+	evOwn := &model.MatchEvent{
+		PlayerName: "G. Araujo",
+		Clock:      "40'",
+		IsScoring:  true,
+		IsOwnGoal:  true,
+	}
+	titleOwn, bodyOwn := FormatGoalNotification(m, "1", "0", evOwn, cat)
+	if !strings.Contains(titleOwn, "OWN GOAL by G. Araujo! (40')") {
+		t.Errorf("unexpected english own-goal title: %q", titleOwn)
+	}
+	if !strings.Contains(bodyOwn, "Assist: Own Goal") {
+		t.Errorf("unexpected english own-goal body: %q", bodyOwn)
+	}
+
+	// Without event
+	titleNoEv, _ := FormatGoalNotification(m, "2", "1", nil, cat)
+	if !strings.Contains(titleNoEv, "GOAL! Real Madrid 2 - 1 Barcelona") {
+		t.Errorf("unexpected english no-event title: %q", titleNoEv)
 	}
 }
 

@@ -11,9 +11,7 @@
 // LANG, then Spanish. An unusable value never aborts the program; it produces a
 // single warning per process.
 //
-// Fase 2 compiles the catalog in Spanish so the migration is invisible to the
-// user. New(EN) therefore returns the same Spanish base today; translating it is
-// Fase 3 work.
+// Fase 3 compiles the English catalog so callers can select between ES and EN.
 package i18n
 
 import (
@@ -32,8 +30,7 @@ const (
 	// ES is Spanish, the language the catalog is compiled in.
 	ES Lang = "es"
 
-	// EN is English. Fase 2 does not translate yet: New(EN) returns the Spanish
-	// base so the interface stays byte-identical. Fase 3 fills the fields in.
+	// EN is English. New(EN) returns the compiled English catalog.
 	EN Lang = "en"
 )
 
@@ -201,7 +198,13 @@ type Catalog struct {
 // catalog; an unsupported code falls back to the Spanish base rather than to a
 // half-empty struct, which keeps New total.
 func New(l Lang) *Catalog {
-	c := spanishCatalog()
+	var c Catalog
+	switch l {
+	case EN:
+		c = englishCatalog()
+	default:
+		c = spanishCatalog()
+	}
 	c.lang = l
 	return &c
 }

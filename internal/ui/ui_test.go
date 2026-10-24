@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,13 @@ import (
 	"github.com/e12jassir/kickoff-cli/internal/i18n"
 	"github.com/e12jassir/kickoff-cli/internal/model"
 )
+
+func TestMain(m *testing.M) {
+	if os.Getenv(i18n.EnvVar) == "" {
+		_ = os.Setenv(i18n.EnvVar, string(i18n.ES))
+	}
+	os.Exit(m.Run())
+}
 
 type mockClient struct {
 	matches    []model.Match
