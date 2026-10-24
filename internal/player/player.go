@@ -160,9 +160,10 @@ func BuildArgs(req model.PlayRequest, sockPath string) []string {
 		fmt.Sprintf("--title=%s", title),
 		"--cache=yes",
 		"--demuxer-max-bytes=150M",
-		"--demuxer-readahead-secs=20",
-		"--cache-pause=yes",
-		"--cache-pause-wait=2",
+		"--demuxer-readahead-secs=10",
+		"--cache-pause=no",
+		"--stream-lavf-o=reconnect=1,reconnect_streamed=yes,reconnect_on_network_error=yes,reconnect_on_http_error=4xx,5xx,reconnect_delay_max=10",
+		"--demuxer-lavf-o=reconnect=1,reconnect_streamed=yes",
 		fmt.Sprintf("--hls-bitrate=%s", bitrate),
 		"--network-timeout=20",
 	}
