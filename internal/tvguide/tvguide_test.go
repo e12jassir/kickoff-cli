@@ -2,6 +2,7 @@ package tvguide
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -428,7 +429,10 @@ func TestResolveMatch_SourceTimezoneOverlap(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			svc := NewService(WithCacheDir(t.TempDir()))
+			svc := NewService(
+				WithCacheDir(t.TempDir()),
+				WithNow(func() time.Time { return kickoff }),
+			)
 			svc.SetGuides([]ChannelGuide{{
 				Name:      "ESPN 2 HD",
 				Slug:      "espn_2_colombia",
@@ -701,7 +705,10 @@ func TestParseProgramEntries(t *testing.T) {
 }
 
 func TestResolveMatch_TimeAwareReplayDisqualification(t *testing.T) {
-	svc := NewService()
+	loc, _ := time.LoadLocation("America/Bogota")
+	matchTime := time.Date(2026, 10, 14, 14, 0, 0, 0, loc)
+
+	svc := NewService(WithNow(func() time.Time { return matchTime }))
 
 	// Channel 3 has Slovan Bratislava as a replay at 22:00, and Aston Villa LIVE at 13:40
 	// Channel 4 has Slovan Bratislava LIVE at 13:40, and Aston Villa as a replay at 22:00
@@ -725,9 +732,6 @@ func TestResolveMatch_TimeAwareReplayDisqualification(t *testing.T) {
 			},
 		},
 	})
-
-	loc, _ := time.LoadLocation("America/Bogota")
-	matchTime := time.Date(2026, 10, 14, 14, 0, 0, 0, loc)
 
 	slovanMatch := model.Match{
 		Title:     "Slovan Bratislava vs VfB Stuttgart",
@@ -1296,7 +1300,7 @@ func TestResolveMatch_RejectsPartialEvidenceAndAmbiguity(t *testing.T) {
 	})
 
 	t.Run("wrong single-team title within five minutes of kickoff must not resolve", func(t *testing.T) {
-		svc := NewService()
+		svc := NewService(WithNow(func() time.Time { return time.Date(2026, 10, 14, 14, 0, 0, 0, loc) }))
 		svc.SetGuides([]ChannelGuide{
 			{
 				Name: "ESPN Wrong HD",
@@ -1319,7 +1323,7 @@ func TestResolveMatch_RejectsPartialEvidenceAndAmbiguity(t *testing.T) {
 	})
 
 	t.Run("a far replay that does not overlap the match window is disqualified", func(t *testing.T) {
-		svc := NewService()
+		svc := NewService(WithNow(func() time.Time { return time.Date(2026, 10, 14, 14, 0, 0, 0, loc) }))
 		svc.SetGuides([]ChannelGuide{
 			{
 				Name: "ESPN Replay HD",
@@ -1700,4 +1704,249 @@ func TestNormalize_ConcurrentSafe(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
+}
+
+// TestResolveMatch_DifferentDayNoResolve proves that a match scheduled on a date
+// with no guide loaded or a distinct date does not falsely match today's listings,
+// and that if a guide for the match's date exists on disk, it is loaded and resolved.
+func TestResolveMatch_DifferentDayNoResolve(t *testing.T) {
+	loc := locale.BogotaLocation()
+	day1 := time.Date(2026, 10, 20, 15, 0, 0, 0, loc)
+	day2 := time.Date(2026, 10, 21, 15, 0, 0, 0, loc)
+
+	cacheDir := t.TempDir()
+
+	// 1. Service loaded with day 1 guides.
+	svc := NewService(
+		WithCacheDir(cacheDir),
+		WithNow(func() time.Time { return day1 }),
+	)
+	svc.SetGuides([]ChannelGuide{
+		{
+			Name:      "ESPN 1 HD",
+			Slug:      "espn_colombia",
+			StreamURL: "http://example.com/espn1.m3u8",
+			Entries: []ProgramEntry{
+				{
+					Title:     "Liverpool vs Everton",
+					StartTime: "3:00 PM",
+					EndTime:   "5:00 PM",
+				},
+			},
+		},
+	})
+
+	// Match scheduled on day 2.
+	matchDay2 := model.Match{
+		HomeTeam:  model.Competitor{DisplayName: "Liverpool"},
+		AwayTeam:  model.Competitor{DisplayName: "Everton"},
+		Title:     "Liverpool vs Everton",
+		StartTime: day2,
+	}
+
+	// Case A: Day 2 guide is not on disk -> must NOT falsely match day 1 guide.
+	target, found := svc.ResolveMatch(matchDay2)
+	if found {
+		t.Fatalf("expected no resolution for different date without guide on disk, got target %+v", target)
+	}
+
+	// Case B: Create cache file for day 2 on disk -> ResolveMatch should load it and resolve.
+	day2Guides := []ChannelGuide{
+		{
+			Name:      "ESPN 2 HD",
+			Slug:      "espn_2_colombia",
+			StreamURL: "http://example.com/espn2.m3u8",
+			Entries: []ProgramEntry{
+				{
+					Title:     "Liverpool vs Everton",
+					StartTime: "3:00 PM",
+					EndTime:   "5:00 PM",
+				},
+			},
+		},
+	}
+	day2Cache := GuideCache{
+		Date:     day2.Format("2006-01-02"),
+		CachedAt: day2,
+		Channels: day2Guides,
+	}
+	day2Data, err := json.Marshal(day2Cache)
+	if err != nil {
+		t.Fatalf("failed to marshal day2 cache: %v", err)
+	}
+	day2File := filepath.Join(cacheDir, "tvguide_2026-10-21.json")
+	if err := os.WriteFile(day2File, day2Data, 0o644); err != nil {
+		t.Fatalf("failed to write day2 cache file: %v", err)
+	}
+
+	target, found = svc.ResolveMatch(matchDay2)
+	if !found {
+		t.Fatalf("expected to resolve match after day 2 cache is loaded")
+	}
+	if target.Name != "ESPN 2 HD" {
+		t.Errorf("expected ESPN 2 HD from day 2 guide, got %q", target.Name)
+	}
+
+	// Case C: Service with no guides loaded and no cache on disk declines.
+	emptySvc := NewService(WithCacheDir(t.TempDir()))
+	matchUnknown := model.Match{
+		HomeTeam:  model.Competitor{DisplayName: "Liverpool"},
+		AwayTeam:  model.Competitor{DisplayName: "Everton"},
+		Title:     "Liverpool vs Everton",
+		StartTime: time.Date(2026, 10, 25, 12, 0, 0, 0, loc),
+	}
+	if _, found := emptySvc.ResolveMatch(matchUnknown); found {
+		t.Errorf("expected found=false when service has no guides and no cache on disk")
+	}
+}
+
+// TestResolveMatch_MidnightCrossing proves that a match kicking off near midnight
+// in the user's timezone or UTC correctly resolves to the matching Colombian
+// wall-clock date (locale.BogotaLocation()).
+func TestResolveMatch_MidnightCrossing(t *testing.T) {
+	cacheDir := t.TempDir()
+
+	// Scenario 1: Kickoff is 2026-10-22 01:30 UTC.
+	// In Europe/Madrid, that is 2026-10-22 03:30 (date is Oct 22).
+	// In Colombia (America/Bogota, UTC-5), that is 2026-10-21 20:30 (date is Oct 21).
+	kickoffUTC := time.Date(2026, 10, 22, 1, 30, 0, 0, time.UTC)
+
+	// Guide on disk for 2026-10-21 (Colombian wall-clock date).
+	guideOct21 := []ChannelGuide{
+		{
+			Name:      "ESPN 1 HD",
+			Slug:      "espn_colombia",
+			StreamURL: "http://example.com/espn1.m3u8",
+			Entries: []ProgramEntry{
+				{
+					Title:     "Real Madrid vs Barcelona",
+					StartTime: "8:30 PM",
+					EndTime:   "10:30 PM",
+				},
+			},
+		},
+	}
+	cacheOct21 := GuideCache{
+		Date:     "2026-10-21",
+		CachedAt: time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC),
+		Channels: guideOct21,
+	}
+	data21, err := json.Marshal(cacheOct21)
+	if err != nil {
+		t.Fatalf("failed to marshal Oct 21 cache: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(cacheDir, "tvguide_2026-10-21.json"), data21, 0o644); err != nil {
+		t.Fatalf("failed to write Oct 21 cache: %v", err)
+	}
+
+	// Guide on disk for 2026-10-22 (Oct 22 Colombian date).
+	guideOct22 := []ChannelGuide{
+		{
+			Name:      "ESPN 2 HD",
+			Slug:      "espn_2_colombia",
+			StreamURL: "http://example.com/espn2.m3u8",
+			Entries: []ProgramEntry{
+				{
+					Title:     "Real Madrid vs Barcelona",
+					StartTime: "8:30 PM",
+					EndTime:   "10:30 PM",
+				},
+			},
+		},
+	}
+	cacheOct22 := GuideCache{
+		Date:     "2026-10-22",
+		CachedAt: time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC),
+		Channels: guideOct22,
+	}
+	data22, err := json.Marshal(cacheOct22)
+	if err != nil {
+		t.Fatalf("failed to marshal Oct 22 cache: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(cacheDir, "tvguide_2026-10-22.json"), data22, 0o644); err != nil {
+		t.Fatalf("failed to write Oct 22 cache: %v", err)
+	}
+
+	// Service currently loaded with Oct 22 guide.
+	svc := NewService(
+		WithCacheDir(cacheDir),
+		WithNow(func() time.Time { return time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC) }),
+	)
+	if !svc.loadCache() {
+		t.Fatalf("expected Oct 22 cache to load")
+	}
+
+	match := model.Match{
+		HomeTeam:  model.Competitor{DisplayName: "Real Madrid"},
+		AwayTeam:  model.Competitor{DisplayName: "Barcelona"},
+		Title:     "Real Madrid vs Barcelona",
+		StartTime: kickoffUTC,
+	}
+
+	// Even though kickoffUTC is on Oct 22 in UTC, its Colombian date is Oct 21 (20:30 COT).
+	// ResolveMatch must load and resolve against the 2026-10-21 guide (ESPN 1 HD),
+	// NOT the currently loaded 2026-10-22 guide (ESPN 2 HD).
+	target, found := svc.ResolveMatch(match)
+	if !found {
+		t.Fatalf("expected match to resolve via midnight crossing to Oct 21 Colombian date")
+	}
+	if target.Name != "ESPN 1 HD" {
+		t.Errorf("expected ESPN 1 HD from Oct 21 guide, got %q", target.Name)
+	}
+
+	// Verify that loadedDate in the service transitioned to 2026-10-21
+	svc.mu.RLock()
+	loadedDate := svc.loadedDate
+	svc.mu.RUnlock()
+	if loadedDate != "2026-10-21" {
+		t.Errorf("expected loadedDate to be 2026-10-21, got %q", loadedDate)
+	}
+
+	// Scenario 2: Kickoff is 2026-10-22 05:15 UTC.
+	// In America/Los_Angeles (PDT, UTC-7), that is 2026-10-21 22:15 (date is Oct 21).
+	// In Colombia (America/Bogota, UTC-5), that is 2026-10-22 00:15 (date is Oct 22, just past midnight).
+	kickoffLate := time.Date(2026, 10, 22, 5, 15, 0, 0, time.UTC)
+
+	// Guide on disk for 2026-10-22 with early morning programme
+	guideOct22Early := []ChannelGuide{
+		{
+			Name:      "Win Sports+",
+			Slug:      "win_sports_plus",
+			StreamURL: "http://example.com/winplus.m3u8",
+			Entries: []ProgramEntry{
+				{
+					Title:     "Junior vs Millonarios",
+					StartTime: "12:15 AM",
+					EndTime:   "2:15 AM",
+				},
+			},
+		},
+	}
+	cacheOct22Early := GuideCache{
+		Date:     "2026-10-22",
+		CachedAt: time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC),
+		Channels: guideOct22Early,
+	}
+	data22Early, err := json.Marshal(cacheOct22Early)
+	if err != nil {
+		t.Fatalf("failed to marshal Oct 22 early cache: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(cacheDir, "tvguide_2026-10-22.json"), data22Early, 0o644); err != nil {
+		t.Fatalf("failed to write Oct 22 early cache: %v", err)
+	}
+
+	matchLate := model.Match{
+		HomeTeam:  model.Competitor{DisplayName: "Junior"},
+		AwayTeam:  model.Competitor{DisplayName: "Millonarios"},
+		Title:     "Junior vs Millonarios",
+		StartTime: kickoffLate,
+	}
+
+	targetLate, foundLate := svc.ResolveMatch(matchLate)
+	if !foundLate {
+		t.Fatalf("expected match to resolve on Oct 22 Colombian date (00:15 COT)")
+	}
+	if targetLate.Name != "Win Sports+" {
+		t.Errorf("expected Win Sports+, got %q", targetLate.Name)
+	}
 }
