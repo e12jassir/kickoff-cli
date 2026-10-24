@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/e12jassir/kickoff-cli/internal/model"
@@ -171,6 +172,119 @@ func TestChannelSlice_UnmarshalJSON(t *testing.T) {
 	}
 	if channels[1].BitrateMode != "min" {
 		t.Errorf("channel 1 expected BitrateMode 'min', got %q", channels[1].BitrateMode)
+	}
+}
+
+// TestCategoryIDStableAcrossLang pins the category identity of every default
+// league. CategoryID is domain identity, so it must stay byte-identical while
+// the localized Category label changes language.
+func TestCategoryIDStableAcrossLang(t *testing.T) {
+	wantIDs := map[string]string{
+		"champions":     "international",
+		"europa":        "international",
+		"conference":    "international",
+		"libertadores":  "international",
+		"sudamericana":  "international",
+		"eliminatorias": "national_teams",
+		"premier":       "european",
+		"laliga":        "european",
+		"seriea":        "european",
+		"bundesliga":    "european",
+		"ligue1":        "european",
+		"copadelrey":    "domestic_cups",
+		"facup":         "domestic_cups",
+		"colombia":      "south_american",
+		"argentina":     "south_american",
+		"brasil":        "south_american",
+		"ligamx":        "americas",
+		"mls":           "americas",
+	}
+
+	if len(model.DefaultLeagues) != len(wantIDs) {
+		t.Fatalf("DefaultLeagues has %d leagues, want %d", len(model.DefaultLeagues), len(wantIDs))
+	}
+	for _, league := range model.DefaultLeagues {
+		want, ok := wantIDs[league.Key]
+		if !ok {
+			t.Errorf("unexpected league key %q in DefaultLeagues", league.Key)
+			continue
+		}
+		if league.CategoryID != want {
+			t.Errorf("league %q CategoryID = %q, want %q", league.Key, league.CategoryID, want)
+		}
+	}
+
+	// The visible label must identify exactly one category ID, so translating it
+	// can never move a league into a different group.
+	labelToID := make(map[string]string)
+	for _, league := range model.DefaultLeagues {
+		if prev, ok := labelToID[league.Category]; ok && prev != league.CategoryID {
+			t.Errorf("label %q maps to both %q and %q", league.Category, prev, league.CategoryID)
+		}
+		labelToID[league.Category] = league.CategoryID
+	}
+
+	groupOrder := func(leagues []model.League) []string {
+		var ids []string
+		seen := make(map[string]bool)
+		for _, league := range leagues {
+			if !seen[league.CategoryID] {
+				seen[league.CategoryID] = true
+				ids = append(ids, league.CategoryID)
+			}
+		}
+		return ids
+	}
+
+	wantOrder := []string{"international", "national_teams", "european", "domestic_cups", "south_american", "americas"}
+	if got := groupOrder(model.DefaultLeagues); !reflect.DeepEqual(got, wantOrder) {
+		t.Errorf("category order = %v, want %v", got, wantOrder)
+	}
+
+	// Same leagues, same IDs, labels translated to English.
+	translated := make([]model.League, len(model.DefaultLeagues))
+	englishLabels := map[string]string{
+		"international":  "International Tournaments",
+		"national_teams": "National Teams",
+		"european":       "European Leagues",
+		"domestic_cups":  "Domestic Cups",
+		"south_american": "South American Leagues",
+		"americas":       "Americas Leagues",
+	}
+	for i, league := range model.DefaultLeagues {
+		translated[i] = league
+		translated[i].Category = englishLabels[league.CategoryID]
+	}
+
+	if got := groupOrder(translated); !reflect.DeepEqual(got, wantOrder) {
+		t.Errorf("translated category order = %v, want %v", got, wantOrder)
+	}
+	for i, league := range translated {
+		if league.CategoryID != model.DefaultLeagues[i].CategoryID {
+			t.Errorf("league %q CategoryID changed with language: %q -> %q",
+				league.Key, model.DefaultLeagues[i].CategoryID, league.CategoryID)
+		}
+	}
+}
+
+// TestLeague_CategoryIDJSONTag locks the serialized field name: persisted
+// leagues and fixtures must expose the stable identity, and an unset one must
+// not emit an empty categoryId.
+func TestLeague_CategoryIDJSONTag(t *testing.T) {
+	data, err := json.Marshal(model.League{Key: "champions", CategoryID: "international"})
+	if err != nil {
+		t.Fatalf("unexpected marshal error: %v", err)
+	}
+	if !strings.Contains(string(data), `"categoryId":"international"`) {
+		t.Errorf("expected categoryId in JSON, got %s", data)
+	}
+
+	empty, err := json.Marshal(model.League{Key: "champions"})
+	if err != nil {
+		t.Fatalf("unexpected marshal error: %v", err)
+	}
+	if strings.Contains(string(empty), "categoryId") {
+		t.Errorf("expected empty CategoryID to be omitted, got %s", empty)
 	}
 }
 

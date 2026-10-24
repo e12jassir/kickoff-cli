@@ -34,22 +34,29 @@ func IsForceRefresh(ctx context.Context) bool {
 }
 
 // League represents a football league or competition.
+//
+// CategoryID is the stable, language-invariant identity of the league's menu
+// group; Category is only its localized display label. Grouping, persistence,
+// and navigation must key off CategoryID so translating a label never moves a
+// league into a different category.
 type League struct {
-	Key      string `json:"key"`
-	Name     string `json:"name"`
-	Code     string `json:"code"`
-	Emoji    string `json:"emoji"`
-	Category string `json:"category"`
+	Key        string `json:"key"`
+	Name       string `json:"name"`
+	Code       string `json:"code"`
+	Emoji      string `json:"emoji"`
+	Category   string `json:"category"`
+	CategoryID string `json:"categoryId,omitempty"`
 }
 
 // Competitor represents a participating team in a match.
 type Competitor struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	DisplayName string `json:"displayName"`
-	Logo        string `json:"logo"`
-	IsHome      bool   `json:"isHome"`
-	Score       string `json:"score"`
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	DisplayName  string `json:"displayName"`
+	Abbreviation string `json:"abbreviation,omitempty"`
+	Logo         string `json:"logo"`
+	IsHome       bool   `json:"isHome"`
+	Score        string `json:"score"`
 }
 
 // MatchStatus represents the state of a match.
@@ -239,24 +246,24 @@ type PlayRequest struct {
 
 // DefaultLeagues lists all 18 supported leagues grouped by category.
 var DefaultLeagues = []League{
-	{Key: "champions", Name: "UEFA Champions League", Code: "uefa.champions", Category: "Torneos Internacionales"},
-	{Key: "europa", Name: "UEFA Europa League", Code: "uefa.europa", Category: "Torneos Internacionales"},
-	{Key: "conference", Name: "UEFA Conference League", Code: "uefa.europa.conf", Category: "Torneos Internacionales"},
-	{Key: "libertadores", Name: "Copa Libertadores", Code: "conmebol.libertadores", Category: "Torneos Internacionales"},
-	{Key: "sudamericana", Name: "Copa Sudamericana", Code: "conmebol.sudamericana", Category: "Torneos Internacionales"},
-	{Key: "eliminatorias", Name: "Eliminatorias CONMEBOL", Code: "fifa.worldq.conmebol", Category: "Selecciones"},
-	{Key: "premier", Name: "Premier League", Code: "eng.1", Category: "Ligas Europeas"},
-	{Key: "laliga", Name: "La Liga", Code: "esp.1", Category: "Ligas Europeas"},
-	{Key: "seriea", Name: "Serie A", Code: "ita.1", Category: "Ligas Europeas"},
-	{Key: "bundesliga", Name: "Bundesliga", Code: "ger.1", Category: "Ligas Europeas"},
-	{Key: "ligue1", Name: "Ligue 1", Code: "fra.1", Category: "Ligas Europeas"},
-	{Key: "copadelrey", Name: "Copa del Rey", Code: "esp.copa_del_rey", Category: "Copas Nacionales"},
-	{Key: "facup", Name: "English FA Cup", Code: "eng.fa", Category: "Copas Nacionales"},
-	{Key: "colombia", Name: "Liga BetPlay", Code: "col.1", Category: "Ligas Sudamericanas"},
-	{Key: "argentina", Name: "Liga Profesional", Code: "arg.1", Category: "Ligas Sudamericanas"},
-	{Key: "brasil", Name: "Brasileirão", Code: "bra.1", Category: "Ligas Sudamericanas"},
-	{Key: "ligamx", Name: "Liga MX", Code: "mex.1", Category: "Ligas de América"},
-	{Key: "mls", Name: "Major League Soccer", Code: "usa.1", Category: "Ligas de América"},
+	{Key: "champions", Name: "UEFA Champions League", Code: "uefa.champions", Category: "Torneos Internacionales", CategoryID: "international"},
+	{Key: "europa", Name: "UEFA Europa League", Code: "uefa.europa", Category: "Torneos Internacionales", CategoryID: "international"},
+	{Key: "conference", Name: "UEFA Conference League", Code: "uefa.europa.conf", Category: "Torneos Internacionales", CategoryID: "international"},
+	{Key: "libertadores", Name: "Copa Libertadores", Code: "conmebol.libertadores", Category: "Torneos Internacionales", CategoryID: "international"},
+	{Key: "sudamericana", Name: "Copa Sudamericana", Code: "conmebol.sudamericana", Category: "Torneos Internacionales", CategoryID: "international"},
+	{Key: "eliminatorias", Name: "Eliminatorias CONMEBOL", Code: "fifa.worldq.conmebol", Category: "Selecciones", CategoryID: "national_teams"},
+	{Key: "premier", Name: "Premier League", Code: "eng.1", Category: "Ligas Europeas", CategoryID: "european"},
+	{Key: "laliga", Name: "La Liga", Code: "esp.1", Category: "Ligas Europeas", CategoryID: "european"},
+	{Key: "seriea", Name: "Serie A", Code: "ita.1", Category: "Ligas Europeas", CategoryID: "european"},
+	{Key: "bundesliga", Name: "Bundesliga", Code: "ger.1", Category: "Ligas Europeas", CategoryID: "european"},
+	{Key: "ligue1", Name: "Ligue 1", Code: "fra.1", Category: "Ligas Europeas", CategoryID: "european"},
+	{Key: "copadelrey", Name: "Copa del Rey", Code: "esp.copa_del_rey", Category: "Copas Nacionales", CategoryID: "domestic_cups"},
+	{Key: "facup", Name: "English FA Cup", Code: "eng.fa", Category: "Copas Nacionales", CategoryID: "domestic_cups"},
+	{Key: "colombia", Name: "Liga BetPlay", Code: "col.1", Category: "Ligas Sudamericanas", CategoryID: "south_american"},
+	{Key: "argentina", Name: "Liga Profesional", Code: "arg.1", Category: "Ligas Sudamericanas", CategoryID: "south_american"},
+	{Key: "brasil", Name: "Brasileirão", Code: "bra.1", Category: "Ligas Sudamericanas", CategoryID: "south_american"},
+	{Key: "ligamx", Name: "Liga MX", Code: "mex.1", Category: "Ligas de América", CategoryID: "americas"},
+	{Key: "mls", Name: "Major League Soccer", Code: "usa.1", Category: "Ligas de América", CategoryID: "americas"},
 }
 
 // MatchDetails aggregates on-demand statistics, lineups, and match metadata.

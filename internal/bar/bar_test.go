@@ -578,6 +578,8 @@ func TestShortTeam(t *testing.T) {
 		{model.Competitor{DisplayName: "Boca Juniors"}, "BOC"},
 		{model.Competitor{DisplayName: "River Plate"}, "RIV"},
 		{model.Competitor{DisplayName: "Liverpool FC"}, "LIV"},
+		{model.Competitor{DisplayName: "Custom Name", Abbreviation: "CUS"}, "CUS"},
+		{model.Competitor{DisplayName: "Arsenal", Abbreviation: "ars"}, "ARS"},
 		{model.Competitor{DisplayName: "Unknown Club"}, "UNK"},
 	}
 

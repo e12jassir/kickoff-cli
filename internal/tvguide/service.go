@@ -205,10 +205,13 @@ func (s *Service) loadCache() bool {
 	return true
 }
 
-// loadAnyCache loads today's cache file regardless of TTL (used for graceful offline fallback).
-func (s *Service) loadAnyCache() bool {
-	todayStr := s.now().In(locale.BogotaLocation()).Format("2006-01-02")
-	filePath := s.cacheFilePath(todayStr)
+// loadCacheForDate attempts to load the guide cache for a specific date (YYYY-MM-DD in Bogotá time).
+// Returns true if the cache exists, has entries, and was successfully loaded into the service.
+func (s *Service) loadCacheForDate(dateStr string) bool {
+	if dateStr == "" {
+		return false
+	}
+	filePath := s.cacheFilePath(dateStr)
 
 	data, err := os.ReadFile(filePath)
 	if err != nil {
@@ -220,16 +223,30 @@ func (s *Service) loadAnyCache() bool {
 		return false
 	}
 
+	if cache.Date != "" && cache.Date != dateStr {
+		return false
+	}
+
 	if len(cache.Channels) == 0 {
 		return false
 	}
 
 	s.mu.Lock()
 	s.guides = cache.Channels
-	s.loadedDate = cache.Date
+	if cache.Date != "" {
+		s.loadedDate = cache.Date
+	} else {
+		s.loadedDate = dateStr
+	}
 	s.mu.Unlock()
 
 	return true
+}
+
+// loadAnyCache loads today's cache file regardless of TTL (used for graceful offline fallback).
+func (s *Service) loadAnyCache() bool {
+	todayStr := s.now().In(locale.BogotaLocation()).Format("2006-01-02")
+	return s.loadCacheForDate(todayStr)
 }
 
 // saveCache serializes the crawled channel guides to disk.
@@ -384,6 +401,28 @@ func programmeOverlapsMatch(entry ProgramEntry, matchStartMins int) (overlaps, h
 //     slugs would make a single channel look ambiguous. Two genuinely different
 //     channels still decline.
 func (s *Service) ResolveMatch(match model.Match) (ChannelTarget, bool) {
+	var matchDate string
+	hasMatchTime := !match.StartTime.IsZero()
+	matchMins := 0
+	if hasMatchTime {
+		// Guide entries publish Colombian wall-clock times, so the kickoff must be
+		// read in the source zone regardless of the user's display timezone.
+		sourceTime := match.StartTime.In(locale.BogotaLocation())
+		matchDate = sourceTime.Format("2006-01-02")
+		matchMins = sourceTime.Hour()*60 + sourceTime.Minute()
+	}
+
+	s.mu.RLock()
+	curLoaded := s.loadedDate
+	hasGuides := len(s.guides) > 0
+	s.mu.RUnlock()
+
+	if matchDate != "" && (curLoaded != matchDate || !hasGuides) {
+		if !s.loadCacheForDate(matchDate) {
+			return ChannelTarget{}, false
+		}
+	}
+
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -391,13 +430,8 @@ func (s *Service) ResolveMatch(match model.Match) (ChannelTarget, bool) {
 		return ChannelTarget{}, false
 	}
 
-	hasMatchTime := !match.StartTime.IsZero()
-	matchMins := 0
-	if hasMatchTime {
-		// Guide entries publish Colombian wall-clock times, so the kickoff must be
-		// read in the source zone regardless of the user's display timezone.
-		sourceTime := match.StartTime.In(locale.BogotaLocation())
-		matchMins = sourceTime.Hour()*60 + sourceTime.Minute()
+	if matchDate != "" && s.loadedDate != "" && s.loadedDate != matchDate {
+		return ChannelTarget{}, false
 	}
 
 	bestScore := 0
