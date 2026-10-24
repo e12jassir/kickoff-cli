@@ -351,15 +351,28 @@ func TestSetup_Installing_AbortConfirmation(t *testing.T) {
 }
 
 func TestSetup_Installing_AbortPrompt_View(t *testing.T) {
-	m := NewModel("v0.2.4")
-	m.width = 84
-	m.height = 35
-	m.state = stateInstalling
-	m.abortPrompt = true
+	// English view
+	mEN := NewModel("v0.2.4").WithLanguage(i18n.EN)
+	mEN.width = 84
+	mEN.height = 35
+	mEN.state = stateInstalling
+	mEN.abortPrompt = true
 
-	view := m.View()
-	if !strings.Contains(view, "Abort installation?") {
-		t.Errorf("expected installing view to show the abort confirmation")
+	viewEN := mEN.View()
+	if !strings.Contains(viewEN, "Abort installation?") {
+		t.Errorf("expected English installing view to show the abort confirmation")
+	}
+
+	// Spanish view
+	mES := NewModel("v0.2.4").WithLanguage(i18n.ES)
+	mES.width = 84
+	mES.height = 35
+	mES.state = stateInstalling
+	mES.abortPrompt = true
+
+	viewES := mES.View()
+	if !strings.Contains(viewES, "¿Abortar instalación?") {
+		t.Errorf("expected Spanish installing view to show the abort confirmation")
 	}
 }
 
