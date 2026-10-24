@@ -173,7 +173,7 @@ func isTopLeague(key string) bool {
 func fetchWebChannelsCmd(catalog model.Resolver, match model.Match) tea.Cmd {
 	return func() tea.Msg {
 		if res, ok := catalog.(webStreamsResolver); ok {
-			ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			chs := res.ResolveWebChannels(ctx, match)
 			return webChannelsLoadedMsg{
