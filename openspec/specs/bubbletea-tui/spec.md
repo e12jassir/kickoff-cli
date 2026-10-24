@@ -38,3 +38,22 @@ notice instead of an empty fixture list.
 - **GIVEN** the user has configured no stream source
 - **WHEN** a league tab is opened
 - **THEN** the TUI MUST show a notice pointing to the channels configuration instead of an empty list.
+
+### Requirement: Internationalized User Interface
+The TUI MUST render user interface chrome, status messages, and navigation hints according to the resolved locale, supporting English and Spanish with strict fallback to Spanish.
+
+#### Scenario: English locale rendering
+- **GIVEN** `KICKOFF_LANG=en` or the environment locale is configured with an English locale (such as `LANG=en_US.UTF-8`)
+- **WHEN** the TUI or CLI starts up
+- **THEN** all application chrome, navigation keys, tabs, status messages, and help texts MUST render in English.
+
+#### Scenario: Spanish locale fallback
+- **GIVEN** an unsupported language code, an invalid language configuration, or no language environment variables set
+- **WHEN** the language is resolved
+- **THEN** the application MUST fall back to Spanish as the default interface language without terminating or crashing.
+
+#### Scenario: Setup language persistence
+- **GIVEN** the user interacts with the language toggle option in `kickoff setup`
+- **WHEN** the user switches between Spanish and English
+- **THEN** the setup wizard MUST update its active catalog in real time and persist the selected language to `~/.config/kickoff/config.json`.
+
