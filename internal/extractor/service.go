@@ -45,6 +45,8 @@ var (
 var DefaultKnownDomains = []string{
 	"https://agenda18.com/agenda.json",
 	"https://pelotalibretv.net",
+	"https://pelotalive.com",
+	"https://pelotalibre.cc",
 	"https://futbol-librehd.com",
 }
 
@@ -180,14 +182,18 @@ func (s *Service) FetchAgenda(ctx context.Context) ([]ExtractedEvent, error) {
 	}
 
 	var lastErr error
+domainLoop:
 	for _, domain := range s.baseDomains {
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			break domainLoop
 		default:
 		}
 
-		events, err := s.fetchAgendaFromDomain(ctx, domain)
+		domainCtx, domainCancel := context.WithTimeout(ctx, 2500*time.Millisecond)
+		events, err := s.fetchAgendaFromDomain(domainCtx, domain)
+		domainCancel()
+
 		if err == nil && len(events) > 0 {
 			s.cachedAgenda = events
 			s.lastFetch = time.Now()
@@ -583,7 +589,7 @@ func (s *Service) ResolveMatchStreams(ctx context.Context, match model.Match) ([
 	resolveCtx := ctx
 	var cancel context.CancelFunc
 	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
-		resolveCtx, cancel = context.WithTimeout(ctx, 6*time.Second)
+		resolveCtx, cancel = context.WithTimeout(ctx, 8*time.Second)
 		defer cancel()
 	}
 
