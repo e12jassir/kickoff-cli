@@ -227,10 +227,11 @@ type rawCompetitor struct {
 }
 
 type rawTeam struct {
-	ID          string `json:"id"`
-	DisplayName string `json:"displayName"`
-	Name        string `json:"name"`
-	Logo        string `json:"logo"`
+	ID           string `json:"id"`
+	DisplayName  string `json:"displayName"`
+	Name         string `json:"name"`
+	Logo         string `json:"logo"`
+	Abbreviation string `json:"abbreviation"`
 }
 
 type rawStatus struct {
@@ -900,12 +901,18 @@ func (c *Client) FetchMatches(ctx context.Context, leagueKey string) ([]model.Ma
 			}
 			dispName = normalizeTeamDisplayName(dispName)
 
+			abbrev := ""
+			if competitor.Team != nil {
+				abbrev = strings.TrimSpace(competitor.Team.Abbreviation)
+			}
+
 			cModel := model.Competitor{
-				ID:          competitor.ID,
-				Name:        name,
-				DisplayName: dispName,
-				Logo:        logo,
-				Score:       competitor.Score,
+				ID:           competitor.ID,
+				Name:         name,
+				DisplayName:  dispName,
+				Abbreviation: abbrev,
+				Logo:         logo,
+				Score:        competitor.Score,
 			}
 
 			if strings.EqualFold(competitor.HomeAway, "home") {

@@ -157,6 +157,10 @@ var knownTeamCodes = map[string]string{
 
 // ShortTeam returns a concise 3-4 letter uppercase representation for a team.
 func ShortTeam(c model.Competitor) string {
+	if abbr := strings.TrimSpace(c.Abbreviation); abbr != "" {
+		return strings.ToUpper(abbr)
+	}
+
 	name := strings.TrimSpace(c.DisplayName)
 	if name == "" {
 		name = strings.TrimSpace(c.Name)

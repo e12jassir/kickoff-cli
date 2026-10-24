@@ -50,12 +50,13 @@ type League struct {
 
 // Competitor represents a participating team in a match.
 type Competitor struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	DisplayName string `json:"displayName"`
-	Logo        string `json:"logo"`
-	IsHome      bool   `json:"isHome"`
-	Score       string `json:"score"`
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	DisplayName  string `json:"displayName"`
+	Abbreviation string `json:"abbreviation,omitempty"`
+	Logo         string `json:"logo"`
+	IsHome       bool   `json:"isHome"`
+	Score        string `json:"score"`
 }
 
 // MatchStatus represents the state of a match.
