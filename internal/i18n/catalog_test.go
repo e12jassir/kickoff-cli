@@ -138,6 +138,11 @@ func TestInterpolationNamedArgs(t *testing.T) {
 		{"setup step mpv installed", cat.SetupStepMpvInstalled("v0.38"), "Instalado: v0.38"},
 		{"setup step channels imported", cat.SetupStepChannelsImported(12, "channels.json"), "Se importaron 12 canales en channels.json"},
 		{"setup mpv operational", cat.SetupMpvOperational("v0.38"), "mpv operativo: v0.38"},
+		{"cli help header", cat.CLIHelpHeader("v1.0"), "kickoff v1.0 — Transmisión de fútbol en vivo y seguimiento de resultados en terminal\n"},
+		{"cli init file exists", cat.CLIInitFileExists("/tmp/channels.json"), "El archivo de configuración ya existe en: /tmp/channels.json\nUsa 'kickoff init --force' para sobrescribir.\n"},
+		{"cli init file created", cat.CLIInitFileCreated("/tmp/channels.json"), "Archivo channels.json inicializado con éxito en: /tmp/channels.json\n"},
+		{"cli import m3u success", cat.CLIImportM3USuccess(10), "¡Lista de reproducción M3U importada con éxito con 10 entradas!\n"},
+		{"cli import json success", cat.CLIImportJSONSuccess(8), "¡Configuración importada con éxito con 8 señales configuradas!\n"},
 	}
 
 	for _, tc := range cases {

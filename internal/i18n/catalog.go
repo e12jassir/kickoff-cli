@@ -249,6 +249,56 @@ type Catalog struct {
 	SetupMpvOperationalTemplate          string // setup doctor: mpv operational
 	SetupMpvErrorTemplate                string // setup doctor: mpv error
 
+	// CLI and non-TUI surfaces.
+	CLIHelpHeaderTemplate          string // CLI help header with version
+	CLIHelpCommandsHeader          string // CLI help "Commands:" header
+	CLIHelpCommandKickoff          string // CLI help kickoff command description
+	CLIHelpCommandDemo             string // CLI help kickoff demo description
+	CLIHelpCommandBar              string // CLI help kickoff bar description
+	CLIHelpCommandInit             string // CLI help kickoff init description
+	CLIHelpCommandConfigImport     string // CLI help kickoff config import description
+	CLIHelpCommandImport           string // CLI help kickoff import description
+	CLIHelpCommandUpdate           string // CLI help kickoff update description
+	CLIHelpCommandSetup            string // CLI help kickoff setup description
+	CLIHelpCommandVersion          string // CLI help kickoff version description
+	CLIHelpFlagsHeader             string // CLI help "Flags:" header
+	CLIFlagDemo                    string // CLI flag -demo description
+	CLIFlagNoEmoji                 string // CLI flag -no-emoji description
+	CLIFlagVersion                 string // CLI flag -version description
+	CLIFlagVersionShort            string // CLI flag -v description
+	CLIUsageConfigImport           string // CLI usage error for config import
+	CLIUsageImport                 string // CLI usage error for import
+	CLIUnknownConfigCommand        string // CLI unknown config command error
+	CLIInitForceFlag               string // CLI init flag -force description
+	CLIInitForceFlagShort          string // CLI init flag -f description
+	CLIInitFileExistsTemplate      string // CLI init file already exists message
+	CLIInitFileOverwrittenTemplate string // CLI init file overwritten message
+	CLIInitFileCreatedTemplate     string // CLI init file created message
+	CLIImportM3USuccessTemplate    string // CLI import M3U success message
+	CLIImportJSONSuccessTemplate   string // CLI import JSON success message
+	CLIImportPlaylistSavedTemplate string // CLI import playlist saved message
+	CLIImportConfigSavedTemplate   string // CLI import config saved message
+	CLIBarFlagFormat               string // CLI bar flag -format description
+	CLIBarFlagFormatShort          string // CLI bar flag -f description
+	CLIBarFlagWatch                string // CLI bar flag -watch description
+	CLIBarFlagWatchShort           string // CLI bar flag -w description
+	CLIBarFlagInterval             string // CLI bar flag -interval description
+	CLIBarFlagIntervalShort        string // CLI bar flag -i description
+	CLIBarFlagLeague               string // CLI bar flag -league description
+	CLIBarFlagLeagueShort          string // CLI bar flag -l description
+	CLIBarFlagTeam                 string // CLI bar flag -team description
+	CLIBarFlagTeamShort            string // CLI bar flag -t description
+	CLIBarFlagNotify               string // CLI bar flag -notify description
+	CLIBarFlagNotifyShort          string // CLI bar flag -n description
+	CLIBarFlagHasLive              string // CLI bar flag -has-live description
+	CLIBarFlagNoEmoji              string // CLI bar flag -no-emoji description
+	CLIBarFlagDemo                 string // CLI bar flag -demo description
+
+	// Status bar.
+	BarNoMatches     string // status bar empty match list
+	BarVenueLabel    string // status bar tooltip venue label
+	BarChannelsLabel string // status bar tooltip channels label
+
 	// Domain errors.
 	ErrPlayerTimeout    string // player initialization timed out
 	ErrPlayerExited     string // player exited prematurely
@@ -679,6 +729,46 @@ func (c *Catalog) SetupMpvOperational(version string) string {
 // SetupMpvError renders the mpv error status message.
 func (c *Catalog) SetupMpvError(err string) string {
 	return interpolate(c.SetupMpvErrorTemplate, map[string]string{"error": err})
+}
+
+// CLIHelpHeader renders the CLI help header line.
+func (c *Catalog) CLIHelpHeader(version string) string {
+	return interpolate(c.CLIHelpHeaderTemplate, map[string]string{"version": version})
+}
+
+// CLIInitFileExists renders the init file exists message.
+func (c *Catalog) CLIInitFileExists(path string) string {
+	return interpolate(c.CLIInitFileExistsTemplate, map[string]string{"path": path})
+}
+
+// CLIInitFileOverwritten renders the init file overwritten message.
+func (c *Catalog) CLIInitFileOverwritten(path string) string {
+	return interpolate(c.CLIInitFileOverwrittenTemplate, map[string]string{"path": path})
+}
+
+// CLIInitFileCreated renders the init file created message.
+func (c *Catalog) CLIInitFileCreated(path string) string {
+	return interpolate(c.CLIInitFileCreatedTemplate, map[string]string{"path": path})
+}
+
+// CLIImportM3USuccess renders the import M3U success message.
+func (c *Catalog) CLIImportM3USuccess(count int) string {
+	return interpolate(c.CLIImportM3USuccessTemplate, map[string]string{"count": strconv.Itoa(count)})
+}
+
+// CLIImportJSONSuccess renders the import JSON success message.
+func (c *Catalog) CLIImportJSONSuccess(count int) string {
+	return interpolate(c.CLIImportJSONSuccessTemplate, map[string]string{"count": strconv.Itoa(count)})
+}
+
+// CLIImportPlaylistSaved renders the import playlist saved message.
+func (c *Catalog) CLIImportPlaylistSaved(path string) string {
+	return interpolate(c.CLIImportPlaylistSavedTemplate, map[string]string{"path": path})
+}
+
+// CLIImportConfigSaved renders the import config saved message.
+func (c *Catalog) CLIImportConfigSaved(path string) string {
+	return interpolate(c.CLIImportConfigSavedTemplate, map[string]string{"path": path})
 }
 
 // interpolate substitutes every {name} placeholder in template with its value.

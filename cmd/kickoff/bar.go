@@ -15,6 +15,7 @@ import (
 	"github.com/e12jassir/kickoff-cli/internal/bar"
 	"github.com/e12jassir/kickoff-cli/internal/catalog"
 	"github.com/e12jassir/kickoff-cli/internal/espn"
+	"github.com/e12jassir/kickoff-cli/internal/i18n"
 	"github.com/e12jassir/kickoff-cli/internal/model"
 )
 
@@ -22,46 +23,51 @@ import (
 var ErrNoLiveMatches = errors.New("no live matches")
 
 // RunBar handles the "kickoff bar" subcommand.
-func RunBar(args []string, client model.Client, resolver model.Resolver, out io.Writer) error {
+func RunBar(args []string, client model.Client, resolver model.Resolver, out io.Writer, optCat ...*i18n.Catalog) error {
 	if out == nil {
 		out = os.Stdout
+	}
+
+	cat := i18n.Default()
+	if len(optCat) > 0 && optCat[0] != nil {
+		cat = optCat[0]
 	}
 
 	flags := flag.NewFlagSet("bar", flag.ContinueOnError)
 	flags.SetOutput(out)
 
 	var format string
-	flags.StringVar(&format, "format", "plain", "Output format: plain, starship, tmux, waybar, json")
-	flags.StringVar(&format, "f", "plain", "Output format (shorthand)")
+	flags.StringVar(&format, "format", "plain", cat.CLIBarFlagFormat)
+	flags.StringVar(&format, "f", "plain", cat.CLIBarFlagFormatShort)
 
 	var watch bool
-	flags.BoolVar(&watch, "watch", false, "Run continuously in watch mode")
-	flags.BoolVar(&watch, "w", false, "Run continuously in watch mode (shorthand)")
+	flags.BoolVar(&watch, "watch", false, cat.CLIBarFlagWatch)
+	flags.BoolVar(&watch, "w", false, cat.CLIBarFlagWatchShort)
 
 	var interval time.Duration
-	flags.DurationVar(&interval, "interval", 30*time.Second, "Refresh interval in watch mode")
-	flags.DurationVar(&interval, "i", 30*time.Second, "Refresh interval (shorthand)")
+	flags.DurationVar(&interval, "interval", 30*time.Second, cat.CLIBarFlagInterval)
+	flags.DurationVar(&interval, "i", 30*time.Second, cat.CLIBarFlagIntervalShort)
 
 	var league string
-	flags.StringVar(&league, "league", "", "Filter matches by league key or code (e.g. esp.1, laliga)")
-	flags.StringVar(&league, "l", "", "Filter matches by league key or code (shorthand)")
+	flags.StringVar(&league, "league", "", cat.CLIBarFlagLeague)
+	flags.StringVar(&league, "l", "", cat.CLIBarFlagLeagueShort)
 
 	var team string
-	flags.StringVar(&team, "team", "", "Filter matches by team name (case-insensitive substring)")
-	flags.StringVar(&team, "t", "", "Filter matches by team name (shorthand)")
+	flags.StringVar(&team, "team", "", cat.CLIBarFlagTeam)
+	flags.StringVar(&team, "t", "", cat.CLIBarFlagTeamShort)
 
 	var notify bool
-	flags.BoolVar(&notify, "notify", false, "Enable desktop notifications on goals (watch mode)")
-	flags.BoolVar(&notify, "n", false, "Enable desktop notifications on goals (shorthand)")
+	flags.BoolVar(&notify, "notify", false, cat.CLIBarFlagNotify)
+	flags.BoolVar(&notify, "n", false, cat.CLIBarFlagNotifyShort)
 
 	var hasLive bool
-	flags.BoolVar(&hasLive, "has-live", false, "Exit code helper (0 if live matches exist, 1 otherwise)")
+	flags.BoolVar(&hasLive, "has-live", false, cat.CLIBarFlagHasLive)
 
 	var noEmoji bool
-	flags.BoolVar(&noEmoji, "no-emoji", false, "Disable emojis, use ASCII equivalents")
+	flags.BoolVar(&noEmoji, "no-emoji", false, cat.CLIBarFlagNoEmoji)
 
 	var demo bool
-	flags.BoolVar(&demo, "demo", false, "Use demo client with simulated live matches")
+	flags.BoolVar(&demo, "demo", false, cat.CLIBarFlagDemo)
 
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -120,7 +126,7 @@ func RunBar(args []string, client model.Client, resolver model.Resolver, out io.
 		return err
 	}
 
-	output, err := bar.FormatMatches(matches, opts, resolver)
+	output, err := bar.FormatMatches(matches, opts, resolver, cat)
 	if err != nil {
 		return err
 	}

@@ -894,3 +894,40 @@ func TestFormatGoalNotification_PresentationFallbacks(t *testing.T) {
 		t.Errorf("expected title with empty player to contain %q, got %q", cat.FallbackPlayer, titleEv)
 	}
 }
+
+func TestBuildTooltip_Localization(t *testing.T) {
+	catES := i18n.New(i18n.ES)
+	catEN := i18n.New(i18n.EN)
+
+	// Empty matches
+	if got := BuildTooltip(nil, nil, catES); got != "No hay partidos" {
+		t.Errorf("expected Spanish empty tooltip 'No hay partidos', got %q", got)
+	}
+	if got := BuildTooltip(nil, nil, catEN); got != "No matches" {
+		t.Errorf("expected English empty tooltip 'No matches', got %q", got)
+	}
+
+	// Populated match
+	m := sampleLiveMatch()
+	resolver := &mockResolver{
+		channelsByMatchID: map[string][]model.Channel{
+			"live-1": {{DisplayName: "ESPN"}},
+		},
+	}
+
+	tooltipES := BuildTooltip([]model.Match{m}, resolver, catES)
+	if !strings.Contains(tooltipES, "Estadio:") {
+		t.Errorf("expected Spanish tooltip to contain 'Estadio:', got:\n%s", tooltipES)
+	}
+	if !strings.Contains(tooltipES, "Canales: ESPN") {
+		t.Errorf("expected Spanish tooltip to contain 'Canales: ESPN', got:\n%s", tooltipES)
+	}
+
+	tooltipEN := BuildTooltip([]model.Match{m}, resolver, catEN)
+	if !strings.Contains(tooltipEN, "Venue:") {
+		t.Errorf("expected English tooltip to contain 'Venue:', got:\n%s", tooltipEN)
+	}
+	if !strings.Contains(tooltipEN, "Channels: ESPN") {
+		t.Errorf("expected English tooltip to contain 'Channels: ESPN', got:\n%s", tooltipEN)
+	}
+}
