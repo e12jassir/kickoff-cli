@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/e12jassir/kickoff-cli/internal/bar"
+	"github.com/e12jassir/kickoff-cli/internal/i18n"
 	"github.com/e12jassir/kickoff-cli/internal/locale"
 	"github.com/e12jassir/kickoff-cli/internal/model"
 )
@@ -58,6 +59,7 @@ type Model struct {
 	client  model.Client
 	catalog model.Resolver
 	player  model.Controller
+	i18n    *i18n.Catalog
 
 	state        UIState
 	leagues      []model.League
@@ -197,6 +199,7 @@ func NewModel(client model.Client, catalog model.Resolver, player model.Controll
 		client:          client,
 		catalog:         catalog,
 		player:          player,
+		i18n:            i18n.Default(),
 		state:           StateMainMenu,
 		leagues:         leagues,
 		leagueCursor:    0,
@@ -262,6 +265,21 @@ func (m Model) WithClock(now func() time.Time, loc *time.Location) Model {
 		m.loc = loc
 	}
 	return m
+}
+
+// WithI18n overrides the localization catalog used by the view.
+func (m Model) WithI18n(c *i18n.Catalog) Model {
+	if c != nil {
+		m.i18n = c
+	}
+	return m
+}
+
+func (m Model) cat() *i18n.Catalog {
+	if m.i18n == nil {
+		return i18n.Default()
+	}
+	return m.i18n
 }
 
 // displayNow returns the current instant in the user's display timezone.

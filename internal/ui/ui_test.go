@@ -9,6 +9,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/e12jassir/kickoff-cli/internal/i18n"
 	"github.com/e12jassir/kickoff-cli/internal/model"
 )
 
@@ -3299,5 +3300,134 @@ func TestModel_LeagueWithoutCategoryIDGroupsUnderOther(t *testing.T) {
 	}
 	if got := m.categoryIndices["other"]; len(got) != 1 || got[0] != 0 {
 		t.Errorf("other indices = %v, want [0]", got)
+	}
+}
+
+func TestModel_WithI18n(t *testing.T) {
+	m := NewModel(&mockClient{}, &mockCatalog{}, &mockPlayer{})
+	if m.cat() == nil {
+		t.Fatal("expected non-nil default catalog")
+	}
+
+	custom := i18n.New(i18n.ES)
+	custom.FallbackHome = "Local Custom"
+	m2 := m.WithI18n(custom)
+	if m2.cat().FallbackHome != "Local Custom" {
+		t.Errorf("expected WithI18n to set catalog, got %q", m2.cat().FallbackHome)
+	}
+
+	// Nil receiver or nil i18n returns default catalog
+	emptyModel := Model{}
+	if emptyModel.cat() == nil {
+		t.Error("expected non-nil default catalog when m.i18n is nil")
+	}
+}
+
+func TestRender_PresentationFallbacks_EmptyDomain(t *testing.T) {
+	cat := i18n.Default()
+
+	// 1. renderMatchItem fallbacks: empty home, away, venue
+	mItem := model.Match{
+		HomeTeam: model.Competitor{DisplayName: ""},
+		AwayTeam: model.Competitor{DisplayName: ""},
+		Venue:    "",
+		Status:   model.MatchStatus{State: "pre"},
+	}
+	lines := renderMatchItem(mItem, time.Now(), false, false, cat)
+	combined := strings.Join(lines, "\n")
+	if !strings.Contains(combined, cat.FallbackHome) {
+		t.Errorf("renderMatchItem missing FallbackHome: %s", combined)
+	}
+	if !strings.Contains(combined, cat.FallbackAway) {
+		t.Errorf("renderMatchItem missing FallbackAway: %s", combined)
+	}
+	if !strings.Contains(combined, cat.FallbackVenue) {
+		t.Errorf("renderMatchItem missing FallbackVenue: %s", combined)
+	}
+
+	// 2. renderResumenCard fallbacks: empty home, away, venue
+	pm := model.Match{
+		HomeTeam: model.Competitor{DisplayName: ""},
+		AwayTeam: model.Competitor{DisplayName: ""},
+		Venue:    "",
+		Status:   model.MatchStatus{State: "post"},
+	}
+	resumenCard := renderResumenCard(pm, false, cat)
+	if !strings.Contains(resumenCard, cat.FallbackHome) {
+		t.Errorf("renderResumenCard missing FallbackHome: %s", resumenCard)
+	}
+	if !strings.Contains(resumenCard, cat.FallbackAway) {
+		t.Errorf("renderResumenCard missing FallbackAway: %s", resumenCard)
+	}
+	if !strings.Contains(resumenCard, cat.FallbackVenue) {
+		t.Errorf("renderResumenCard missing FallbackVenue: %s", resumenCard)
+	}
+
+	// 3. renderTabPosiciones fallback: empty team name
+	mPos := Model{
+		standings: &model.LeagueStandings{
+			Entries: []model.StandingsEntry{
+				{Rank: 1, TeamName: "", GamesPlayed: "5", Points: "10"},
+			},
+		},
+	}
+	posView := renderTabPosiciones(mPos, model.League{})
+	if !strings.Contains(posView, cat.ColumnTeam) {
+		t.Errorf("renderTabPosiciones missing ColumnTeam fallback for empty team name: %s", posView)
+	}
+
+	// 4. renderChannelModal fallbacks: empty home, away, venue, pre status
+	modalMatch := model.Match{
+		HomeTeam: model.Competitor{DisplayName: ""},
+		AwayTeam: model.Competitor{DisplayName: ""},
+		Venue:    "",
+		Status:   model.MatchStatus{State: "pre", Description: ""},
+	}
+	modalView := renderChannelModal(modalMatch, time.Now(), nil, 0, 0, false, "", false, false, cat)
+	if !strings.Contains(modalView, cat.FallbackHome) {
+		t.Errorf("renderChannelModal missing FallbackHome: %s", modalView)
+	}
+	if !strings.Contains(modalView, cat.FallbackAway) {
+		t.Errorf("renderChannelModal missing FallbackAway: %s", modalView)
+	}
+	if !strings.Contains(modalView, cat.FallbackVenue) {
+		t.Errorf("renderChannelModal missing FallbackVenue: %s", modalView)
+	}
+	if !strings.Contains(modalView, cat.StatusScheduled) {
+		t.Errorf("renderChannelModal missing StatusScheduled: %s", modalView)
+	}
+
+	// 5. renderCompactLineups: empty player name
+	lineupMatch := model.Match{
+		HomeTeam: model.Competitor{DisplayName: "Home"},
+		AwayTeam: model.Competitor{DisplayName: "Away"},
+		Lineups: &model.MatchLineups{
+			Home: model.TeamLineup{
+				Starters: []model.Player{
+					{DisplayName: ""},
+				},
+			},
+		},
+	}
+	lineupView := renderCompactLineups(lineupMatch, 60, false, cat)
+	if !strings.Contains(lineupView, cat.FallbackPlayer) {
+		t.Errorf("renderCompactLineups missing FallbackPlayer: %s", lineupView)
+	}
+
+	// 6. renderTimeline: events with empty player names
+	tlEvents := []model.MatchEvent{
+		{Type: "goal", PlayerName: "", Clock: "10'", TeamID: "h1"},
+		{Type: "card_yellow", PlayerName: "", Clock: "20'", TeamID: "h1", IsYellow: true},
+		{Type: "goal", PlayerName: "", Clock: "30'", TeamID: "h1", IsOwnGoal: true},
+	}
+	tlView := renderTimeline(tlEvents, "h1", 60, true)
+	if !strings.Contains(tlView, cat.FallbackGoal) {
+		t.Errorf("renderTimeline missing FallbackGoal: %s", tlView)
+	}
+	if !strings.Contains(tlView, cat.FallbackCoachStaff) {
+		t.Errorf("renderTimeline missing FallbackCoachStaff: %s", tlView)
+	}
+	if !strings.Contains(tlView, cat.FallbackOwnGoal) {
+		t.Errorf("renderTimeline missing FallbackOwnGoal: %s", tlView)
 	}
 }

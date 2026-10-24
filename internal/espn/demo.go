@@ -97,8 +97,7 @@ func (d *DemoClient) FetchMatches(ctx context.Context, leagueKey string) ([]mode
 			TimeStr:   now.Add(2 * time.Hour).Format("15:04"),
 			Venue:     "Anfield",
 			Status: model.MatchStatus{
-				Description: "Programado",
-				State:       "pre",
+				State: "pre",
 			},
 			LeagueKey:  leagueKey,
 			Broadcasts: []string{"ESPN 3", "ESPN 7"},

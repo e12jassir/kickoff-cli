@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/e12jassir/kickoff-cli/internal/i18n"
 	"github.com/e12jassir/kickoff-cli/internal/model"
 )
 
@@ -411,6 +412,7 @@ func BuildTooltip(matches []model.Match, resolver model.Resolver) string {
 	if len(matches) == 0 {
 		return "No matches"
 	}
+	cat := i18n.Default()
 
 	var blocks []string
 	for _, m := range matches {
@@ -419,9 +421,15 @@ func BuildTooltip(matches []model.Match, resolver model.Resolver) string {
 		if home == "" {
 			home = m.HomeTeam.Name
 		}
+		if home == "" {
+			home = cat.FallbackHome
+		}
 		away := m.AwayTeam.DisplayName
 		if away == "" {
 			away = m.AwayTeam.Name
+		}
+		if away == "" {
+			away = cat.FallbackAway
 		}
 
 		var lineScore string
@@ -459,7 +467,7 @@ func BuildTooltip(matches []model.Match, resolver model.Resolver) string {
 
 		venue := m.Venue
 		if venue == "" {
-			venue = "Estadio Principal"
+			venue = cat.FallbackVenue
 		}
 
 		block := fmt.Sprintf("%s: %s\nVenue: %s", league, lineScore, venue)

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/e12jassir/kickoff-cli/internal/i18n"
 	"github.com/e12jassir/kickoff-cli/internal/model"
 )
 
@@ -242,7 +243,7 @@ func renderBrowsing(m Model) string {
 				modalWidth = 74
 				modalBox = modalBox.Width(modalWidth + 6)
 			}
-			modalContent := renderChannelModal(selMatch, m.displayNow(), m.channels, m.channelCursor, m.modalTab, m.livePulse, m.spinner.View(), m.IsDetailsLoaded(selMatch.ID), m.channelsLoading, m.noEmoji, modalWidth)
+			modalContent := renderChannelModal(selMatch, m.displayNow(), m.channels, m.channelCursor, m.modalTab, m.livePulse, m.spinner.View(), m.IsDetailsLoaded(selMatch.ID), m.channelsLoading, m.noEmoji, modalWidth, m.cat())
 			body = modalBox.Render(modalContent)
 			if m.modalTab == 0 {
 				footer = FooterHelpStyle.Render("h/l o ←/→: pestaña  •  j/k o ↑/↓: canal  •  enter: reproducir  •  esc: volver")
@@ -368,7 +369,7 @@ func renderTabPartidos(m Model, curr model.League) string {
 	for i := start; i < end; i++ {
 		match := m.matches[i]
 		isSelected := i == cursor
-		itemLines := renderMatchItem(match, m.displayNow(), isSelected, m.livePulse)
+		itemLines := renderMatchItem(match, m.displayNow(), isSelected, m.livePulse, m.cat())
 		lines = append(lines, itemLines...)
 		if i < end-1 {
 			lines = append(lines, "")
@@ -390,7 +391,11 @@ func renderTabResumen(m Model, curr model.League) string {
 	// 1. League Leader Highlight from Standings if available
 	if m.standings != nil && len(m.standings.Entries) > 0 {
 		leader := m.standings.Entries[0]
-		leaderText := fmt.Sprintf("[1] Líder de Liga: %s (%s pts • %s PJ • DG %s)", leader.TeamName, leader.Points, leader.GamesPlayed, leader.PointDiff)
+		teamName := leader.TeamName
+		if teamName == "" {
+			teamName = m.cat().ColumnTeam
+		}
+		leaderText := fmt.Sprintf("[1] Líder de Liga: %s (%s pts • %s PJ • DG %s)", teamName, leader.Points, leader.GamesPlayed, leader.PointDiff)
 		lines = append(lines, lipgloss.NewStyle().Foreground(ColorHighlight).Bold(true).Render(leaderText))
 		lines = append(lines, "")
 	}
@@ -448,7 +453,7 @@ func renderTabResumen(m Model, curr model.League) string {
 	for i := start; i < end; i++ {
 		pm := pastMatches[i]
 		isSelected := i == cursor
-		lines = append(lines, renderResumenCard(pm, isSelected))
+		lines = append(lines, renderResumenCard(pm, isSelected, m.cat()))
 	}
 
 	if end < len(pastMatches) {
@@ -460,7 +465,12 @@ func renderTabResumen(m Model, curr model.League) string {
 	return MatchBoxStyle.Render(strings.Join(lines, "\n"))
 }
 
-func renderResumenCard(pm model.Match, isSelected bool) string {
+func renderResumenCard(pm model.Match, isSelected bool, optCat ...*i18n.Catalog) string {
+	cat := i18n.Default()
+	if len(optCat) > 0 && optCat[0] != nil {
+		cat = optCat[0]
+	}
+
 	cardStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(ColorBorder).
@@ -484,7 +494,7 @@ func renderResumenCard(pm model.Match, isSelected bool) string {
 
 	homeName := pm.HomeTeam.DisplayName
 	if homeName == "" {
-		homeName = "Local"
+		homeName = cat.FallbackHome
 	}
 	homeTrunc := truncateModalText(homeName, 14)
 	homeStyled := lipgloss.NewStyle().Width(14).Align(lipgloss.Right).Foreground(ColorTextMuted).Render(homeTrunc)
@@ -503,7 +513,7 @@ func renderResumenCard(pm model.Match, isSelected bool) string {
 
 	awayName := pm.AwayTeam.DisplayName
 	if awayName == "" {
-		awayName = "Visitante"
+		awayName = cat.FallbackAway
 	}
 	awayTrunc := truncateModalText(awayName, 14)
 	awayStyled := lipgloss.NewStyle().Width(14).Align(lipgloss.Left).Foreground(ColorTextMuted).Render(awayTrunc)
@@ -517,7 +527,7 @@ func renderResumenCard(pm model.Match, isSelected bool) string {
 
 	venue := pm.Venue
 	if venue == "" {
-		venue = "Estadio Principal"
+		venue = cat.FallbackVenue
 	}
 	venueTrunc := truncateModalText(venue, 26)
 	venueStyled := VenueStyle.Render(venueTrunc)
@@ -573,7 +583,11 @@ func renderTabPosiciones(m Model, curr model.League) string {
 
 	for _, e := range displayEntries {
 		rankStr := fmt.Sprintf("%d", e.Rank)
-		teamCol := truncateModalText(e.TeamName, 22)
+		teamName := e.TeamName
+		if teamName == "" {
+			teamName = m.cat().ColumnTeam
+		}
+		teamCol := truncateModalText(teamName, 22)
 		row := fmt.Sprintf(" %-2s  %-22s  %3s %3s %3s %3s %4s  %3s", rankStr, teamCol, e.GamesPlayed, e.Wins, e.Ties, e.Losses, e.PointDiff, e.Points)
 		if e.Rank <= 4 {
 			lines = append(lines, lipgloss.NewStyle().Foreground(ColorHighlight).Bold(true).Render(row))
@@ -612,7 +626,7 @@ func renderTabGoleadores(m Model, curr model.League) string {
 			s := m.statistics.Scorers[i]
 			playerName := s.PlayerName
 			if playerName == "" {
-				playerName = "Jugador"
+				playerName = m.cat().FallbackPlayer
 			}
 			row := fmt.Sprintf(" %-2d  %-24s  %-18s  %4s", i+1, truncateModalText(playerName, 24), truncateModalText(s.TeamName, 18), s.Value)
 			if i < 3 {
@@ -642,7 +656,7 @@ func renderTabGoleadores(m Model, curr model.League) string {
 			a := m.statistics.Assists[i]
 			playerName := a.PlayerName
 			if playerName == "" {
-				playerName = "Jugador"
+				playerName = m.cat().FallbackPlayer
 			}
 			row := fmt.Sprintf(" %-2d  %-24s  %-18s  %4s", i+1, truncateModalText(playerName, 24), truncateModalText(a.TeamName, 18), a.Value)
 			if i < 3 {
@@ -656,7 +670,12 @@ func renderTabGoleadores(m Model, curr model.League) string {
 	return MatchBoxStyle.Render(strings.Join(lines, "\n"))
 }
 
-func renderMatchItem(match model.Match, now time.Time, isSelected bool, livePulse bool) []string {
+func renderMatchItem(match model.Match, now time.Time, isSelected bool, livePulse bool, optCat ...*i18n.Catalog) []string {
+	cat := i18n.Default()
+	if len(optCat) > 0 && optCat[0] != nil {
+		cat = optCat[0]
+	}
+
 	timeStr := match.TimeStr
 	if timeStr == "" {
 		timeStr = "--:--"
@@ -668,11 +687,11 @@ func renderMatchItem(match model.Match, now time.Time, isSelected bool, livePuls
 
 	homeName := match.HomeTeam.DisplayName
 	if homeName == "" {
-		homeName = "Local"
+		homeName = cat.FallbackHome
 	}
 	awayName := match.AwayTeam.DisplayName
 	if awayName == "" {
-		awayName = "Visitante"
+		awayName = cat.FallbackAway
 	}
 
 	cursorPrefix := "   "
@@ -691,7 +710,7 @@ func renderMatchItem(match model.Match, now time.Time, isSelected bool, livePuls
 	// Line 2: Details / Score / Venue
 	venue := match.Venue
 	if venue == "" {
-		venue = "Estadio Principal"
+		venue = cat.FallbackVenue
 	}
 
 	var line2 string
@@ -737,9 +756,14 @@ func calendarDayDiff(from, to time.Time) int {
 func renderChannelModal(match model.Match, now time.Time, channels []model.Channel, selectedIdx int, modalTab int, livePulse bool, spinnerStr string, detailsLoaded bool, channelsLoading bool, optArgs ...any) string {
 	noEmoji := false
 	modalContentWidth := 60
+	cat := i18n.Default()
 
 	for _, arg := range optArgs {
 		switch v := arg.(type) {
+		case *i18n.Catalog:
+			if v != nil {
+				cat = v
+			}
 		case bool:
 			noEmoji = v
 		case int:
@@ -752,11 +776,11 @@ func renderChannelModal(match model.Match, now time.Time, channels []model.Chann
 
 	homeName := match.HomeTeam.DisplayName
 	if homeName == "" {
-		homeName = "Local"
+		homeName = cat.FallbackHome
 	}
 	awayName := match.AwayTeam.DisplayName
 	if awayName == "" {
-		awayName = "Visitante"
+		awayName = cat.FallbackAway
 	}
 
 	// 1. Header line 1: Status • Stadium
@@ -790,14 +814,18 @@ func renderChannelModal(match model.Match, now time.Time, channels []model.Chann
 				preText = fmt.Sprintf("%s • %s", match.StartTime.Format("02/01"), match.TimeStr)
 			}
 		} else if preText == "" {
-			preText = "Programado"
+			if match.Status.Description != "" {
+				preText = match.Status.Description
+			} else {
+				preText = cat.StatusScheduled
+			}
 		}
 		statusPart = StatusPreStyle.Render(preText)
 	}
 
 	venue := match.Venue
 	if venue == "" {
-		venue = "Estadio Principal"
+		venue = cat.FallbackVenue
 	}
 	venueStyled := VenueStyle.Render(venue)
 
@@ -960,14 +988,19 @@ func renderChannelModal(match model.Match, now time.Time, channels []model.Chann
 
 	case 2:
 		// Tab 2: Alineaciones (Vista compacta con banner de acceso a Cancha Táctica 2D)
-		modal.WriteString(renderCompactLineups(match, modalContentWidth, noEmoji) + "\n")
+		modal.WriteString(renderCompactLineups(match, modalContentWidth, noEmoji, cat) + "\n")
 	}
 
 	return modal.String()
 }
 
 // renderCompactLineups renders the clean 2-column text list of player starters and substitutes.
-func renderCompactLineups(match model.Match, modalContentWidth int, noEmoji bool) string {
+func renderCompactLineups(match model.Match, modalContentWidth int, noEmoji bool, optCat ...*i18n.Catalog) string {
+	cat := i18n.Default()
+	if len(optCat) > 0 && optCat[0] != nil {
+		cat = optCat[0]
+	}
+
 	if match.Lineups == nil || (len(match.Lineups.Home.Starters) == 0 && len(match.Lineups.Away.Starters) == 0) {
 		notice := "Alineaciones no disponibles aún para este encuentro."
 		return lipgloss.NewStyle().Width(modalContentWidth).Align(lipgloss.Center).Foreground(ColorMuted).Italic(true).Render(notice)
@@ -980,7 +1013,7 @@ func renderCompactLineups(match model.Match, modalContentWidth int, noEmoji bool
 		homeName = match.HomeTeam.Name
 	}
 	if homeName == "" {
-		homeName = "Local"
+		homeName = cat.FallbackHome
 	}
 
 	awayName := match.AwayTeam.DisplayName
@@ -988,7 +1021,7 @@ func renderCompactLineups(match model.Match, modalContentWidth int, noEmoji bool
 		awayName = match.AwayTeam.Name
 	}
 	if awayName == "" {
-		awayName = "Visitante"
+		awayName = cat.FallbackAway
 	}
 
 	homeLineup := match.Lineups.Home
@@ -1040,7 +1073,7 @@ func renderCompactLineups(match model.Match, modalContentWidth int, noEmoji bool
 		}
 		name := p.DisplayName
 		if name == "" {
-			name = "Jugador"
+			name = cat.FallbackPlayer
 		}
 		pos := ""
 		if p.Position != "" {
@@ -1290,12 +1323,13 @@ func renderTimeline(events []model.MatchEvent, homeTeamID string, modalContentWi
 
 		pName := strings.TrimSpace(ev.PlayerName)
 		if pName == "" {
+			cat := i18n.Default()
 			if ev.IsYellow || ev.IsRedCard {
-				pName = "Cuerpo técnico"
+				pName = cat.FallbackCoachStaff
 			} else if ev.IsOwnGoal {
-				pName = "Autogol"
+				pName = cat.FallbackOwnGoal
 			} else {
-				pName = "Gol"
+				pName = cat.FallbackGoal
 			}
 		}
 		if ev.IsPenalty {

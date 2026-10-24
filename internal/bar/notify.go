@@ -3,6 +3,7 @@ package bar
 import (
 	"fmt"
 
+	"github.com/e12jassir/kickoff-cli/internal/i18n"
 	"github.com/e12jassir/kickoff-cli/internal/model"
 )
 
@@ -13,12 +14,13 @@ type Notifier interface {
 
 // FormatGoalNotification creates a formatted title and body text for goal notifications.
 func FormatGoalNotification(match model.Match, homeScore, awayScore string, event *model.MatchEvent) (string, string) {
+	cat := i18n.Default()
 	home := match.HomeTeam.DisplayName
 	if home == "" {
 		home = match.HomeTeam.Name
 	}
 	if home == "" {
-		home = "Local"
+		home = cat.FallbackHome
 	}
 
 	away := match.AwayTeam.DisplayName
@@ -26,7 +28,7 @@ func FormatGoalNotification(match model.Match, homeScore, awayScore string, even
 		away = match.AwayTeam.Name
 	}
 	if away == "" {
-		away = "Visitante"
+		away = cat.FallbackAway
 	}
 
 	scoreLine := fmt.Sprintf("%s %s - %s %s", home, homeScore, awayScore, away)
@@ -42,7 +44,7 @@ func FormatGoalNotification(match model.Match, homeScore, awayScore string, even
 
 		playerName := event.PlayerName
 		if playerName == "" {
-			playerName = "Jugador"
+			playerName = cat.FallbackPlayer
 		}
 
 		if event.IsPenalty {
