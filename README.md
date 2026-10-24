@@ -50,9 +50,9 @@ Pick a competition, pick a match, press <kbd>Enter</kbd>. That's the whole tutor
 | **⚡ Instant**<br/><sub>Native Go binary. Millisecond startup, around 28 MB of RAM.</sub> | **🔴 Live scores**<br/><sub>Running match clock and live indicators, auto-synced every 15 seconds, with desktop goal alerts while the app is open.</sub> |
 | **⏱️ Event timeline**<br/><sub>Goals, penalties, cards and substitutions on a centered vertical timeline.</sub> | **📊 Team stats**<br/><sub>Possession bar, shots, passing accuracy, corners and discipline.</sub> |
 | **📋 Lineups**<br/><sub>Starting XIs, formations, squad numbers and substitute benches.</sub> | **▶️ Playback in mpv**<br/><sub>Launch a channel with one keystroke, using the sources you configure.</sub> |
-| **⌨️ Keyboard-first**<br/><sub>`hjkl` or arrows, number keys for tabs, one key to refresh.</sub> | **🔒 Private**<br/><sub>No account. No telemetry. Nothing but football on your screen.</sub> |
+| **🌐 English & Spanish**<br/><sub>Full bilingual support across TUI, CLI, status bar, and desktop alerts. Autodetected or configured via `kickoff setup`.</sub> | **🔒 Private**<br/><sub>No account. No telemetry. Nothing but football on your screen.</sub> |
 
-Plus `kickoff update` to self-update and `kickoff setup` to diagnose your system.
+Plus `kickoff update` to self-update and `kickoff setup` to configure language and diagnose your system.
 
 <br/>
 
@@ -116,8 +116,21 @@ git clone https://github.com/e12jassir/kickoff-cli.git && cd kickoff-cli && make
 kickoff            Open the match explorer
 kickoff bar        Status bar & prompt integration (plain, tmux, waybar, starship)
 kickoff update     Update to the latest release
-kickoff setup      Check mpv, config and cache
+kickoff setup      Interactive setup wizard, diagnostics, and language preference
 kickoff version    Print the version
+```
+
+### 🌐 Language & Localization
+
+Kickoff supports both **English** and **Spanish** out of the box. Language is automatically detected from your system locale (`LANG` / `LC_*`), and can be explicitly configured via `kickoff setup` or overridden via the `KICKOFF_LANG` environment variable:
+
+```bash
+# Force English UI
+export KICKOFF_LANG=en
+kickoff
+
+# Or configure interactively
+kickoff setup
 ```
 
 ### 📊 Status Bar & Shell Integration
