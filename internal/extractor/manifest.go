@@ -36,7 +36,34 @@ func (s *Service) ResolveManifest(ctx context.Context, stream *ExtractedStream) 
 		return fmt.Errorf("extractor: empty player url")
 	}
 
-	cleanURL, err := model.SanitizeURL(stream.PlayerURL)
+	targetURL := strings.TrimSpace(stream.PlayerURL)
+	if strings.Contains(targetURL, "r=") && (strings.Contains(targetURL, "/embed/eventos.html") || strings.Contains(targetURL, "embed")) {
+		if idx := strings.Index(targetURL, "r="); idx != -1 {
+			rVal := targetURL[idx+2:]
+			if endIdx := strings.Index(rVal, "&"); endIdx != -1 {
+				rVal = rVal[:endIdx]
+			}
+			if decoded := decodeBase64URL(rVal); decoded != "" {
+				targetURL = decoded
+				stream.PlayerURL = decoded
+			}
+		}
+	}
+
+	// Direct .m3u8 check if PlayerURL or decoded r parameter already pointed directly to the manifest
+	if strings.Contains(strings.ToLower(targetURL), ".m3u8") {
+		cleanStreamURL, err := model.SanitizeURL(targetURL)
+		if err == nil {
+			stream.StreamURL = cleanStreamURL
+			if stream.Headers == nil {
+				stream.Headers = make(map[string]string)
+			}
+			stream.Headers["User-Agent"] = s.userAgent
+			return nil
+		}
+	}
+
+	cleanURL, err := model.SanitizeURL(targetURL)
 	if err != nil {
 		return fmt.Errorf("extractor: sanitize player url: %w", err)
 	}
@@ -82,6 +109,30 @@ func (s *Service) ResolveManifest(ctx context.Context, stream *ExtractedStream) 
 	// Step 2: Check if there is an embedded iframe player (e.g. embed.html, player.php)
 	iframeSrc := extractIframe(body, cleanURL)
 	if iframeSrc != "" && iframeSrc != cleanURL {
+		if strings.Contains(iframeSrc, "r=") && (strings.Contains(iframeSrc, "/embed/eventos.html") || strings.Contains(iframeSrc, "embed")) {
+			if idx := strings.Index(iframeSrc, "r="); idx != -1 {
+				rVal := iframeSrc[idx+2:]
+				if endIdx := strings.Index(rVal, "&"); endIdx != -1 {
+					rVal = rVal[:endIdx]
+				}
+				if decoded := decodeBase64URL(rVal); decoded != "" {
+					iframeSrc = decoded
+				}
+			}
+		}
+
+		if strings.Contains(strings.ToLower(iframeSrc), ".m3u8") {
+			if cleanM3U8, err := model.SanitizeURL(iframeSrc); err == nil {
+				stream.StreamURL = cleanM3U8
+				if stream.Headers == nil {
+					stream.Headers = make(map[string]string)
+				}
+				stream.Headers["User-Agent"] = s.userAgent
+				stream.Headers["Referer"] = cleanURL
+				return nil
+			}
+		}
+
 		// Follow iframe once
 		iframeReq, err := http.NewRequestWithContext(ctx, http.MethodGet, iframeSrc, nil)
 		if err == nil {

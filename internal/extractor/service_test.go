@@ -2,6 +2,8 @@ package extractor
 
 import (
 	"context"
+	"encoding/base64"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -477,5 +479,217 @@ func TestFetchAgenda_StaleAndDiskFallback(t *testing.T) {
 	}
 	if len(diskEvents) != 1 || diskEvents[0].HomeTeam != "PSG" {
 		t.Fatalf("expected 1 recovered event from disk cache, got %+v", diskEvents)
+	}
+}
+
+func TestParseAgendaHTML_ArticlesAndTablesWithMultipleStreams(t *testing.T) {
+	b64Stream1 := base64.StdEncoding.EncodeToString([]byte("https://edge.stream/live1.php"))
+	b64Stream2 := base64.StdEncoding.EncodeToString([]byte("https://edge.stream/live2.php"))
+
+	htmlSnippet := fmt.Sprintf(`
+	<!DOCTYPE html>
+	<html>
+	<body>
+		<article class="post">
+			<div class="entry-title">20:00 Junior vs Millonarios</div>
+			<div class="entry-content">
+				<a href="/embed/eventos.html?r=%s">Win Sports+ Calidad 720p</a>
+				<a href="/embed/eventos.html?r=%s">Win Sports+ | OP 2 Calidad HD</a>
+				<a href="/canal/winsports-movil.php">Win Sports + | Movil</a>
+			</div>
+		</article>
+		<table class="table-agenda">
+			<tbody>
+				<tr>
+					<td>18:00</td>
+					<td>Real Madrid vs Atletico Madrid</td>
+					<td>
+						<a href="/canal/directv.php">DSports</a>
+						<a href="/canal/directv2.php">DSports 2 HD</a>
+					</td>
+				</tr>
+			</tbody>
+		</table>
+	</body>
+	</html>
+	`, b64Stream1, b64Stream2)
+
+	events, err := ParseAgendaHTML(htmlSnippet, "https://rusticotvplus.org")
+	if err != nil {
+		t.Fatalf("ParseAgendaHTML failed: %v", err)
+	}
+
+	if len(events) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(events))
+	}
+
+	// Verify Junior vs Millonarios (article format with r= params)
+	ev1 := events[0]
+	if ev1.HomeTeam != "Junior" || ev1.AwayTeam != "Millonarios" {
+		t.Errorf("unexpected ev1 teams: %s vs %s", ev1.HomeTeam, ev1.AwayTeam)
+	}
+	if len(ev1.Streams) != 3 {
+		t.Fatalf("expected 3 streams for ev1, got %d", len(ev1.Streams))
+	}
+
+	if ev1.Streams[0].ChannelName != "Win Sports+ Calidad 720p" {
+		t.Errorf("unexpected stream 0 name: %s", ev1.Streams[0].ChannelName)
+	}
+	if ev1.Streams[0].PlayerURL != "https://edge.stream/live1.php" {
+		t.Errorf("expected decoded base64 r url, got %s", ev1.Streams[0].PlayerURL)
+	}
+	if ev1.Streams[0].Resolution != "720p" {
+		t.Errorf("expected 720p resolution, got %s", ev1.Streams[0].Resolution)
+	}
+
+	if ev1.Streams[1].ChannelName != "Win Sports+ | OP 2 Calidad HD" {
+		t.Errorf("unexpected stream 1 name: %s", ev1.Streams[1].ChannelName)
+	}
+	if ev1.Streams[1].PlayerURL != "https://edge.stream/live2.php" {
+		t.Errorf("expected decoded base64 r url, got %s", ev1.Streams[1].PlayerURL)
+	}
+
+	if ev1.Streams[2].ChannelName != "Win Sports + | Movil" {
+		t.Errorf("unexpected stream 2 name: %s", ev1.Streams[2].ChannelName)
+	}
+	if ev1.Streams[2].PlayerURL != "https://rusticotvplus.org/canal/winsports-movil.php" {
+		t.Errorf("unexpected stream 2 url: %s", ev1.Streams[2].PlayerURL)
+	}
+
+	// Verify Real Madrid vs Atletico Madrid (table format)
+	ev2 := events[1]
+	if ev2.HomeTeam != "Real Madrid" || ev2.AwayTeam != "Atletico Madrid" {
+		t.Errorf("unexpected ev2 teams: %s vs %s", ev2.HomeTeam, ev2.AwayTeam)
+	}
+	if len(ev2.Streams) != 2 {
+		t.Fatalf("expected 2 streams for ev2, got %d", len(ev2.Streams))
+	}
+	if ev2.Streams[0].ChannelName != "DSports" {
+		t.Errorf("unexpected ev2 stream 0: %s", ev2.Streams[0].ChannelName)
+	}
+	if ev2.Streams[1].ChannelName != "DSports 2 HD" {
+		t.Errorf("unexpected ev2 stream 1: %s", ev2.Streams[1].ChannelName)
+	}
+}
+
+func TestResolveManifest_EmbedRParam(t *testing.T) {
+	playerHTML := `<html><body><script>var src = "https://cdn.live/stream.m3u8";</script></body></html>`
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/player" {
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(playerHTML))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer ts.Close()
+
+	targetPlayerURL := ts.URL + "/player"
+	b64Target := base64.StdEncoding.EncodeToString([]byte(targetPlayerURL))
+
+	s := NewService(WithHTTPClient(ts.Client()))
+	stream := &ExtractedStream{
+		PlayerURL: "https://rusticotvplus.org/embed/eventos.html?r=" + b64Target,
+	}
+
+	err := s.ResolveManifest(context.Background(), stream)
+	if err != nil {
+		t.Fatalf("ResolveManifest failed: %v", err)
+	}
+
+	if stream.StreamURL != "https://cdn.live/stream.m3u8" {
+		t.Errorf("expected stream url https://cdn.live/stream.m3u8, got %s", stream.StreamURL)
+	}
+}
+
+func TestResolveMatchStreams_PreservesStreamsWhenProbeFailsOrTimesOut(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/player1.html":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`source: "/stream1.m3u8"`))
+		case "/player2.html":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`source: "/stream2.m3u8"`))
+		case "/player3.html":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`source: "/stream3.m3u8"`))
+		case "/stream1.m3u8":
+			// Stream 1 passes probe
+			w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("#EXTM3U\n#EXT-X-VERSION:3\nsegment.ts"))
+		case "/stream2.m3u8":
+			// Stream 2 probe times out or returns 500 error
+			w.WriteHeader(http.StatusInternalServerError)
+		case "/stream3.m3u8":
+			// Stream 3 probe returns invalid non-m3u8 content
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("<html>Cloudflare block</html>"))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer ts.Close()
+
+	s := NewService(WithHTTPClient(ts.Client()))
+
+	agendaHTML := fmt.Sprintf(`
+	<article class="match">
+		<h2>Barcelona vs Bayern Munich</h2>
+		<a href="%s/player1.html">Option 1 - HD</a>
+		<a href="%s/player2.html">Option 2 - FHD</a>
+		<a href="%s/player3.html">Option 3 - 720p</a>
+	</article>
+	`, ts.URL, ts.URL, ts.URL)
+
+	events, err := ParseAgendaHTML(agendaHTML, ts.URL)
+	if err != nil {
+		t.Fatalf("ParseAgendaHTML failed: %v", err)
+	}
+	s.cachedAgenda = events
+	s.lastFetch = time.Now()
+
+	match := model.Match{
+		Title: "Barcelona vs Bayern Munich",
+		HomeTeam: model.Competitor{
+			DisplayName: "FC Barcelona",
+		},
+		AwayTeam: model.Competitor{
+			DisplayName: "Bayern Munich",
+		},
+	}
+
+	streams, err := s.ResolveMatchStreams(context.Background(), match)
+	if err != nil {
+		t.Fatalf("ResolveMatchStreams failed: %v", err)
+	}
+
+	// ALL 3 streams must be preserved despite probe failures on stream 2 and stream 3!
+	if len(streams) != 3 {
+		t.Fatalf("expected all 3 streams preserved, got %d", len(streams))
+	}
+
+	// Stream 1: Probe succeeded -> Alive = true
+	if streams[0].ChannelName != "Option 1 - HD" || !streams[0].Alive {
+		t.Errorf("stream 0 should be Alive=true, got name=%s alive=%v", streams[0].ChannelName, streams[0].Alive)
+	}
+
+	// Stream 2: Probe failed with 500 -> Alive = false, BUT NOT DROPPED!
+	if streams[1].ChannelName != "Option 2 - FHD" || streams[1].Alive {
+		t.Errorf("stream 1 should be preserved with Alive=false, got name=%s alive=%v", streams[1].ChannelName, streams[1].Alive)
+	}
+	if streams[1].StreamURL == "" {
+		t.Errorf("stream 1 StreamURL must not be empty")
+	}
+
+	// Stream 3: Probe failed with HTML -> Alive = false, BUT NOT DROPPED!
+	if streams[2].ChannelName != "Option 3 - 720p" || streams[2].Alive {
+		t.Errorf("stream 2 should be preserved with Alive=false, got name=%s alive=%v", streams[2].ChannelName, streams[2].Alive)
+	}
+	if streams[2].StreamURL == "" {
+		t.Errorf("stream 2 StreamURL must not be empty")
 	}
 }

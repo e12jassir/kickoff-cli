@@ -1227,14 +1227,55 @@ func (c *Catalog) saveDiskWebCache() {
 	_ = fsutil.AtomicWriteFile(c.webStreamsDiskPath(), data, 0o644)
 }
 
+var (
+	reWebOption = regexp.MustCompile(`(?i)\b(?:opc(?:i[oó]n)?|op|option)\s*(\d+)`)
+	reWebMovil  = regexp.MustCompile(`(?i)\bm[oó]vil\b`)
+	reCalidad   = regexp.MustCompile(`(?i)\s*calidad\s*`)
+)
+
 func formatWebChannelName(raw string) string {
 	name := strings.TrimSpace(raw)
 	if name == "" {
-		name = "Stream"
+		return "[Web] Stream HD"
 	}
 	if strings.HasPrefix(name, "[Web]") {
-		return name
+		if strings.Contains(name, "(Opc ") || strings.Contains(name, "(Móvil)") {
+			return name
+		}
+		name = strings.TrimSpace(strings.TrimPrefix(name, "[Web]"))
 	}
+
+	// Handle channel brand and option separated by pipe '|' or dash '-'
+	if strings.Contains(name, "|") {
+		parts := strings.SplitN(name, "|", 2)
+		brand := strings.TrimSpace(parts[0])
+		opt := strings.TrimSpace(parts[1])
+
+		if m := reWebOption.FindStringSubmatch(opt); len(m) > 1 {
+			return fmt.Sprintf("[Web] %s (Opc %s)", brand, m[1])
+		}
+		if reWebMovil.MatchString(opt) {
+			return fmt.Sprintf("[Web] %s (Móvil)", brand)
+		}
+		if opt != "" {
+			return fmt.Sprintf("[Web] %s (%s)", brand, opt)
+		}
+		name = brand
+	} else if m := reWebOption.FindStringSubmatch(name); len(m) > 1 {
+		idx := strings.Index(strings.ToLower(name), strings.ToLower(m[0]))
+		brand := strings.TrimSpace(name[:idx])
+		brand = strings.TrimRight(brand, " -|(")
+		if brand != "" {
+			return fmt.Sprintf("[Web] %s (Opc %s)", brand, m[1])
+		}
+	}
+
+	// Remove redundant "Calidad" wording (e.g. "Win Sports+ Calidad 720p" -> "Win Sports+ 720p")
+	if strings.Contains(strings.ToLower(name), "calidad") {
+		name = reCalidad.ReplaceAllString(name, " ")
+		name = strings.Join(strings.Fields(name), " ")
+	}
+
 	upper := strings.ToUpper(name)
 	if !strings.Contains(upper, "HD") && !strings.Contains(upper, "4K") && !strings.Contains(upper, "720P") && !strings.Contains(upper, "1080P") {
 		return fmt.Sprintf("[Web] %s HD", name)

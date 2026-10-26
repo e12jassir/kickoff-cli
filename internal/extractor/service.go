@@ -29,21 +29,25 @@ const (
 
 var (
 	// Regex patterns for agenda parsing
-	reLiTag   = regexp.MustCompile(`(?si)<li\b[^>]*>(.*?)</li>`)
-	reTrTag   = regexp.MustCompile(`(?si)<tr\b[^>]*>(.*?)</tr>`)
-	reDivTag  = regexp.MustCompile(`(?si)<div\b[^>]*class=["'][^"']*(?:partido|event|match)[^"']*["'][^>]*>(.*?)</div>`)
-	reLinkTag = regexp.MustCompile(`(?si)<a\b[^>]*?href=["']([^"']+)["'][^>]*>(.*?)</a>`)
-	reAnyTag  = regexp.MustCompile(`(?s)<[^>]*>`)
-	reTimeStr = regexp.MustCompile(`\b([01]?\d|2[0-3]):([0-5]\d)\b`)
+	reArticleTag = regexp.MustCompile(`(?si)<article\b[^>]*>(.*?)</article>`)
+	reLiTag      = regexp.MustCompile(`(?si)<li\b[^>]*>(.*?)</li>`)
+	reTrTag      = regexp.MustCompile(`(?si)<tr\b[^>]*>(.*?)</tr>`)
+	reDivTag     = regexp.MustCompile(`(?si)<div\b[^>]*class=["'][^"']*(?:partido|event|match)[^"']*["'][^>]*>(.*?)</div>`)
+	reTableTag   = regexp.MustCompile(`(?si)<table\b[^>]*class=["'][^"']*(?:partido|event|match)[^"']*["'][^>]*>(.*?)</table>`)
+	reLinkTag    = regexp.MustCompile(`(?si)<a\b[^>]*?href=["']([^"']+)["'][^>]*>(.*?)</a>`)
+	reAnyTag     = regexp.MustCompile(`(?s)<[^>]*>`)
+	reTimeStr    = regexp.MustCompile(`\b([01]?\d|2[0-3]):([0-5]\d)\b`)
 )
 
 // Verified alive 2026-10-20: agenda18 (structured JSON, richest UCL
-// coverage incl. Disney/ESPN per-signal embeds), pelotalibretv and
+// coverage incl. Disney/ESPN per-signal embeds), rusticotvplus, pelotalibretv and
 // futbol-librehd. librefutboltv.com now 302s to a survey-scam redirect and
 // futbollibre.lol hangs, so both were removed: they only burned up to 8s
 // of connect timeout each before the working fallback answered.
 var DefaultKnownDomains = []string{
 	"https://agenda18.com/agenda.json",
+	"https://rusticotvplus.org/agenda.php",
+	"https://rusticotvplus.org",
 	"https://pelotalibretv.net",
 	"https://pelotalive.com",
 	"https://pelotalibre.cc",
@@ -265,6 +269,9 @@ func ParseAgendaHTML(rawHTML, baseDomain string) ([]ExtractedEvent, error) {
 	now := time.Now().In(loc)
 
 	var itemContents []string
+	for _, m := range reArticleTag.FindAllStringSubmatch(rawHTML, -1) {
+		itemContents = append(itemContents, m[1])
+	}
 	for _, m := range reLiTag.FindAllStringSubmatch(rawHTML, -1) {
 		itemContents = append(itemContents, m[1])
 	}
@@ -272,6 +279,9 @@ func ParseAgendaHTML(rawHTML, baseDomain string) ([]ExtractedEvent, error) {
 		itemContents = append(itemContents, m[1])
 	}
 	for _, m := range reDivTag.FindAllStringSubmatch(rawHTML, -1) {
+		itemContents = append(itemContents, m[1])
+	}
+	for _, m := range reTableTag.FindAllStringSubmatch(rawHTML, -1) {
 		itemContents = append(itemContents, m[1])
 	}
 
@@ -286,7 +296,19 @@ func ParseAgendaHTML(rawHTML, baseDomain string) ([]ExtractedEvent, error) {
 			}
 			home, away := splitTeams(text)
 			if home != "" && away != "" {
-				fullURL := resolveURL(href, baseDomain)
+				playerURL := ""
+				if idx := strings.Index(href, "r="); idx != -1 {
+					rVal := href[idx+2:]
+					if endIdx := strings.Index(rVal, "&"); endIdx != -1 {
+						rVal = rVal[:endIdx]
+					}
+					if decoded := decodeBase64URL(rVal); decoded != "" {
+						playerURL = decoded
+					}
+				}
+				if playerURL == "" {
+					playerURL = resolveURL(href, baseDomain)
+				}
 				events = append(events, ExtractedEvent{
 					HomeTeam:     home,
 					AwayTeam:     away,
@@ -296,7 +318,7 @@ func ParseAgendaHTML(rawHTML, baseDomain string) ([]ExtractedEvent, error) {
 					Streams: []ExtractedStream{
 						{
 							ChannelName: "Direct",
-							PlayerURL:   fullURL,
+							PlayerURL:   playerURL,
 							Resolution:  "1080p",
 						},
 					},
@@ -305,6 +327,8 @@ func ParseAgendaHTML(rawHTML, baseDomain string) ([]ExtractedEvent, error) {
 		}
 		return events, nil
 	}
+
+	eventIndices := make(map[string]int)
 
 	for _, blockHTML := range itemContents {
 		plainText := cleanHTMLText(blockHTML)
@@ -351,11 +375,34 @@ func ParseAgendaHTML(rawHTML, baseDomain string) ([]ExtractedEvent, error) {
 			if linkText == "" {
 				linkText = "Stream"
 			}
-			fullURL := resolveURL(href, baseDomain)
+
+			playerURL := ""
+			// Support /embed/eventos.html?r=... or r= parameter in links
+			if idx := strings.Index(href, "r="); idx != -1 {
+				rVal := href[idx+2:]
+				if endIdx := strings.Index(rVal, "&"); endIdx != -1 {
+					rVal = rVal[:endIdx]
+				}
+				if decoded := decodeBase64URL(rVal); decoded != "" {
+					playerURL = decoded
+				}
+			}
+			if playerURL == "" {
+				playerURL = resolveURL(href, baseDomain)
+			}
+
+			res := "1080p"
+			lowerText := strings.ToLower(linkText)
+			if strings.Contains(lowerText, "720p") {
+				res = "720p"
+			} else if strings.Contains(lowerText, "4k") || strings.Contains(lowerText, "uhd") {
+				res = "4K"
+			}
+
 			streams = append(streams, ExtractedStream{
 				ChannelName: linkText,
-				PlayerURL:   fullURL,
-				Resolution:  "1080p",
+				PlayerURL:   playerURL,
+				Resolution:  res,
 			})
 		}
 
@@ -366,6 +413,29 @@ func ParseAgendaHTML(rawHTML, baseDomain string) ([]ExtractedEvent, error) {
 			}
 		}
 
+		eventKey := strings.ToLower(home) + "|" + strings.ToLower(away)
+		if existingIdx, exists := eventIndices[eventKey]; exists {
+			// Merge streams, avoiding duplicates
+			for _, st := range streams {
+				alreadyHas := false
+				for _, cur := range events[existingIdx].Streams {
+					if cur.PlayerURL == st.PlayerURL && cur.ChannelName == st.ChannelName {
+						alreadyHas = true
+						break
+					}
+				}
+				if !alreadyHas {
+					events[existingIdx].Streams = append(events[existingIdx].Streams, st)
+				}
+			}
+			if events[existingIdx].TimeStr == "" && timeStr != "" {
+				events[existingIdx].TimeStr = timeStr
+				events[existingIdx].StartTime = startTime
+			}
+			continue
+		}
+
+		eventIndices[eventKey] = len(events)
 		events = append(events, ExtractedEvent{
 			HomeTeam:     home,
 			AwayTeam:     away,
@@ -415,9 +485,13 @@ func splitTeams(raw string) (string, string) {
 	return "", ""
 }
 
+var reLeadingTime = regexp.MustCompile(`^\s*(?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?\s*`)
+
 func cleanTeamName(name string) string {
+	name = reLeadingTime.ReplaceAllString(name, "")
 	if idx := strings.Index(name, ":"); idx != -1 {
 		name = strings.TrimSpace(name[idx+1:])
+		name = reLeadingTime.ReplaceAllString(name, "")
 	}
 	idx := strings.Index(name, "(")
 	if idx != -1 {
@@ -631,13 +705,21 @@ func (s *Service) ResolveMatchStreams(ctx context.Context, match model.Match) ([
 				}
 			}
 
-			if !target.Alive {
-				if !s.ProbeStream(resolveCtx, &target) || !target.Alive {
-					return
+			if target.StreamURL != "" {
+				// ELIMINATE THE DESTRUCTIVE PROBE DISCARD:
+				// Never discard a stream just because ProbeStream fails or times out.
+				// If target.StreamURL is resolved, keep it.
+				// If ProbeStream succeeds, set target.Alive = true.
+				// If it fails or times out, keep target.Alive = false, but DO NOT DROP THE STREAM.
+				if !target.Alive {
+					if s.ProbeStream(resolveCtx, &target) {
+						target.Alive = true
+					} else {
+						target.Alive = false
+					}
 				}
+				results[idx] = indexedStream{idx: idx, stream: target, ok: true}
 			}
-
-			results[idx] = indexedStream{idx: idx, stream: target, ok: true}
 		}(i, st)
 	}
 

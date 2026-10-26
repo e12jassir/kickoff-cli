@@ -1917,3 +1917,105 @@ func TestBuildChannelsForTarget_BySlug(t *testing.T) {
 		})
 	}
 }
+
+func TestFormatWebChannelName(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"Win Sports + | opc3", "[Web] Win Sports + (Opc 3)"},
+		{"Win Sports+ | OP 2 Calidad HD", "[Web] Win Sports+ (Opc 2)"},
+		{"Win Sports + | Movil", "[Web] Win Sports + (Móvil)"},
+		{"Win Sports + | Opcion 1", "[Web] Win Sports + (Opc 1)"},
+		{"Win Sports+ Calidad 720p", "[Web] Win Sports+ 720p"},
+		{"ESPN HD", "[Web] ESPN HD"},
+		{"DSports", "[Web] DSports HD"},
+		{"[Web] DSports HD", "[Web] DSports HD"},
+		{"[Web] Win Sports + (Opc 2)", "[Web] Win Sports + (Opc 2)"},
+		{"", "[Web] Stream HD"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := formatWebChannelName(tt.input)
+			if got != tt.want {
+				t.Errorf("formatWebChannelName(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCatalog_ResolveWebChannels_MultiStreamAndSanitizationResilience(t *testing.T) {
+	match := model.Match{
+		ID:        "test-match-123",
+		Title:     "Junior vs Millonarios",
+		LeagueKey: "colombia.1",
+		HomeTeam:  model.Competitor{DisplayName: "Junior"},
+		AwayTeam:  model.Competitor{DisplayName: "Millonarios"},
+	}
+
+	mock := &mockExtractor{
+		resolveFunc: func(ctx context.Context, m model.Match) ([]extractor.ExtractedStream, error) {
+			return []extractor.ExtractedStream{
+				{
+					ChannelName: "Win Sports + | opc1",
+					StreamURL:   "https://cdn.example.com/hls/live1.m3u8",
+					Resolution:  "1080p",
+					Alive:       true, // probe succeeded
+				},
+				{
+					ChannelName: "Win Sports + | opc2",
+					StreamURL:   "invalid scheme://not a url", // invalid URL: should be skipped during sanitization
+					Resolution:  "1080p",
+					Alive:       false,
+				},
+				{
+					ChannelName: "Win Sports + | opc3",
+					StreamURL:   "https://cdn.example.com/hls/live3.m3u8",
+					Resolution:  "720p",
+					Alive:       false, // probe failed or timed out: MUST STILL BE PRESERVED!
+				},
+				{
+					ChannelName: "Win Sports + | Movil",
+					StreamURL:   "https://cdn.example.com/hls/live_movil.m3u8",
+					Resolution:  "720p",
+					Alive:       false, // probe failed or timed out: MUST STILL BE PRESERVED!
+				},
+			}, nil
+		},
+	}
+
+	cat := New(
+		WithExtractor(mock),
+		WithCacheDir(t.TempDir()),
+	)
+
+	channels := cat.ResolveWebChannels(context.Background(), match)
+
+	// Stream 2 was invalid URL, but Streams 1, 3, and 4 must all be preserved!
+	if len(channels) != 3 {
+		t.Fatalf("expected 3 valid channels preserved, got %d: %+v", len(channels), channels)
+	}
+
+	// Verify cleanly formatted distinct names
+	if channels[0].DisplayName != "[Web] Win Sports + (Opc 1)" {
+		t.Errorf("expected channel 0 name [Web] Win Sports + (Opc 1), got %s", channels[0].DisplayName)
+	}
+	if channels[0].URL != "https://cdn.example.com/hls/live1.m3u8" {
+		t.Errorf("unexpected channel 0 URL: %s", channels[0].URL)
+	}
+
+	if channels[1].DisplayName != "[Web] Win Sports + (Opc 3)" {
+		t.Errorf("expected channel 1 name [Web] Win Sports + (Opc 3), got %s", channels[1].DisplayName)
+	}
+	if channels[1].URL != "https://cdn.example.com/hls/live3.m3u8" {
+		t.Errorf("unexpected channel 1 URL: %s", channels[1].URL)
+	}
+
+	if channels[2].DisplayName != "[Web] Win Sports + (Móvil)" {
+		t.Errorf("expected channel 2 name [Web] Win Sports + (Móvil), got %s", channels[2].DisplayName)
+	}
+	if channels[2].URL != "https://cdn.example.com/hls/live_movil.m3u8" {
+		t.Errorf("unexpected channel 2 URL: %s", channels[2].URL)
+	}
+}
