@@ -1,9 +1,16 @@
 package setup
 
 import (
+	"archive/zip"
+	"bytes"
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/e12jassir/kickoff-cli/internal/i18n"
@@ -480,5 +487,280 @@ func TestSetup_LanguagePersistence(t *testing.T) {
 	freshModel := NewModel("v0.2.4")
 	if freshModel.lang != i18n.EN {
 		t.Errorf("expected fresh NewModel to load persisted language EN, got %v", freshModel.lang)
+	}
+}
+
+func TestCheckNetworkEndpoints_BothOK(t *testing.T) {
+	tsESPN := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"events":[]}`))
+	}))
+	defer tsESPN.Close()
+
+	tsGH := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer tsGH.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	passed, msg := checkNetworkEndpoints(ctx, nil, tsESPN.URL, tsGH.URL)
+	if !passed {
+		t.Fatalf("expected passed to be true, got false with message: %s", msg)
+	}
+	expectedMsg := "Connected (ESPN & GitHub OK)"
+	if msg != expectedMsg {
+		t.Fatalf("expected message %q, got %q", expectedMsg, msg)
+	}
+}
+
+func TestCheckNetworkEndpoints_ESPNOK_GitHubFails(t *testing.T) {
+	tsESPN := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer tsESPN.Close()
+
+	tsGH := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer tsGH.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	passed, msg := checkNetworkEndpoints(ctx, nil, tsESPN.URL, tsGH.URL)
+	if passed {
+		t.Fatalf("expected passed to be false, got true with message: %s", msg)
+	}
+	expectedMsg := "Partial connectivity (ESPN OK, GitHub unreachable)"
+	if msg != expectedMsg {
+		t.Fatalf("expected message %q, got %q", expectedMsg, msg)
+	}
+}
+
+func TestCheckNetworkEndpoints_GitHubOK_ESPNFails(t *testing.T) {
+	tsESPN := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer tsESPN.Close()
+
+	tsGH := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer tsGH.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	passed, msg := checkNetworkEndpoints(ctx, nil, tsESPN.URL, tsGH.URL)
+	if passed {
+		t.Fatalf("expected passed to be false, got true with message: %s", msg)
+	}
+	expectedMsg := "Partial connectivity (GitHub OK, ESPN unreachable)"
+	if msg != expectedMsg {
+		t.Fatalf("expected message %q, got %q", expectedMsg, msg)
+	}
+}
+
+func TestCheckNetworkEndpoints_BothFail(t *testing.T) {
+	tsESPN := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer tsESPN.Close()
+
+	tsGH := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer tsGH.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	passed, msg := checkNetworkEndpoints(ctx, nil, tsESPN.URL, tsGH.URL)
+	if passed {
+		t.Fatalf("expected passed to be false, got true with message: %s", msg)
+	}
+	expectedMsg := "No internet connection (ESPN & GitHub unreachable)"
+	if msg != expectedMsg {
+		t.Fatalf("expected message %q, got %q", expectedMsg, msg)
+	}
+}
+
+func TestCheckNetworkEndpoints_CanceledContext(t *testing.T) {
+	tsESPN := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer tsESPN.Close()
+
+	tsGH := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer tsGH.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel context immediately before calling
+
+	passed, msg := checkNetworkEndpoints(ctx, nil, tsESPN.URL, tsGH.URL)
+	if passed {
+		t.Fatalf("expected canceled context check to fail, got passed=true")
+	}
+	expectedMsg := "No internet connection (ESPN & GitHub unreachable)"
+	if msg != expectedMsg {
+		t.Fatalf("expected message %q, got %q", expectedMsg, msg)
+	}
+}
+
+func TestCheckNetworkEndpoints_GitHubRateLimit(t *testing.T) {
+	tsESPN := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer tsESPN.Close()
+
+	tsGH := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-RateLimit-Remaining", "0")
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer tsGH.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	passed, msg := checkNetworkEndpoints(ctx, nil, tsESPN.URL, tsGH.URL)
+	if !passed {
+		t.Fatalf("expected GitHub rate-limited (403 with X-RateLimit-Remaining: 0) to pass, got %s", msg)
+	}
+}
+
+func TestCheckNetworkConnectivity_Real(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	passed, msg := checkNetworkConnectivity(ctx)
+	if passed {
+		if msg != "Connected (ESPN & GitHub OK)" {
+			t.Errorf("unexpected message on pass: %s", msg)
+		}
+	} else {
+		validFailures := map[string]bool{
+			"Partial connectivity (ESPN OK, GitHub unreachable)": true,
+			"Partial connectivity (GitHub OK, ESPN unreachable)": true,
+			"No internet connection (ESPN & GitHub unreachable)":  true,
+		}
+		if !validFailures[msg] {
+			t.Errorf("unexpected message on failure: %s", msg)
+		}
+	}
+}
+
+func TestDiagnostics_NetworkCheckPresent(t *testing.T) {
+	checks := runDiagnostics("", "")
+	var found *SystemCheck
+	for i := range checks {
+		if checks[i].Name == "network" {
+			found = &checks[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("expected 'network' check in runDiagnostics, but not found")
+	}
+	if found.Message == "" {
+		t.Errorf("expected non-empty message for network check")
+	}
+}
+
+func TestDownloadAndExtractPortableMpvWindows(t *testing.T) {
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	w, err := zw.Create("mpv.exe")
+	if err != nil {
+		t.Fatalf("failed to create zip entry: %v", err)
+	}
+	expectedContent := []byte("fake-mpv-windows-binary")
+	if _, err := w.Write(expectedContent); err != nil {
+		t.Fatalf("failed to write zip content: %v", err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("failed to close zip writer: %v", err)
+	}
+	zipBytes := buf.Bytes()
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/zip")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(zipBytes)
+	}))
+	defer ts.Close()
+
+	origURL := mpvWindowsDownloadURL
+	defer func() { mpvWindowsDownloadURL = origURL }()
+	mpvWindowsDownloadURL = ts.URL
+
+	tempDir := t.TempDir()
+	if err := downloadAndExtractPortableMpvWindows(tempDir); err != nil {
+		t.Fatalf("downloadAndExtractPortableMpvWindows failed: %v", err)
+	}
+
+	extractedPath := filepath.Join(tempDir, "mpv.exe")
+	got, err := os.ReadFile(extractedPath)
+	if err != nil {
+		t.Fatalf("failed to read extracted mpv.exe: %v", err)
+	}
+	if !bytes.Equal(got, expectedContent) {
+		t.Errorf("expected extracted content %q, got %q", expectedContent, got)
+	}
+}
+
+func TestDownloadAndExtractPortableMpvWindows_Errors(t *testing.T) {
+	origURL := mpvWindowsDownloadURL
+	defer func() { mpvWindowsDownloadURL = origURL }()
+
+	// 1. HTTP 404 Not Found
+	ts404 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer ts404.Close()
+
+	mpvWindowsDownloadURL = ts404.URL
+	err := downloadAndExtractPortableMpvWindows(t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "HTTP 404") {
+		t.Errorf("expected HTTP 404 error, got %v", err)
+	}
+
+	// 2. Archive without mpv.exe
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	w, err := zw.Create("other.txt")
+	if err != nil {
+		t.Fatalf("failed to create zip entry: %v", err)
+	}
+	_, _ = w.Write([]byte("not mpv"))
+	_ = zw.Close()
+
+	tsNoMpv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(buf.Bytes())
+	}))
+	defer tsNoMpv.Close()
+
+	mpvWindowsDownloadURL = tsNoMpv.URL
+	err = downloadAndExtractPortableMpvWindows(t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "mpv.exe not found in archive") {
+		t.Errorf("expected 'mpv.exe not found in archive' error, got %v", err)
+	}
+
+	// 3. Corrupted zip data
+	tsCorrupt := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("not a valid zip file at all"))
+	}))
+	defer tsCorrupt.Close()
+
+	mpvWindowsDownloadURL = tsCorrupt.URL
+	err = downloadAndExtractPortableMpvWindows(t.TempDir())
+	if err == nil {
+		t.Errorf("expected error for corrupted zip data, got nil")
 	}
 }

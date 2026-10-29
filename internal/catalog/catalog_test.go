@@ -898,17 +898,30 @@ http://example.com/remote/win.m3u8
 
 	cat := newOfflineTestCatalog(WithConfigFile(cfgPath))
 
-	cat.mu.RLock()
-	defer cat.mu.RUnlock()
+	var loaded []M3UChannel
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		cat.mu.RLock()
+		if len(cat.m3uChannels) == 2 {
+			loaded = append([]M3UChannel(nil), cat.m3uChannels...)
+			cat.mu.RUnlock()
+			break
+		}
+		cat.mu.RUnlock()
+		time.Sleep(10 * time.Millisecond)
+	}
 
-	if len(cat.m3uChannels) != 2 {
-		t.Fatalf("expected 2 remote channels loaded from playlist_url, got %d", len(cat.m3uChannels))
+	if len(loaded) != 2 {
+		cat.mu.RLock()
+		n := len(cat.m3uChannels)
+		cat.mu.RUnlock()
+		t.Fatalf("expected 2 remote channels loaded from playlist_url within 2s, got %d", n)
 	}
-	if cat.m3uChannels[0].Name != "Remote ESPN 1 HD" {
-		t.Errorf("expected first channel name 'Remote ESPN 1 HD', got %q", cat.m3uChannels[0].Name)
+	if loaded[0].Name != "Remote ESPN 1 HD" {
+		t.Errorf("expected first channel name 'Remote ESPN 1 HD', got %q", loaded[0].Name)
 	}
-	if cat.m3uChannels[1].Name != "Remote Win Sports HD" {
-		t.Errorf("expected second channel name 'Remote Win Sports HD', got %q", cat.m3uChannels[1].Name)
+	if loaded[1].Name != "Remote Win Sports HD" {
+		t.Errorf("expected second channel name 'Remote Win Sports HD', got %q", loaded[1].Name)
 	}
 }
 
@@ -2018,4 +2031,326 @@ func TestCatalog_ResolveWebChannels_MultiStreamAndSanitizationResilience(t *test
 	if channels[2].URL != "https://cdn.example.com/hls/live_movil.m3u8" {
 		t.Errorf("unexpected channel 2 URL: %s", channels[2].URL)
 	}
+}
+
+func TestCatalog_RemotePlaylistBackground_NonBlockingAndThreadSafe(t *testing.T) {
+	mockM3U := `#EXTM3U
+#EXTINF:-1 tvg-id="espn1",ESPN 1 HD
+http://example.com/espn1.m3u8
+#EXTINF:-1 tvg-id="espn2",ESPN 2 HD
+http://example.com/espn2.m3u8
+`
+	requestReceived := make(chan struct{})
+	releaseResponse := make(chan struct{})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(requestReceived)
+		<-releaseResponse
+		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(mockM3U))
+	}))
+	defer ts.Close()
+
+	cfgPath := filepath.Join(t.TempDir(), "channels.json")
+	cfgContent := fmt.Sprintf(`{"playlist_url": "%s"}`, ts.URL+"/playlist.m3u")
+	if err := os.WriteFile(cfgPath, []byte(cfgContent), 0o600); err != nil {
+		t.Fatalf("failed to write test config: %v", err)
+	}
+
+	start := time.Now()
+	cat := newOfflineTestCatalog(WithConfigFile(cfgPath))
+	startupDuration := time.Since(start)
+
+	if startupDuration > 200*time.Millisecond {
+		t.Errorf("expected catalog.New to be non-blocking, took %v", startupDuration)
+	}
+
+	select {
+	case <-requestReceived:
+	case <-time.After(2 * time.Second):
+		t.Fatal("background fetch did not initiate HTTP request within 2s")
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = cat.HasConfiguredStreams()
+			_, _ = cat.StreamEndpoint("espn1")
+			_ = cat.m3uSnapshot()
+		}()
+	}
+	wg.Wait()
+
+	close(releaseResponse)
+
+	deadline := time.Now().Add(2 * time.Second)
+	var loadedCount int
+	for time.Now().Before(deadline) {
+		cat.mu.RLock()
+		loadedCount = len(cat.m3uChannels)
+		cat.mu.RUnlock()
+		if loadedCount == 2 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if loadedCount != 2 {
+		t.Fatalf("expected 2 channels loaded in background, got %d", loadedCount)
+	}
+	if !cat.HasConfiguredStreams() {
+		t.Errorf("expected HasConfiguredStreams to be true after remote playlist loads")
+	}
+}
+
+func TestCatalog_FilterAndDeduplicate_CapacityAndWebPreservation(t *testing.T) {
+	cat := newOfflineTestCatalog()
+
+	t.Run("caps official channels at 16 and marks first as recommended", func(t *testing.T) {
+		var candidates []model.Channel
+		for i := 1; i <= 20; i++ {
+			candidates = append(candidates, model.Channel{
+				Name:        fmt.Sprintf("Official Channel %d", i),
+				DisplayName: fmt.Sprintf("Official Channel %d", i),
+				URL:         fmt.Sprintf("http://stream.example.com/ch%d.m3u8", i),
+				Resolution:  "1080p",
+			})
+		}
+
+		res := cat.filterAndDeduplicate(candidates)
+		if len(res) != 16 {
+			t.Fatalf("expected 16 channels, got %d", len(res))
+		}
+		if !res[0].Recommended {
+			t.Errorf("expected first channel to be recommended")
+		}
+		for i := 1; i < len(res); i++ {
+			if res[i].Recommended {
+				t.Errorf("expected channel %d to not be recommended", i)
+			}
+		}
+		if res[0].Name != "Official Channel 1" || res[15].Name != "Official Channel 16" {
+			t.Errorf("unexpected channel bounds: first=%s, last=%s", res[0].Name, res[15].Name)
+		}
+	})
+
+	t.Run("preserves up to 4 web streams when official streams are numerous", func(t *testing.T) {
+		var candidates []model.Channel
+		for i := 1; i <= 20; i++ {
+			candidates = append(candidates, model.Channel{
+				Name:        fmt.Sprintf("Official Channel %d", i),
+				DisplayName: fmt.Sprintf("Official Channel %d", i),
+				URL:         fmt.Sprintf("http://stream.example.com/official_%d.m3u8", i),
+				Resolution:  "1080p",
+			})
+		}
+		for i := 1; i <= 6; i++ {
+			candidates = append(candidates, model.Channel{
+				Name:        fmt.Sprintf("[Web] Stream %d", i),
+				DisplayName: fmt.Sprintf("[Web] Stream %d", i),
+				URL:         fmt.Sprintf("http://stream.example.com/web_%d.m3u8", i),
+				Resolution:  "1080p",
+			})
+		}
+
+		res := cat.filterAndDeduplicate(candidates)
+		if len(res) != 16 {
+			t.Fatalf("expected total 16 channels, got %d", len(res))
+		}
+
+		var officialCount, webCount int
+		for _, ch := range res {
+			if isWebChannel(ch) {
+				webCount++
+			} else {
+				officialCount++
+			}
+		}
+
+		if webCount != 4 {
+			t.Errorf("expected exactly 4 web channels preserved, got %d", webCount)
+		}
+		if officialCount != 12 {
+			t.Errorf("expected 12 official channels preserved, got %d", officialCount)
+		}
+
+		for i := 0; i < 12; i++ {
+			if isWebChannel(res[i]) {
+				t.Errorf("expected slot %d to be official channel, got %s", i, res[i].Name)
+			}
+		}
+		for i := 12; i < 16; i++ {
+			if !isWebChannel(res[i]) {
+				t.Errorf("expected slot %d to be web channel, got %s", i, res[i].Name)
+			}
+		}
+	})
+
+	t.Run("preserves all web streams when fewer than 4 are available", func(t *testing.T) {
+		var candidates []model.Channel
+		for i := 1; i <= 20; i++ {
+			candidates = append(candidates, model.Channel{
+				Name:        fmt.Sprintf("Official Channel %d", i),
+				DisplayName: fmt.Sprintf("Official Channel %d", i),
+				URL:         fmt.Sprintf("http://stream.example.com/official_%d.m3u8", i),
+				Resolution:  "1080p",
+			})
+		}
+		for i := 1; i <= 2; i++ {
+			candidates = append(candidates, model.Channel{
+				Name:        fmt.Sprintf("[Web] Stream %d", i),
+				DisplayName: fmt.Sprintf("[Web] Stream %d", i),
+				URL:         fmt.Sprintf("http://stream.example.com/web_%d.m3u8", i),
+				Resolution:  "1080p",
+			})
+		}
+
+		res := cat.filterAndDeduplicate(candidates)
+		if len(res) != 16 {
+			t.Fatalf("expected total 16 channels, got %d", len(res))
+		}
+
+		var webCount, officialCount int
+		for _, ch := range res {
+			if isWebChannel(ch) {
+				webCount++
+			} else {
+				officialCount++
+			}
+		}
+		if webCount != 2 {
+			t.Errorf("expected both 2 web channels preserved, got %d", webCount)
+		}
+		if officialCount != 14 {
+			t.Errorf("expected 14 official channels preserved, got %d", officialCount)
+		}
+	})
+
+	t.Run("does not starve official channels when web channels dominate", func(t *testing.T) {
+		var candidates []model.Channel
+		for i := 1; i <= 6; i++ {
+			candidates = append(candidates, model.Channel{
+				Name:        fmt.Sprintf("Official Channel %d", i),
+				DisplayName: fmt.Sprintf("Official Channel %d", i),
+				URL:         fmt.Sprintf("http://stream.example.com/official_%d.m3u8", i),
+				Resolution:  "1080p",
+			})
+		}
+		for i := 1; i <= 20; i++ {
+			candidates = append(candidates, model.Channel{
+				Name:        fmt.Sprintf("[Web] Stream %d", i),
+				DisplayName: fmt.Sprintf("[Web] Stream %d", i),
+				URL:         fmt.Sprintf("http://stream.example.com/web_%d.m3u8", i),
+				Resolution:  "1080p",
+			})
+		}
+
+		res := cat.filterAndDeduplicate(candidates)
+		if len(res) != 16 {
+			t.Fatalf("expected total 16 channels, got %d", len(res))
+		}
+
+		var webCount, officialCount int
+		for _, ch := range res {
+			if isWebChannel(ch) {
+				webCount++
+			} else {
+				officialCount++
+			}
+		}
+		if officialCount != 6 {
+			t.Errorf("expected all 6 official channels preserved, got %d", officialCount)
+		}
+		if webCount != 10 {
+			t.Errorf("expected 10 web channels to fill remaining slots, got %d", webCount)
+		}
+	})
+
+	t.Run("retains all channels when within 16 capacity", func(t *testing.T) {
+		var candidates []model.Channel
+		for i := 1; i <= 8; i++ {
+			candidates = append(candidates, model.Channel{
+				Name:        fmt.Sprintf("Official Channel %d", i),
+				DisplayName: fmt.Sprintf("Official Channel %d", i),
+				URL:         fmt.Sprintf("http://stream.example.com/official_%d.m3u8", i),
+				Resolution:  "1080p",
+			})
+		}
+		for i := 1; i <= 4; i++ {
+			candidates = append(candidates, model.Channel{
+				Name:        fmt.Sprintf("[Web] Stream %d", i),
+				DisplayName: fmt.Sprintf("[Web] Stream %d", i),
+				URL:         fmt.Sprintf("http://stream.example.com/web_%d.m3u8", i),
+				Resolution:  "1080p",
+			})
+		}
+
+		res := cat.filterAndDeduplicate(candidates)
+		if len(res) != 12 {
+			t.Fatalf("expected all 12 channels retained, got %d", len(res))
+		}
+	})
+
+	t.Run("prioritizes alive channels in both official and web sets", func(t *testing.T) {
+		probedCat := newOfflineTestCatalog()
+		probedCat.mu.Lock()
+		probedCat.streamAlive["http://stream.example.com/official_alive.m3u8"] = true
+		probedCat.streamAlive["http://stream.example.com/web_alive.m3u8"] = true
+		probedCat.mu.Unlock()
+
+		var candidates []model.Channel
+		for i := 1; i <= 15; i++ {
+			candidates = append(candidates, model.Channel{
+				Name:        fmt.Sprintf("Official %d", i),
+				DisplayName: fmt.Sprintf("Official %d", i),
+				URL:         fmt.Sprintf("http://stream.example.com/official_%d.m3u8", i),
+				Resolution:  "1080p",
+			})
+		}
+		candidates = append(candidates, model.Channel{
+			Name:        "Official Alive",
+			DisplayName: "Official Alive",
+			URL:         "http://stream.example.com/official_alive.m3u8",
+			Resolution:  "1080p",
+		})
+		for i := 1; i <= 5; i++ {
+			candidates = append(candidates, model.Channel{
+				Name:        fmt.Sprintf("[Web] Stream %d", i),
+				DisplayName: fmt.Sprintf("[Web] Stream %d", i),
+				URL:         fmt.Sprintf("http://stream.example.com/web_%d.m3u8", i),
+				Resolution:  "1080p",
+			})
+		}
+		candidates = append(candidates, model.Channel{
+			Name:        "[Web] Stream Alive",
+			DisplayName: "[Web] Stream Alive",
+			URL:         "http://stream.example.com/web_alive.m3u8",
+			Resolution:  "1080p",
+		})
+
+		res := probedCat.filterAndDeduplicate(candidates)
+		if len(res) != 16 {
+			t.Fatalf("expected 16 channels, got %d", len(res))
+		}
+
+		if res[0].Name != "Official Alive" || !res[0].Recommended {
+			t.Errorf("expected Official Alive to be first and recommended, got %s rec=%v", res[0].Name, res[0].Recommended)
+		}
+
+		foundWebAlive := false
+		for i, ch := range res {
+			if ch.Name == "[Web] Stream Alive" {
+				foundWebAlive = true
+				if i != 12 {
+					t.Errorf("expected Web Alive to be at index 12 (first web stream), got %d", i)
+				}
+				break
+			}
+		}
+		if !foundWebAlive {
+			t.Errorf("expected Web Alive to be preserved in final channels")
+		}
+	})
 }

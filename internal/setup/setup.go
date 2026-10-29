@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -367,10 +368,13 @@ func runDiagnostics(cfgPath, cacheDir string) []SystemCheck {
 	}
 
 	// 6. Network connectivity
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	netPassed, netMsg := checkNetworkConnectivity(ctx)
 	checks = append(checks, SystemCheck{
 		Name:    "network",
-		Passed:  true,
-		Message: "GitHub & ESPN endpoints verified",
+		Passed:  netPassed,
+		Message: netMsg,
 	})
 
 	return checks
@@ -425,6 +429,77 @@ func formatBytes(b int64) string {
 		return fmt.Sprintf("%.1f KB", float64(b)/1024)
 	}
 	return fmt.Sprintf("%.1f MB", float64(b)/(1024*1024))
+}
+
+const (
+	defaultESPNEndpoint   = "https://site.api.espn.com/apis/site/v2/sports/soccer/eng.1/scoreboard"
+	defaultGitHubEndpoint = "https://api.github.com"
+)
+
+func probeEndpoint(ctx context.Context, client *http.Client, url string) bool {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return false
+	}
+	req.Header.Set("User-Agent", "kickoff-setup")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = resp.Body.Close() }()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	if resp.StatusCode >= 200 && resp.StatusCode < 400 {
+		return true
+	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return true
+	}
+	if resp.StatusCode == http.StatusForbidden && resp.Header.Get("X-RateLimit-Remaining") == "0" {
+		return true
+	}
+	return false
+}
+
+func checkNetworkEndpoints(ctx context.Context, client *http.Client, espnURL, githubURL string) (bool, string) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if client == nil {
+		client = &http.Client{Timeout: 2 * time.Second}
+	}
+
+	var espnOK, githubOK bool
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		espnOK = probeEndpoint(ctx, client, espnURL)
+	}()
+
+	go func() {
+		defer wg.Done()
+		githubOK = probeEndpoint(ctx, client, githubURL)
+	}()
+
+	wg.Wait()
+
+	if espnOK && githubOK {
+		return true, "Connected (ESPN & GitHub OK)"
+	}
+	if !espnOK && !githubOK {
+		return false, "No internet connection (ESPN & GitHub unreachable)"
+	}
+	if espnOK && !githubOK {
+		return false, "Partial connectivity (ESPN OK, GitHub unreachable)"
+	}
+	return false, "Partial connectivity (GitHub OK, ESPN unreachable)"
+}
+
+func checkNetworkConnectivity(ctx context.Context) (bool, string) {
+	client := &http.Client{Timeout: 2 * time.Second}
+	return checkNetworkEndpoints(ctx, client, defaultESPNEndpoint, defaultGitHubEndpoint)
 }
 
 // Init initializes the Bubble Tea program.
@@ -847,11 +922,13 @@ func (m Model) runInstallStep(step int) tea.Cmd {
 	}
 }
 
+var mpvWindowsDownloadURL = "https://github.com/mpv-player/mpv/releases/download/v0.41.0/mpv-v0.41.0-x86_64-pc-windows-msvc.zip"
+
 func downloadAndExtractPortableMpvWindows(installDir string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	url := "https://github.com/mpv-player/mpv/releases/latest/download/mpv-v0.41.0-x86_64-pc-windows-msvc.zip"
+	url := mpvWindowsDownloadURL
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
@@ -869,7 +946,7 @@ func downloadAndExtractPortableMpvWindows(installDir string) error {
 		return fmt.Errorf("HTTP %d from mpv download", resp.StatusCode)
 	}
 
-	bodyBytes, err := io.ReadAll(resp.Body)
+	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, 100<<20))
 	if err != nil {
 		return err
 	}

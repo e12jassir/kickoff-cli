@@ -478,27 +478,44 @@ func (c *Catalog) loadExternalConfig() {
 		}
 	} else if ext.PlaylistURL != "" {
 		if cleanURL, err := SanitizeURL(ext.PlaylistURL); err == nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-			req, err := http.NewRequestWithContext(ctx, http.MethodGet, cleanURL, nil)
-			if err == nil {
-				req.Header.Set("User-Agent", "kickoff-cli")
-				client := &http.Client{Timeout: 10 * time.Second}
-				resp, err := client.Do(req)
-				if err == nil {
-					// Read-only HTTP body: a Close error cannot change the bytes already read.
-					defer func() { _ = resp.Body.Close() }()
-					if resp.StatusCode == http.StatusOK {
-						limitedReader := io.LimitReader(resp.Body, maxPlaylistReadSize)
-						if m3uList, err := ParseM3U(limitedReader); err == nil && len(m3uList) > 0 {
-							c.m3uChannels = append(c.m3uChannels, m3uList...)
-						}
-					}
-				}
-			}
+			go c.fetchRemotePlaylistBackground(cleanURL)
 		}
 	}
-	c.loadAdjacentPlaylists()
+	if ext.PlaylistURL == "" {
+		c.loadAdjacentPlaylists()
+	}
+}
+
+func (c *Catalog) fetchRemotePlaylistBackground(cleanURL string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, cleanURL, nil)
+	if err != nil {
+		return
+	}
+	req.Header.Set("User-Agent", "kickoff-cli")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return
+	}
+
+	limitedReader := io.LimitReader(resp.Body, maxPlaylistReadSize)
+	m3uList, err := ParseM3U(limitedReader)
+	if err != nil || len(m3uList) == 0 {
+		return
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.m3uChannels = append(c.m3uChannels, m3uList...)
 }
 
 func (c *Catalog) loadAdjacentPlaylists() {
@@ -1524,6 +1541,10 @@ func parrillaWindowOverlap(programStart, matchStart int) bool {
 	return false
 }
 
+func isWebChannel(ch model.Channel) bool {
+	return strings.Contains(ch.Name, "[Web]") || strings.Contains(ch.DisplayName, "[Web]")
+}
+
 func (c *Catalog) filterAndDeduplicate(candidates []model.Channel) []model.Channel {
 	if len(candidates) == 0 {
 		return nil
@@ -1561,8 +1582,36 @@ func (c *Catalog) filterAndDeduplicate(candidates []model.Channel) []model.Chann
 	if len(final) == 0 {
 		return nil
 	}
-	if len(final) > 8 {
-		final = final[:8]
+
+	const maxChannels = 16
+	const maxWebPreserved = 4
+
+	if len(final) > maxChannels {
+		var nonWeb, web []model.Channel
+		for _, ch := range final {
+			if isWebChannel(ch) {
+				web = append(web, ch)
+			} else {
+				nonWeb = append(nonWeb, ch)
+			}
+		}
+
+		reserveWeb := maxWebPreserved
+		if len(web) < reserveWeb {
+			reserveWeb = len(web)
+		}
+
+		maxNonWeb := maxChannels - reserveWeb
+		if len(nonWeb) > maxNonWeb {
+			nonWeb = nonWeb[:maxNonWeb]
+		}
+
+		remainingSlots := maxChannels - len(nonWeb)
+		if len(web) > remainingSlots {
+			web = web[:remainingSlots]
+		}
+
+		final = append(nonWeb, web...)
 	}
 
 	for i := range final {
