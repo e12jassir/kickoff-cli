@@ -246,7 +246,7 @@ type PlayRequest struct {
 	BitrateMode string  `json:"bitrateMode"`
 }
 
-// DefaultLeagues lists all 18 supported leagues grouped by category.
+// DefaultLeagues lists all 23 supported leagues grouped by category.
 var DefaultLeagues = []League{
 	{Key: "champions", Name: "UEFA Champions League", Code: "uefa.champions", Category: "Torneos Internacionales", CategoryID: "international"},
 	{Key: "europa", Name: "UEFA Europa League", Code: "uefa.europa", Category: "Torneos Internacionales", CategoryID: "international"},
@@ -259,13 +259,18 @@ var DefaultLeagues = []League{
 	{Key: "seriea", Name: "Serie A", Code: "ita.1", Category: "Ligas Europeas", CategoryID: "european"},
 	{Key: "bundesliga", Name: "Bundesliga", Code: "ger.1", Category: "Ligas Europeas", CategoryID: "european"},
 	{Key: "ligue1", Name: "Ligue 1", Code: "fra.1", Category: "Ligas Europeas", CategoryID: "european"},
+	{Key: "eredivisie", Name: "Eredivisie", Code: "ned.1", Category: "Ligas Europeas", CategoryID: "european"},
 	{Key: "copadelrey", Name: "Copa del Rey", Code: "esp.copa_del_rey", Category: "Copas Nacionales", CategoryID: "domestic_cups"},
 	{Key: "facup", Name: "English FA Cup", Code: "eng.fa", Category: "Copas Nacionales", CategoryID: "domestic_cups"},
+	{Key: "carabao", Name: "Carabao Cup", Code: "eng.league_cup", Category: "Copas Nacionales", CategoryID: "domestic_cups"},
+	{Key: "coppaitalia", Name: "Coppa Italia", Code: "ita.coppa_italia", Category: "Copas Nacionales", CategoryID: "domestic_cups"},
+	{Key: "copacolombia", Name: "Copa BetPlay", Code: "col.copa", Category: "Copas Nacionales", CategoryID: "domestic_cups"},
 	{Key: "colombia", Name: "Liga BetPlay", Code: "col.1", Category: "Ligas Sudamericanas", CategoryID: "south_american"},
 	{Key: "argentina", Name: "Liga Profesional", Code: "arg.1", Category: "Ligas Sudamericanas", CategoryID: "south_american"},
 	{Key: "brasil", Name: "Brasileirão", Code: "bra.1", Category: "Ligas Sudamericanas", CategoryID: "south_american"},
 	{Key: "ligamx", Name: "Liga MX", Code: "mex.1", Category: "Ligas de América", CategoryID: "americas"},
 	{Key: "mls", Name: "Major League Soccer", Code: "usa.1", Category: "Ligas de América", CategoryID: "americas"},
+	{Key: "saudi", Name: "Saudi Pro League", Code: "ksa.1", Category: "Otras Competiciones", CategoryID: "other"},
 }
 
 // MatchDetails aggregates on-demand statistics, lineups, and match metadata.

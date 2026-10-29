@@ -163,7 +163,7 @@ func prewarmMatchesCmd(catalog model.Resolver, matches []model.Match) tea.Cmd {
 
 func isTopLeague(key string) bool {
 	switch strings.ToLower(strings.TrimSpace(key)) {
-	case "uefa.champions", "champions", "eng.1", "premier", "esp.1", "laliga", "col.1", "colombia", "ita.1", "seriea", "ger.1", "bundesliga", "conmebol.libertadores", "libertadores":
+	case "uefa.champions", "champions", "eng.1", "premier", "esp.1", "laliga", "col.1", "colombia", "ita.1", "seriea", "ger.1", "bundesliga", "conmebol.libertadores", "libertadores", "eng.league_cup", "carabao":
 		return true
 	default:
 		return false

@@ -3218,7 +3218,7 @@ func TestRenderTabGoleadores_PlayerFallback(t *testing.T) {
 func TestModel_CategoriesKeyedByCategoryID(t *testing.T) {
 	m := NewModel(&mockClient{}, &mockCatalog{}, &mockPlayer{})
 
-	wantIDs := []string{"international", "national_teams", "european", "domestic_cups", "south_american", "americas"}
+	wantIDs := []string{"international", "national_teams", "european", "domestic_cups", "south_american", "americas", "other"}
 	if len(m.categories) != len(wantIDs) {
 		t.Fatalf("categories = %v, want %d IDs", m.categories, len(wantIDs))
 	}
@@ -3240,8 +3240,8 @@ func TestModel_CategoriesKeyedByCategoryID(t *testing.T) {
 	if got := len(m.categoryIndices["international"]); got != 5 {
 		t.Errorf("international holds %d leagues, want 5", got)
 	}
-	if got := m.categoryIndices["european"]; len(got) != 5 || got[0] != 6 {
-		t.Errorf("european indices = %v, want first index 6 and 5 leagues", got)
+	if got := m.categoryIndices["european"]; len(got) != 6 || got[0] != 6 {
+		t.Errorf("european indices = %v, want first index 6 and 6 leagues", got)
 	}
 
 	// Enter expands the selected category, keyed by CategoryID.

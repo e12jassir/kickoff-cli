@@ -862,20 +862,25 @@ func TestClient_ExpandedLeagues_LeagueCode(t *testing.T) {
 		"eliminatorias": "fifa.worldq.conmebol",
 		"copadelrey":    "esp.copa_del_rey",
 		"facup":         "eng.fa",
+		"carabao":       "eng.league_cup",
+		"coppaitalia":   "ita.coppa_italia",
+		"copacolombia":  "col.copa",
 		"premier":       "eng.1",
 		"laliga":        "esp.1",
 		"seriea":        "ita.1",
 		"bundesliga":    "ger.1",
 		"ligue1":        "fra.1",
+		"eredivisie":    "ned.1",
 		"colombia":      "col.1",
 		"argentina":     "arg.1",
 		"brasil":        "bra.1",
 		"ligamx":        "mex.1",
 		"mls":           "usa.1",
+		"saudi":         "ksa.1",
 	}
 
-	if len(model.DefaultLeagues) != 18 {
-		t.Fatalf("expected 18 default leagues, got %d", len(model.DefaultLeagues))
+	if len(model.DefaultLeagues) != 23 {
+		t.Fatalf("expected 23 default leagues, got %d", len(model.DefaultLeagues))
 	}
 
 	for key, expected := range expectedCodes {

@@ -561,6 +561,8 @@ func LeagueCode(leagueKey string) string {
 		return "ger.1"
 	case "ligue1":
 		return "fra.1"
+	case "eredivisie":
+		return "ned.1"
 	case "champions":
 		return "uefa.champions"
 	case "europa":
@@ -577,6 +579,12 @@ func LeagueCode(leagueKey string) string {
 		return "esp.copa_del_rey"
 	case "facup":
 		return "eng.fa"
+	case "carabao":
+		return "eng.league_cup"
+	case "coppaitalia":
+		return "ita.coppa_italia"
+	case "copacolombia":
+		return "col.copa"
 	case "argentina":
 		return "arg.1"
 	case "colombia":
@@ -587,6 +595,8 @@ func LeagueCode(leagueKey string) string {
 		return "mex.1"
 	case "mls":
 		return "usa.1"
+	case "saudi":
+		return "ksa.1"
 	default:
 		for _, l := range model.DefaultLeagues {
 			if strings.EqualFold(l.Key, leagueKey) || strings.EqualFold(l.Code, leagueKey) {

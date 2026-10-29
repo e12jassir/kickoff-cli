@@ -196,9 +196,11 @@ See [`docs/configuration.md`](docs/configuration.md) for the full schema.
 
 | | |
 | :-- | :-- |
-| 🌍 **International** | Champions League · Copa Libertadores |
-| 🇪🇺 **Europe** | Premier League · La Liga · Serie A · Bundesliga · Ligue 1 |
+| 🌍 **International** | Champions League · Europa League · Conference League · Copa Libertadores · Copa Sudamericana |
+| 🇪🇺 **Europe** | Premier League · La Liga · Serie A · Bundesliga · Ligue 1 · Eredivisie |
+| 👑 **Cups** | Copa del Rey · FA Cup · Carabao Cup · Coppa Italia · Copa BetPlay |
 | 🌎 **South America** | Liga BetPlay · Liga Profesional · Brasileirão |
+| 🌎 **Americas & Others** | Liga MX · Major League Soccer · Saudi Pro League |
 
 Missing your league? [Open an issue](https://github.com/e12jassir/kickoff-cli/issues). Custom playback sources and advanced options are in [`docs/configuration.md`](docs/configuration.md).
 

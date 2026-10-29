@@ -439,6 +439,28 @@ func (c *Catalog) LeagueName(key string) string {
 			return "Copa FA de Inglaterra"
 		}
 		return "English FA Cup"
+	case "carabao":
+		if c.lang == ES {
+			return "Copa de la Liga (Carabao)"
+		}
+		return "Carabao Cup"
+	case "coppaitalia":
+		if c.lang == ES {
+			return "Copa de Italia"
+		}
+		return "Coppa Italia"
+	case "copacolombia":
+		if c.lang == EN {
+			return "Copa Colombia (BetPlay)"
+		}
+		return "Copa BetPlay"
+	case "eredivisie":
+		return "Eredivisie"
+	case "saudi":
+		if c.lang == ES {
+			return "Liga Profesional Saudí"
+		}
+		return "Saudi Pro League"
 	default:
 		return ""
 	}

@@ -191,13 +191,18 @@ func TestCategoryIDStableAcrossLang(t *testing.T) {
 		"seriea":        "european",
 		"bundesliga":    "european",
 		"ligue1":        "european",
+		"eredivisie":    "european",
 		"copadelrey":    "domestic_cups",
 		"facup":         "domestic_cups",
+		"carabao":       "domestic_cups",
+		"coppaitalia":   "domestic_cups",
+		"copacolombia":  "domestic_cups",
 		"colombia":      "south_american",
 		"argentina":     "south_american",
 		"brasil":        "south_american",
 		"ligamx":        "americas",
 		"mls":           "americas",
+		"saudi":         "other",
 	}
 
 	if len(model.DefaultLeagues) != len(wantIDs) {
@@ -236,7 +241,7 @@ func TestCategoryIDStableAcrossLang(t *testing.T) {
 		return ids
 	}
 
-	wantOrder := []string{"international", "national_teams", "european", "domestic_cups", "south_american", "americas"}
+	wantOrder := []string{"international", "national_teams", "european", "domestic_cups", "south_american", "americas", "other"}
 	if got := groupOrder(model.DefaultLeagues); !reflect.DeepEqual(got, wantOrder) {
 		t.Errorf("category order = %v, want %v", got, wantOrder)
 	}
@@ -250,6 +255,7 @@ func TestCategoryIDStableAcrossLang(t *testing.T) {
 		"domestic_cups":  "Domestic Cups",
 		"south_american": "South American Leagues",
 		"americas":       "Americas Leagues",
+		"other":          "Other Competitions",
 	}
 	for i, league := range model.DefaultLeagues {
 		translated[i] = league
